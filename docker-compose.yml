@@ -21,6 +21,11 @@ services:
       retries: 3
     # Der Pi 5 teilt sich die Ressourcen mit dem grafana-Container -
     # konservatives Limit, damit Rendering nicht Grafana ausbremst.
+    # `mem_limit`/`cpus` wirken auch im normalen (Nicht-Swarm-)
+    # `docker compose up`; der `deploy.resources.limits`-Block ist
+    # zusätzlich für den Fall eines Swarm-Deployments dokumentiert.
+    mem_limit: 768m
+    cpus: 1.5
     deploy:
       resources:
         limits:
