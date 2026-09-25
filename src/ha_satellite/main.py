@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+import asyncio
 import io
 import logging
-import time
+import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingResponse
 from fastapi.templating import Jinja2Templates
 from PIL import Image
@@ -22,7 +24,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 BASE_DIR = Path(__file__).resolve().parent
-DATA_DIR = Path("/data")
+DATA_DIR = Path(os.environ.get("HA_SATELLITE_DATA_DIR", "/data"))
 FRAMES_DIR = DATA_DIR / "frames"
 
 config_store = ConfigStore()
@@ -74,11 +76,24 @@ async def get_config():
     return JSONResponse(config_store.get().masked().model_dump())
 
 
+def _deep_merge(base: dict, overrides: dict) -> dict:
+    """Rekursives Merge: verschachtelte Dicts werden Feld für Feld
+    zusammengeführt statt komplett ersetzt (z. B. ``eumetsat`` oder
+    einzelne ``sources``-Felder), Listen (z. B. ``regions``) werden als
+    Ganzes übernommen, sofern angegeben."""
+    result = dict(base)
+    for key, value in overrides.items():
+        if isinstance(value, dict) and isinstance(result.get(key), dict):
+            result[key] = _deep_merge(result[key], value)
+        else:
+            result[key] = value
+    return result
+
+
 @app.post("/api/config")
 async def post_config(payload: dict):
     current = config_store.get()
-    merged = current.model_dump()
-    merged.update(payload)
+    merged = _deep_merge(current.model_dump(), payload)
     try:
         new_config = AppConfig(**merged)
     except Exception as exc:
@@ -182,21 +197,24 @@ async def mjpeg(region_name: str):
     fps = config_store.get().server.mjpeg_fps
     delay = 1.0 / fps if fps > 0 else 1.0
 
-    def _generate():
+    async def _generate():
         while True:
             frames = buffer.frames_newest_first()
             if not frames:
-                time.sleep(delay)
+                await asyncio.sleep(delay)
                 continue
             for frame in reversed(frames):  # älteste zuerst abspielen, dann loopen
-                jpeg_bytes = _png_to_jpeg(frame.path(buffer.region_dir).read_bytes())
+                frame_bytes = await run_in_threadpool(
+                    frame.path(buffer.region_dir).read_bytes
+                )
+                jpeg_bytes = await run_in_threadpool(_png_to_jpeg, frame_bytes)
                 yield (
                     b"--frame\r\n"
                     b"Content-Type: image/jpeg\r\n"
                     b"Content-Length: " + str(len(jpeg_bytes)).encode() + b"\r\n\r\n"
                     + jpeg_bytes + b"\r\n"
                 )
-                time.sleep(delay)
+                await asyncio.sleep(delay)
 
     return StreamingResponse(_generate(), media_type="multipart/x-mixed-replace; boundary=frame")
 

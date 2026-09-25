@@ -68,6 +68,21 @@ def test_orphan_files_removed_on_reload(tmp_path: Path):
     assert not (region_dir / "orphan.png").exists()
 
 
+def test_orphan_files_removed_automatically_on_add_frame(tmp_path: Path):
+    region_dir = tmp_path / "wien"
+    buf = RingBuffer(region_dir=region_dir, max_frames=5, max_storage_mb=100)
+    buf.add_frame(_png_bytes())
+
+    # Simuliert eine verwaiste Datei, die nicht im Index steht.
+    (region_dir / "orphan.png").write_bytes(_png_bytes())
+    assert (region_dir / "orphan.png").exists()
+
+    # Der reguläre add_frame-Pfad (über _cleanup()) muss die Waise ebenfalls
+    # entfernen, ohne dass _remove_orphans() manuell aufgerufen wird.
+    buf.add_frame(_png_bytes())
+    assert not (region_dir / "orphan.png").exists()
+
+
 def test_index_survives_reload(tmp_path: Path):
     region_dir = tmp_path / "wien"
     buf = RingBuffer(region_dir=region_dir, max_frames=5, max_storage_mb=100)
