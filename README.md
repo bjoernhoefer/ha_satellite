@@ -30,6 +30,25 @@ Web-UI eingegeben (wird nach `/data/config.yaml` persistiert) oder per
 Umgebungsvariable (`EUMETSAT_CONSUMER_KEY` / `EUMETSAT_CONSUMER_SECRET`,
 siehe `.env.example`) gesetzt werden. Die Env-Variablen haben Vorrang.
 
+## Deployment mit vorgebautem Image
+
+Auf dem Zielhost wird kein Quellcode benötigt — nur die
+`docker-compose.yml`. Da das Repository privat ist, ist auch das
+GHCR-Paket privat und der Host braucht einmalig einen Login mit einem
+Personal Access Token (Scope `read:packages`):
+
+```bash
+echo '<PAT>' | docker login ghcr.io -u <github-user> --password-stdin
+
+mkdir -p ~/ha_satellite && cd ~/ha_satellite
+curl -sO https://raw.githubusercontent.com/bjoernhoefer/ha_satellite/main/docker-compose.yml
+docker compose up -d
+```
+
+Beim Deployment ohne Quellcode sollte der `build:`-Block aus der
+`docker-compose.yml` entfernt und stattdessen `pull_policy: always`
+gesetzt werden, damit Compose nicht lokal zu bauen versucht.
+
 ## Funktionsumfang
 
 - **Quellen** (austauschbar je Region): `msg_seviri` (Full Disk + lokales

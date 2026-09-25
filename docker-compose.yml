@@ -14,11 +14,7 @@ services:
       # Optional: überschreibt die in der UI gespeicherten Zugangsdaten.
       - EUMETSAT_CONSUMER_KEY=${EUMETSAT_CONSUMER_KEY:-}
       - EUMETSAT_CONSUMER_SECRET=${EUMETSAT_CONSUMER_SECRET:-}
-    healthcheck:
-      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:6060/healthz')"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
+    # Healthcheck ist im Image definiert (docker/Dockerfile).
     # Der Pi 5 teilt sich die Ressourcen mit dem grafana-Container -
     # konservatives Limit, damit Rendering nicht Grafana ausbremst.
     # `mem_limit`/`cpus` wirken auch im normalen (Nicht-Swarm-)
