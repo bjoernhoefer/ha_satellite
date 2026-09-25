@@ -1,0 +1,117 @@
+import os
+from pathlib import Path
+
+import pytest
+
+from ha_satellite.config import (
+    AppConfig,
+    ConfigStore,
+    RegionConfig,
+    default_config,
+    load_config,
+    save_config,
+)
+
+
+def test_default_config_has_vienna_and_mallorca():
+    config = default_config()
+    names = {r.name for r in config.regions}
+    assert names == {"wien", "mallorca"}
+
+
+def test_region_bounding_box_uses_center_and_radius():
+    region = RegionConfig(name="test", lat=48.2, lon=16.4, radius_km=100)
+    bbox = region.bounding_box()
+    assert bbox.lat_min < 48.2 < bbox.lat_max
+    assert bbox.lon_min < 16.4 < bbox.lon_max
+
+
+def test_region_rejects_unknown_source():
+    with pytest.raises(ValueError):
+        RegionConfig(name="test", lat=0, lon=0, radius_km=10, source="not_a_real_source")
+
+
+def test_region_accepts_all_valid_sources():
+    for source in ("msg_seviri", "data_tailor", "mtg_fci", "dummy"):
+        region = RegionConfig(name="test", lat=0, lon=0, radius_km=10, source=source)
+        assert region.source == source
+
+
+def test_effective_max_frames_defaults_to_60_minutes():
+    region = RegionConfig(name="test", lat=0, lon=0, radius_km=10)
+    assert region.effective_max_frames(poll_interval_minutes=15) == 4
+    assert region.effective_max_frames(poll_interval_minutes=60) == 1
+    assert region.effective_max_frames(poll_interval_minutes=1) == 60
+
+
+def test_effective_max_frames_can_be_overridden():
+    region = RegionConfig(name="test", lat=0, lon=0, radius_km=10, max_frames=10)
+    assert region.effective_max_frames(poll_interval_minutes=15) == 10
+
+
+def test_save_and_load_roundtrip(tmp_path: Path):
+    path = tmp_path / "config.yaml"
+    config = default_config()
+    save_config(config, path)
+
+    loaded = load_config(path)
+    assert loaded.regions[0].name == config.regions[0].name
+    assert loaded.eumetsat.consumer_key == config.eumetsat.consumer_key
+
+
+def test_load_config_returns_default_when_missing(tmp_path: Path):
+    path = tmp_path / "does-not-exist.yaml"
+    config = load_config(path)
+    assert len(config.regions) == 2
+
+
+def test_env_overrides_take_precedence(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    path = tmp_path / "config.yaml"
+    config = default_config()
+    config.eumetsat.consumer_key = "from-file"
+    config.eumetsat.consumer_secret = "file-secret"
+    save_config(config, path)
+
+    monkeypatch.setenv("EUMETSAT_CONSUMER_KEY", "from-env")
+    monkeypatch.setenv("EUMETSAT_CONSUMER_SECRET", "env-secret")
+
+    loaded = load_config(path)
+    assert loaded.eumetsat.consumer_key == "from-env"
+    assert loaded.eumetsat.consumer_secret == "env-secret"
+
+
+def test_env_override_not_persisted_back_to_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    path = tmp_path / "config.yaml"
+    config = default_config()
+    config.eumetsat.consumer_key = "from-file"
+    save_config(config, path)
+
+    monkeypatch.setenv("EUMETSAT_CONSUMER_KEY", "from-env")
+    store = ConfigStore(path)
+    assert store.get().eumetsat.consumer_key == "from-env"
+
+    # Die Datei auf der Platte enthält weiterhin den ursprünglichen Wert.
+    raw = path.read_text(encoding="utf-8")
+    assert "from-file" in raw
+    assert "from-env" not in raw
+
+
+def test_masked_hides_secret_but_keeps_key():
+    config = default_config()
+    config.eumetsat.consumer_key = "abc"
+    config.eumetsat.consumer_secret = "supersecretvalue"
+    masked = config.masked()
+    assert masked.eumetsat.consumer_key == "abc"
+    assert masked.eumetsat.consumer_secret != "supersecretvalue"
+    assert masked.eumetsat.consumer_secret.endswith("alue")
+
+
+def test_config_store_update_persists(tmp_path: Path):
+    path = tmp_path / "config.yaml"
+    store = ConfigStore(path)
+    config = store.get()
+    config.sources.poll_interval_minutes = 30
+    store.update(config)
+
+    reloaded = ConfigStore(path)
+    assert reloaded.get().sources.poll_interval_minutes == 30

@@ -1,0 +1,33 @@
+services:
+  ha_satellite:
+    image: ghcr.io/bjoernhoefer/ha_satellite:latest
+    container_name: ha_satellite
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    restart: unless-stopped
+    ports:
+      - "6060:6060"
+    volumes:
+      - ./data:/data
+    environment:
+      # Optional: überschreibt die in der UI gespeicherten Zugangsdaten.
+      - EUMETSAT_CONSUMER_KEY=${EUMETSAT_CONSUMER_KEY:-}
+      - EUMETSAT_CONSUMER_SECRET=${EUMETSAT_CONSUMER_SECRET:-}
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:6060/healthz')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    # Der Pi 5 teilt sich die Ressourcen mit dem grafana-Container -
+    # konservatives Limit, damit Rendering nicht Grafana ausbremst.
+    # `mem_limit`/`cpus` wirken auch im normalen (Nicht-Swarm-)
+    # `docker compose up`; der `deploy.resources.limits`-Block ist
+    # zusätzlich für den Fall eines Swarm-Deployments dokumentiert.
+    mem_limit: 768m
+    cpus: 1.5
+    deploy:
+      resources:
+        limits:
+          memory: 768M
+          cpus: "1.5"
