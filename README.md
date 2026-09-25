@@ -21,9 +21,9 @@ docker compose up -d --build
 
 Danach:
 
-- Web-UI: http://\<host\>:8080/
-- Status-API: http://\<host\>:8080/api/status
-- Beispiel-Kamera (Wien): http://\<host\>:8080/regions/wien/mjpeg
+- Web-UI: http://\<host\>:6060/
+- Status-API: http://\<host\>:6060/api/status
+- Beispiel-Kamera (Wien): http://\<host\>:6060/regions/wien/mjpeg
 
 Die EUMETSAT-Zugangsdaten (Consumer Key + Secret) können entweder in der
 Web-UI eingegeben (wird nach `/data/config.yaml` persistiert) oder per
@@ -62,7 +62,7 @@ WireGuard) stehen in [docs/homeassistant.md](docs/homeassistant.md).
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 pytest -q
-uvicorn ha_satellite.main:app --reload --port 8080
+uvicorn ha_satellite.main:app --reload --port 6060
 ```
 
 Details zu Architektur, Deployment und Betriebsregeln: [AGENTS.md](AGENTS.md).

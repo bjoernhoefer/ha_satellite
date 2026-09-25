@@ -3,7 +3,7 @@
 `ha_satellite` läuft ohne Authentifizierung im privaten Netz und ist über
 WireGuard von beiden Home-Assistant-Instanzen direkt erreichbar. Ersetze
 `<container>` durch die jeweils aus Sicht der HA-Instanz erreichbare
-WireGuard-Adresse des Hosts `nzbpi` (Container-Port: `8080`).
+WireGuard-Adresse des Hosts `nzbpi` (Container-Port: `6060`).
 
 ## Wien (`192.168.188.12:8123`)
 
@@ -11,11 +11,11 @@ WireGuard-Adresse des Hosts `nzbpi` (Container-Port: `8080`).
 camera:
   - platform: mjpeg
     name: Satellit Wien
-    mjpeg_url: http://192.168.188.13:8080/regions/wien/mjpeg
+    mjpeg_url: http://192.168.188.13:6060/regions/wien/mjpeg
 
   - platform: generic
     name: Satellit Wien Standbild
-    still_image_url: http://192.168.188.13:8080/regions/wien/latest.png
+    still_image_url: http://192.168.188.13:6060/regions/wien/latest.png
     framerate: 0.017  # ~ alle 60s neu laden
 ```
 
@@ -30,11 +30,11 @@ sobald das Tunnel-Subnetz feststeht):
 camera:
   - platform: mjpeg
     name: Satellit Mallorca
-    mjpeg_url: http://192.168.188.13:8080/regions/mallorca/mjpeg
+    mjpeg_url: http://192.168.188.13:6060/regions/mallorca/mjpeg
 
   - platform: generic
     name: Satellit Mallorca Standbild
-    still_image_url: http://192.168.188.13:8080/regions/mallorca/latest.png
+    still_image_url: http://192.168.188.13:6060/regions/mallorca/latest.png
     framerate: 0.017
 ```
 
@@ -90,7 +90,7 @@ Empfohlen: ein REST-Sensor, der `latest_age_seconds` aus
 sensor:
   - platform: rest
     name: Satellit Wien Bildalter
-    resource: http://192.168.188.13:8080/api/status
+    resource: http://192.168.188.13:6060/api/status
     value_template: "{{ (value_json.wien.latest_age_seconds | float(0)) | round(0) }}"
     unit_of_measurement: s
     scan_interval: 60

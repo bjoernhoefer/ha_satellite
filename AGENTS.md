@@ -9,7 +9,7 @@
 | Konsumenten | HA Wien (`192.168.188.12:8123`), HA Porto Cristo (`192.168.88.77:8123`) |
 | Netz | Beide Standorte per WireGuard direkt erreichbar |
 | Auth | Keine — nur privates Netz |
-| Web-Port | `8080` |
+| Web-Port | `6060` |
 
 Die Integration erfolgt **pro Standort in der jeweiligen HA-Instanz** (siehe
 `docs/homeassistant.md`), nicht über Grafana. Grafana bleibt unangetastet.

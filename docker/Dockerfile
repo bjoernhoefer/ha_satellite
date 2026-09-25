@@ -40,8 +40,8 @@ RUN mkdir -p /data/frames && chown -R $MAMBA_USER:$MAMBA_USER /data
 COPY docker/entrypoint.sh /usr/local/bin/ha_satellite-entrypoint.sh
 RUN chmod +x /usr/local/bin/ha_satellite-entrypoint.sh
 
-EXPOSE 8080
+EXPOSE 6060
 VOLUME ["/data"]
 
 ENTRYPOINT ["/usr/local/bin/ha_satellite-entrypoint.sh"]
-CMD ["uvicorn", "ha_satellite.main:app", "--host", "0.0.0.0", "--port", "8080"]
+CMD ["uvicorn", "ha_satellite.main:app", "--host", "0.0.0.0", "--port", "6060"]
