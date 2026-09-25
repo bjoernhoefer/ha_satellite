@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ha_satellite"
+version = "0.1.0"
+description = "Satellitenbilder von EUMETSAT als Kamera-Entitäten für Home Assistant"
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "MIT" }
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "apscheduler>=3.10",
+    "pydantic>=2.7",
+    "pyyaml>=6.0",
+    "pillow>=10.3",
+    "jinja2>=3.1",
+    "python-multipart>=0.0.9",
+    "imageio>=2.34",
+    "imageio-ffmpeg>=0.5",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "httpx>=0.27",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

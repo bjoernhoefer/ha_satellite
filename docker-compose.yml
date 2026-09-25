@@ -1,0 +1,28 @@
+services:
+  ha_satellite:
+    image: ghcr.io/bjoernhoefer/ha_satellite:latest
+    container_name: ha_satellite
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./data:/data
+    environment:
+      # Optional: überschreibt die in der UI gespeicherten Zugangsdaten.
+      - EUMETSAT_CONSUMER_KEY=${EUMETSAT_CONSUMER_KEY:-}
+      - EUMETSAT_CONSUMER_SECRET=${EUMETSAT_CONSUMER_SECRET:-}
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/healthz')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    # Der Pi 5 teilt sich die Ressourcen mit dem grafana-Container -
+    # konservatives Limit, damit Rendering nicht Grafana ausbremst.
+    deploy:
+      resources:
+        limits:
+          memory: 768M
+          cpus: "1.5"
