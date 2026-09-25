@@ -132,6 +132,14 @@ class RingBuffer:
     def _delete_file(self, filename: str) -> None:
         (self.region_dir / filename).unlink(missing_ok=True)
 
+    def update_limits(self, max_frames: int, max_storage_mb: float) -> None:
+        """Passt Max-Frames/Speicherlimit an und räumt danach direkt auf."""
+        with self._lock:
+            self.max_frames = max_frames
+            self.max_storage_mb = max_storage_mb
+            self._cleanup()
+            self._save_index()
+
 
 class BufferManager:
     """Verwaltet je einen RingBuffer pro Region."""
@@ -152,9 +160,5 @@ class BufferManager:
                 )
                 self._buffers[region_name] = buf
             else:
-                buf.max_frames = max_frames
-                buf.max_storage_mb = max_storage_mb
-                with buf._lock:
-                    buf._cleanup()
-                    buf._save_index()
+                buf.update_limits(max_frames, max_storage_mb)
             return buf

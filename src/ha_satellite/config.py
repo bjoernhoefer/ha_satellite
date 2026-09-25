@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from ha_satellite.geometry import bounding_box
 
@@ -26,7 +26,8 @@ DEFAULT_CONFIG_PATH = "/data/config.yaml"
 ENV_CONSUMER_KEY = "EUMETSAT_CONSUMER_KEY"
 ENV_CONSUMER_SECRET = "EUMETSAT_CONSUMER_SECRET"
 
-VALID_SOURCES = ("msg_seviri", "data_tailor", "mtg_fci")
+# "dummy" ist zusätzlich zulässig (reine Testquelle, siehe sources/__init__.py).
+VALID_SOURCES = ("msg_seviri", "data_tailor", "mtg_fci", "dummy")
 
 # Standard-Frames im Ringpuffer: entspricht (per Vorgabe) 60 Minuten Historie.
 DEFAULT_HISTORY_MINUTES = 60
@@ -62,6 +63,15 @@ class RegionConfig(BaseModel):
     composite: str = "natural_color"
     source: str = "msg_seviri"
     max_frames: int | None = None
+
+    @field_validator("source")
+    @classmethod
+    def _validate_source(cls, value: str) -> str:
+        if value not in VALID_SOURCES:
+            raise ValueError(
+                f"Unbekannte Quelle '{value}'. Erlaubt: {', '.join(VALID_SOURCES)}"
+            )
+        return value
 
     def bounding_box(self):
         return bounding_box(self.lat, self.lon, self.radius_km)

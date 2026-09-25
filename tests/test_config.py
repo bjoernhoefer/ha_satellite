@@ -26,6 +26,17 @@ def test_region_bounding_box_uses_center_and_radius():
     assert bbox.lon_min < 16.4 < bbox.lon_max
 
 
+def test_region_rejects_unknown_source():
+    with pytest.raises(ValueError):
+        RegionConfig(name="test", lat=0, lon=0, radius_km=10, source="not_a_real_source")
+
+
+def test_region_accepts_all_valid_sources():
+    for source in ("msg_seviri", "data_tailor", "mtg_fci", "dummy"):
+        region = RegionConfig(name="test", lat=0, lon=0, radius_km=10, source=source)
+        assert region.source == source
+
+
 def test_effective_max_frames_defaults_to_60_minutes():
     region = RegionConfig(name="test", lat=0, lon=0, radius_km=10)
     assert region.effective_max_frames(poll_interval_minutes=15) == 4
