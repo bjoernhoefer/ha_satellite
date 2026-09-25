@@ -69,6 +69,9 @@ docker compose up -d
 ```
 
 - Konfiguration/Frames liegen unter `./data` (Host) → `/data` (Container).
+  Das `docker/entrypoint.sh`-Skript gleicht beim Start die Ownership von
+  `/data` automatisch auf den internen Nutzer an (siehe HISTORY.md,
+  "Bind-Mount-Ownership") - kein manuelles `chown` auf dem Host nötig.
 - Multi-Arch-Image (`linux/amd64`, `linux/arm64`) wird von
   `.github/workflows/build.yml` gebaut und nach
   `ghcr.io/bjoernhoefer/ha_satellite` gepusht (bei Push auf `main` bzw. Tags).

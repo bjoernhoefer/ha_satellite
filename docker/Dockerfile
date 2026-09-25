@@ -37,10 +37,11 @@ RUN micromamba run -n base pip install --no-cache-dir .
 
 RUN mkdir -p /data/frames && chown -R $MAMBA_USER:$MAMBA_USER /data
 
-USER $MAMBA_USER
+COPY docker/entrypoint.sh /usr/local/bin/ha_satellite-entrypoint.sh
+RUN chmod +x /usr/local/bin/ha_satellite-entrypoint.sh
 
 EXPOSE 8080
 VOLUME ["/data"]
 
-ENTRYPOINT ["/usr/local/bin/_entrypoint.sh"]
+ENTRYPOINT ["/usr/local/bin/ha_satellite-entrypoint.sh"]
 CMD ["uvicorn", "ha_satellite.main:app", "--host", "0.0.0.0", "--port", "8080"]

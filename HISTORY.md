@@ -59,3 +59,24 @@ Vorgänge parallel laufen und sich mit `grafana` um CPU/RAM auf dem Pi 5
 prügeln. Ein prozessweiter `threading.Lock` in `RenderScheduler` sorgt dafür,
 dass immer nur ein Render-Vorgang aktiv ist; kollidierende Jobs werden für
 diesen Zyklus übersprungen und beim nächsten Intervall erneut versucht.
+
+## Bind-Mount-Ownership vs. nicht-root-Container
+
+**Fallstrick:** Das Dockerfile chownt `/data` beim Build auf den
+Container-Nutzer (`mambauser`, hochgezählte, "nicht-root-typische" UID
+57439). Wird `/data` jedoch als Docker-Volume/Bind-Mount vom Host
+eingehängt (wie in `docker-compose.yml` für `./data:/data`), überschreibt
+die Host-Ownership des gemounteten Verzeichnisses die im Image gesetzte
+Ownership vollständig - der Build-Zeit-`chown` läuft dadurch ins Leere.
+Ergebnis: `PermissionError` beim ersten Render-Versuch, sobald ein frisches,
+root-eigenes `./data`-Verzeichnis gemountet wird (mit `docker build` +
+`docker run -v ... ha_satellite:test` lokal reproduziert und verifiziert).
+
+**Lösung:** `docker/entrypoint.sh` startet den Container standardmäßig als
+`root` (kein `USER`-Directive mehr im Dockerfile), gleicht beim Start via
+`chown -R mambauser:mambauser /data` die tatsächliche Ownership des
+gemounteten Volumes an und wechselt danach mit `setpriv --reuid=mambauser
+--regid=mambauser --init-groups` in den unprivilegierten Nutzer, bevor
+`uvicorn` gestartet wird (verifiziert per `docker top`: Hauptprozess läuft
+als UID 57439, nicht als root). `gosu`/`su-exec` sind im micromamba-Image
+nicht vorinstalliert, `setpriv` (util-linux) dagegen schon.
