@@ -35,6 +35,10 @@ COPY src /app/src
 
 RUN micromamba run -n base pip install --no-cache-dir .
 
+# Healthchecks und `docker exec` durchlaufen das Entrypoint nicht, d. h. die
+# conda-Umgebung ist dort nicht aktiviert und `python3` läge nicht im PATH.
+RUN ln -sf /opt/conda/bin/python /usr/local/bin/python3
+
 RUN mkdir -p /data/frames && chown -R $MAMBA_USER:$MAMBA_USER /data
 
 COPY docker/entrypoint.sh /usr/local/bin/ha_satellite-entrypoint.sh
@@ -42,6 +46,9 @@ RUN chmod +x /usr/local/bin/ha_satellite-entrypoint.sh
 
 EXPOSE 6060
 VOLUME ["/data"]
+
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
+    CMD /usr/local/bin/python3 -c "import urllib.request; urllib.request.urlopen('http://localhost:6060/healthz')"
 
 ENTRYPOINT ["/usr/local/bin/ha_satellite-entrypoint.sh"]
 CMD ["uvicorn", "ha_satellite.main:app", "--host", "0.0.0.0", "--port", "6060"]

@@ -6,6 +6,7 @@ import asyncio
 import io
 import logging
 import os
+import tempfile
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -181,14 +182,29 @@ async def animation_mp4(region_name: str):
             status_code=501, detail="MP4-Export benötigt das Paket imageio-ffmpeg"
         ) from exc
 
-    fps = config_store.get().server.mjpeg_fps
-    out = io.BytesIO()
-    with imageio.get_writer(out, format="ffmpeg", mode="I", fps=fps, output_params=["-f", "mp4"]) as writer:
-        for image in images:
-            import numpy as np
+    import numpy as np
 
-            writer.append_data(np.asarray(image))
-    return Response(content=out.getvalue(), media_type="video/mp4")
+    fps = config_store.get().server.mjpeg_fps
+    # Das FFMPEG-Plugin von imageio schreibt nur in echte Dateien, nicht in
+    # BytesIO - daher der Umweg über eine temporäre Datei.
+    def _encode() -> bytes:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            target = Path(tmpdir) / "animation.mp4"
+            with imageio.get_writer(
+                target,
+                format="FFMPEG",
+                mode="I",
+                fps=fps,
+                codec="libx264",
+                pixelformat="yuv420p",
+                macro_block_size=None,
+            ) as writer:
+                for image in images:
+                    writer.append_data(np.asarray(image.convert("RGB")))
+            return target.read_bytes()
+
+    payload = await run_in_threadpool(_encode)
+    return Response(content=payload, media_type="video/mp4")
 
 
 @app.get("/regions/{region_name}/mjpeg")
