@@ -38,6 +38,9 @@
     .badge.ok { background: #dcfce7; color: #14532d; }
     .badge.warn { background: #fef3c7; color: #78350f; }
     .badge.err { background: #fee2e2; color: #7f1d1d; }
+    .api-links { list-style: none; padding: 0; margin: 0.3rem 0 0.8rem; }
+    .api-links li { padding: 0.35rem 0; border-bottom: 1px solid var(--border); overflow-wrap: anywhere; }
+    .api-links .method { display: inline-block; min-width: 3.2rem; font-size: 0.75rem; font-weight: 600; }
     .row { display: flex; gap: 0.6rem; flex-wrap: wrap; align-items: center; }
     .grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 0 1rem; }
 
@@ -103,7 +106,7 @@
     <h1>ha_satellite – Satellitenbilder für Home Assistant</h1>
     <nav class="toc">
       <a href="#sec-regions">Regionen</a><a href="#sec-sources">Quellen</a><a href="#sec-storage">Speicherort</a>
-      <a href="#sec-credentials">Zugangsdaten</a><a href="#sec-status">Status</a><a href="#sec-logs">Logs</a>
+      <a href="#sec-credentials">Zugangsdaten</a><a href="#sec-status">Status</a><a href="#sec-logs">Logs</a><a href="#sec-api">API</a>
     </nav>
   </header>
   <main>
@@ -114,7 +117,7 @@
       {% for region in config.regions %}
       <div class="region-card" data-testid="region-{{ region.name }}" data-region="{{ region.name }}">
         <h3>{{ region.name }}</h3>
-        <div class="muted">{{ region.lat }}, {{ region.lon }} · {{ region.radius_km }} km · {{ region.composite }}</div>
+        <div class="muted">{{ region.lat }}, {{ region.lon }} · {{ region.radius_km }} km · {{ region.width }}×{{ region.height }} px</div>
         <div class="preview-wrap" data-preview-wrap="{{ region.name }}">
           <img class="preview" src="/regions/{{ region.name }}/latest.png" alt="{{ region.name }} – neuestes Bild"
                role="button" tabindex="0" title="Groß anzeigen"
@@ -133,8 +136,21 @@
         <select id="region-source-{{ region.name }}" class="region-source" data-region="{{ region.name }}"
                 data-testid="region-source-{{ region.name }}">
           {% for entry in config.sources.catalog %}
-          <option value="{{ entry.id }}" {% if entry.id == region.source %}selected{% endif %}>{{ entry.label or entry.id }}{% if not entry.enabled %} (deaktiviert){% endif %}</option>
+          <option value="{{ entry.id }}" {% if entry.id == region.source %}selected{% endif %}>{{ entry.label or entry.id }}{% if entry.driver in placeholder_drivers %} – Platzhalter{% endif %}{% if not entry.enabled %} (deaktiviert){% endif %}</option>
           {% endfor %}
+        </select>
+        <div class="warning" data-testid="region-placeholder-{{ region.name }}"
+             {% if (config.sources.get(region.source).driver if config.sources.get(region.source) else "") not in placeholder_drivers %}hidden{% endif %}>
+          Diese Quelle liefert noch keine echten Satellitenbilder (Platzhalter).</div>
+        <label for="region-composite-{{ region.name }}">Bildtyp (Komposit)</label>
+        <select id="region-composite-{{ region.name }}" class="region-composite" data-region="{{ region.name }}"
+                data-testid="region-composite-{{ region.name }}">
+          {% for name, label in composites.items() %}
+          <option value="{{ name }}" {% if name == region.composite %}selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+          {% if region.composite not in composites %}
+          <option value="{{ region.composite }}" selected>{{ region.composite }}</option>
+          {% endif %}
         </select>
         <div class="warning" data-testid="region-warning-{{ region.name }}"
              {% if config.sources.is_enabled(region.source) %}hidden{% endif %}>
@@ -293,6 +309,22 @@
     </div>
     <div class="logs" data-testid="logs" id="logs" aria-live="polite"></div>
   </section>
+  <section id="sec-api">
+    <h2>API-Links</h2>
+    <p class="muted">Alle lesenden Endpunkte zum Anklicken (öffnen in einem neuen Tab). Die Adressen
+      lassen sich direkt in Home Assistant verwenden (z. B. MJPEG-Kamera).</p>
+    <label for="api-region">Standort</label>
+    <select id="api-region" data-testid="api-region" style="max-width:20rem">
+      {% for region in config.regions %}<option value="{{ region.name }}">{{ region.name }}</option>{% endfor %}
+    </select>
+    <h3>Standort</h3>
+    <ul class="api-links" data-testid="api-region-links"></ul>
+    <h3>Allgemein</h3>
+    <ul class="api-links" data-testid="api-general-links"></ul>
+    <h3>Aktionen (POST, nicht per Klick aufrufbar)</h3>
+    <ul class="api-links" data-testid="api-post-links"></ul>
+  </section>
+
   </main>
 
   <div class="viewer" id="viewer" data-testid="viewer" hidden>
@@ -320,6 +352,7 @@
   </div>
 
   <script>
+    const PLACEHOLDER_DRIVERS = {{ placeholder_drivers | list | tojson }};
 {% raw %}
     "use strict";
     const $ = (sel, root = document) => root.querySelector(sel);
@@ -414,7 +447,8 @@
           el("td", {}, checkbox),
           el("td", {}, el("div", { text: entry.label || entry.id }),
             el("div", { class: "muted" }, el("code", { text: entry.id }), entry.collection ? " · " + entry.collection : "")),
-          el("td", { class: "hide-mobile" }, el("code", { text: entry.driver })),
+          el("td", { class: "hide-mobile" }, el("code", { text: entry.driver }),
+            PLACEHOLDER_DRIVERS.includes(entry.driver) ? el("span", { class: "badge warn", text: "Platzhalter" }) : ""),
           el("td", { "data-testid": "source-sync-status-" + entry.id }, syncCell)));
       }
       const sync = sourcesState.sync || {};
@@ -443,7 +477,8 @@
         const current = select.value;
         select.replaceChildren(...sourcesState.catalog.map((entry) =>
           el("option", { value: entry.id, selected: entry.id === current,
-            text: (entry.label || entry.id) + (entry.enabled ? "" : " (deaktiviert)") })));
+            text: (entry.label || entry.id) + (PLACEHOLDER_DRIVERS.includes(entry.driver) ? " – Platzhalter" : "")
+              + (entry.enabled ? "" : " (deaktiviert)") })));
         if (!sourcesState.catalog.some((e) => e.id === current)) select.value = "";
         updateRegionWarning(select.dataset.region, select.value);
       });
@@ -451,6 +486,7 @@
     function updateRegionWarning(region, sourceId) {
       const entry = sourcesState.catalog.find((e) => e.id === sourceId);
       byTestId("region-warning-" + region).hidden = !!(entry && entry.enabled);
+      byTestId("region-placeholder-" + region).hidden = !(entry && PLACEHOLDER_DRIVERS.includes(entry.driver));
     }
 
     async function loadSources() {
@@ -544,20 +580,26 @@
       }
     });
 
+    // Quelle/Komposit einer Region ändern: der Server rendert die Region
+    // danach sofort neu, die Vorschau lädt nach, sobald der Lauf fertig ist.
+    async function saveRegionField(region, field, value, okText) {
+      const message = byTestId("refresh-message-" + region);
+      try {
+        const config = await api("/api/config");
+        const regions = config.regions.map((r) => (r.name === region ? { ...r, [field]: value } : r));
+        await postConfig({ regions });
+        if (field === "source") updateRegionWarning(region, value);
+        showMessage(message, okText + " – neues Bild wird erzeugt …", true);
+        fastPollUntil = Date.now() + 90000;
+      } catch (err) {
+        showMessage(message, "Speichern fehlgeschlagen: " + err.message, false);
+      }
+    }
     document.querySelectorAll("select.region-source").forEach((select) => {
-      select.addEventListener("change", async () => {
-        const region = select.dataset.region;
-        const message = byTestId("refresh-message-" + region);
-        try {
-          const config = await api("/api/config");
-          const regions = config.regions.map((r) => (r.name === region ? { ...r, source: select.value } : r));
-          await postConfig({ regions });
-          updateRegionWarning(region, select.value);
-          showMessage(message, "Quelle gespeichert.", true);
-        } catch (err) {
-          showMessage(message, "Speichern fehlgeschlagen: " + err.message, false);
-        }
-      });
+      select.addEventListener("change", () => saveRegionField(select.dataset.region, "source", select.value, "Quelle gespeichert"));
+    });
+    document.querySelectorAll("select.region-composite").forEach((select) => {
+      select.addEventListener("change", () => saveRegionField(select.dataset.region, "composite", select.value, "Bildtyp gespeichert"));
     });
 
     /* ---------- Regionen: Vorschau, Historie, Aktualisieren ---------- */
@@ -908,7 +950,53 @@
     }
     window.addEventListener("popstate", applyHash);
 
+    /* ---------- API-Links ---------- */
+    const API_GENERAL = [
+      ["config", "/api/config", "Aktuelle Konfiguration (Secret maskiert)"],
+      ["status", "/api/status", "Letzter/nächster Lauf, Frame-Anzahl, Fehler je Region"],
+      ["sources", "/api/sources", "Quellen-Katalog + Ergebnis des letzten Abgleichs"],
+      ["storage", "/api/storage", "Speicherort, Belegung, Kandidaten"],
+      ["logs", "/api/logs", "Log-Einträge (JSON)"],
+      ["logs-text", "/api/logs?format=text", "Log-Einträge als Text"],
+      ["healthz", "/healthz", "Liveness"],
+    ];
+    const API_REGION = [
+      ["live", "/live/{r}", "Live-Stream im Browser"],
+      ["latest", "/regions/{r}/latest.png", "Neuestes Einzelbild (PNG)"],
+      ["frame0", "/regions/{r}/frames/0.png", "Frame 0 aus dem Puffer (0 = neuester)"],
+      ["frames", "/api/regions/{r}/frames", "Historie: alle Frames (JSON)"],
+      ["gif", "/regions/{r}/animation.gif", "Animation der Historie (GIF)"],
+      ["mp4", "/regions/{r}/animation.mp4", "Animation der Historie (MP4)"],
+      ["mjpeg", "/regions/{r}/mjpeg", "MJPEG-Stream (Home-Assistant-Kamera)"],
+    ];
+    const API_POST = [
+      ["/api/config", "Konfiguration speichern"],
+      ["/api/regions/{r}/refresh", "Sofortiger Render-Lauf"],
+      ["/api/sources/sync", "Quellen-Abgleich ausführen"],
+      ["/api/sources/adopt", "Entdeckte Collection übernehmen"],
+      ["/api/storage", "Speicherort/Historie setzen"],
+    ];
+    function apiItem(method, path, text, testid) {
+      const url = location.origin + path;
+      const target = method === "GET"
+        ? el("a", { href: path, target: "_blank", rel: "noopener", "data-testid": testid, text: url })
+        : el("code", { "data-testid": testid, text: url });
+      return el("li", {}, el("span", { class: "method", text: method }), target,
+        el("div", { class: "muted", text }));
+    }
+    function renderApiLinks() {
+      const region = encodeURIComponent(document.getElementById("api-region").value);
+      byTestId("api-region-links").replaceChildren(...API_REGION.map(([key, path, text]) =>
+        apiItem("GET", path.replace("{r}", region), text, "api-link-" + key)));
+      byTestId("api-general-links").replaceChildren(...API_GENERAL.map(([key, path, text]) =>
+        apiItem("GET", path, text, "api-link-" + key)));
+      byTestId("api-post-links").replaceChildren(...API_POST.map(([path, text], i) =>
+        apiItem("POST", path.replace("{r}", region), text, "api-post-" + i)));
+    }
+    document.getElementById("api-region").addEventListener("change", renderApiLinks);
+
     /* ---------- Start ---------- */
+    renderApiLinks();
     loadSources();
     loadStorage();
     REGIONS.forEach(loadHistory);

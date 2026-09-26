@@ -61,6 +61,9 @@ def test_page_shows_all_core_sections(ui):
         "live-wien",
         "play-wien",
         "region-source-wien",
+        "region-composite-wien",
+        "api-region",
+        "api-link-latest",
     ):
         expect(ui.get_by_test_id(testid)).to_be_visible()
     expect(ui.get_by_test_id("consumer-key")).to_be_editable()
@@ -309,11 +312,11 @@ def test_mobile_viewer_fills_screen_and_back_closes(mobile_page, live_server):
 
 def test_logs_are_shown_at_the_bottom(ui, live_server):
     live_server.ensure_frames("wien", 1)
-    is_last = ui.evaluate(
-        "() => { const s = [...document.querySelectorAll('main > section')];"
-        " return s[s.length - 1].id; }"
+    last_two = ui.evaluate(
+        "() => [...document.querySelectorAll('main > section')].slice(-2).map((s) => s.id)"
     )
-    assert is_last == "sec-logs"
+    # Logs stehen unten, nur noch gefolgt von der API-Link-Sammlung.
+    assert last_two == ["sec-logs", "sec-api"]
     logs = ui.get_by_test_id("logs")
     expect(logs).to_contain_text("Render wien fertig", timeout=10000)
 
@@ -358,7 +361,7 @@ def test_sources_json_editor_is_collapsed_and_editable(ui, live_server):
 
     # Die neue Quelle steht der Region sofort zur Auswahl.
     ui.get_by_test_id("region-source-wien").select_option("iodc")
-    expect(ui.get_by_test_id("refresh-message-wien")).to_have_text("Quelle gespeichert.")
+    expect(ui.get_by_test_id("refresh-message-wien")).to_contain_text("Quelle gespeichert")
     regions = {r["name"]: r for r in _stored(live_server)["regions"]}
     assert regions["wien"]["source"] == "iodc"
 
@@ -431,3 +434,82 @@ def test_invalid_storage_location_shows_error(ui):
     ui.get_by_test_id("storage-path").fill("relativer/pfad")
     ui.get_by_test_id("save-storage").click()
     expect(ui.get_by_test_id("storage-message")).to_contain_text("absolut")
+
+
+# --- Quelle/Bildtyp wechseln --------------------------------------------------
+
+def test_change_composite_rerenders_and_updates_preview(ui, live_server):
+    live_server.ensure_frames("wien", 1)
+    before = {f["filename"] for f in live_server.frames("wien")}
+    select = ui.get_by_test_id("region-composite-wien")
+    expect(select).to_have_value("natural_color_hrv_with_night_ir")
+
+    select.select_option("natural_color_hrv")
+    expect(ui.get_by_test_id("refresh-message-wien")).to_contain_text("Bildtyp gespeichert")
+    regions = {r["name"]: r for r in _stored(live_server)["regions"]}
+    assert regions["wien"]["composite"] == "natural_color_hrv"
+
+    # Ohne weiteren Klick: der Server rendert neu, die Historie lädt nach.
+    expect(ui.get_by_test_id("history-item-wien-0")).to_be_visible()
+    ui.wait_for_function(
+        "(n) => document.querySelectorAll('[data-testid^=\"history-item-wien-\"]').length > n",
+        arg=len(before), timeout=15000,
+    )
+    latest = live_server.frames("wien")[0]
+    assert latest["filename"] not in before
+    assert latest["composite"] == "natural_color_hrv"
+
+
+def test_placeholder_source_is_marked(ui, live_server):
+    expect(ui.get_by_test_id("region-placeholder-wien")).to_be_visible()  # Test-Server: dummy
+    options = ui.get_by_test_id("region-source-wien").locator("option")
+    expect(options.filter(has_text="Data Tailor")).to_contain_text("Platzhalter")
+    expect(options.filter(has_text="Rapid Scan")).not_to_contain_text("Platzhalter")
+    expect(ui.get_by_test_id("source-row-data_tailor")).to_contain_text("Platzhalter")
+
+    ui.get_by_test_id("region-source-wien").select_option("msg_seviri")
+    expect(ui.get_by_test_id("refresh-message-wien")).to_contain_text("Quelle gespeichert")
+    expect(ui.get_by_test_id("region-placeholder-wien")).to_be_hidden()
+
+
+# --- API-Links ----------------------------------------------------------------
+
+def test_api_links_follow_selected_region_and_work(ui, live_server):
+    live_server.ensure_frames("mallorca", 1)
+    latest = ui.get_by_test_id("api-link-latest")
+    expect(latest).to_have_attribute("href", "/regions/wien/latest.png")
+    expect(latest).to_have_text(live_server.url + "/regions/wien/latest.png")
+
+    ui.get_by_test_id("api-region").select_option("mallorca")
+    expect(latest).to_have_attribute("href", "/regions/mallorca/latest.png")
+    expect(ui.get_by_test_id("api-link-mjpeg")).to_have_attribute("href", "/regions/mallorca/mjpeg")
+    expect(ui.get_by_test_id("api-link-live")).to_have_attribute("href", "/live/mallorca")
+    expect(ui.get_by_test_id("api-post-1")).to_contain_text("/api/regions/mallorca/refresh")
+    # Allgemeine Links hängen nicht vom Standort ab.
+    expect(ui.get_by_test_id("api-link-status")).to_have_attribute("href", "/api/status")
+
+    # Anklicken öffnet einen neuen Tab, die UI bleibt stehen.
+    with ui.context.expect_page() as new_tab:
+        latest.click()
+    tab = new_tab.value
+    tab.wait_for_load_state()
+    assert tab.url == live_server.url + "/regions/mallorca/latest.png"
+    assert tab.evaluate("() => document.images[0] && document.images[0].naturalWidth") > 0
+    tab.close()
+    assert ui.url.startswith(live_server.url + "/")
+
+    # Alle lesenden Links antworten (außer MJPEG/MP4: Stream bzw. optional).
+    for link in ui.locator("[data-testid^='api-link-']").all():
+        testid = link.get_attribute("data-testid")
+        if testid in ("api-link-mjpeg", "api-link-mp4"):
+            continue
+        href = link.get_attribute("href")
+        response = ui.request.get(live_server.url + href, max_redirects=0)
+        assert response.status in (200, 307), (href, response.status)
+
+
+def test_api_links_on_mobile_do_not_overflow(mobile_page, live_server):
+    mobile_page.goto(live_server.url + "/#sec-api")
+    expect(mobile_page.get_by_test_id("api-link-latest")).to_be_visible()
+    width = mobile_page.evaluate("() => document.documentElement.scrollWidth")
+    assert width <= 390

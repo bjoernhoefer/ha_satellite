@@ -142,3 +142,26 @@ def test_relocate_without_move_keeps_old_frames(tmp_path):
     assert manager.relocate(tmp_path / "new", move_existing=False) == 0
     assert len(manager.get("wien", 10, 100)) == 0
     assert any((tmp_path / "old" / "wien").glob("*.png"))
+
+
+def test_frames_keep_origin_and_insertion_order(tmp_path):
+    from datetime import datetime, timezone
+
+    buf = RingBuffer(tmp_path / "wien", max_frames=5)
+    newer = datetime(2026, 9, 26, 13, 40, tzinfo=timezone.utc)
+    older = datetime(2026, 9, 26, 13, 27, tzinfo=timezone.utc)
+    buf.add_frame(b"rss", timestamp=newer, source="msg_seviri", composite="a")
+    # Quellenwechsel auf eine ältere Aufnahme: trotzdem neuester Frame.
+    buf.add_frame(b"0deg", timestamp=older, source="msg_seviri_0deg", composite="a")
+    # Gleicher Zeitstempel (anderes Komposit) überschreibt nichts.
+    buf.add_frame(b"0deg-b", timestamp=older, source="msg_seviri_0deg", composite="b")
+
+    assert [f.source for f in buf.frames_newest_first()] == ["msg_seviri_0deg", "msg_seviri_0deg", "msg_seviri"]
+    assert buf.latest().composite == "b"
+    assert len({f.filename for f in buf.frames_newest_first()}) == 3
+    assert buf.latest().path(buf.region_dir).read_bytes() == b"0deg-b"
+
+    reloaded = RingBuffer(tmp_path / "wien", max_frames=5)
+    assert [f.as_dict() for f in reloaded.frames_newest_first()] == [
+        f.as_dict() for f in buf.frames_newest_first()
+    ]

@@ -27,6 +27,18 @@ logger = logging.getLogger(__name__)
 class Frame:
     filename: str
     created_at: str
+    # Herkunft (Katalog-ID der Quelle + Komposit). Nach einem Quellenwechsel
+    # zählt nur der neueste Frame derselben Herkunft als "bereits gerendert".
+    source: str | None = None
+    composite: str | None = None
+
+    def as_dict(self) -> dict:
+        data = {"filename": self.filename, "created_at": self.created_at}
+        if self.source is not None:
+            data["source"] = self.source
+        if self.composite is not None:
+            data["composite"] = self.composite
+        return data
 
     def path(self, region_dir: Path) -> Path:
         return region_dir / self.filename
@@ -60,22 +72,41 @@ class RingBuffer:
             raw = json.loads(index_path.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError):
             return []
-        frames = [Frame(**entry) for entry in raw]
+        known = {"filename", "created_at", "source", "composite"}
+        frames = [Frame(**{k: v for k, v in entry.items() if k in known}) for entry in raw]
         # Nur Frames behalten, deren Datei tatsächlich existiert.
         return [f for f in frames if f.path(self.region_dir).exists()]
 
     def _save_index(self) -> None:
-        payload = [{"filename": f.filename, "created_at": f.created_at} for f in self._frames]
+        payload = [f.as_dict() for f in self._frames]
         self._index_path().write_text(json.dumps(payload), encoding="utf-8")
 
     # -- Öffentliche API ----------------------------------------------
-    def add_frame(self, data: bytes, timestamp: datetime | None = None) -> Frame:
-        """Fügt einen neuen Frame (PNG-Bytes) hinzu und räumt danach auf."""
+    def add_frame(
+        self,
+        data: bytes,
+        timestamp: datetime | None = None,
+        source: str | None = None,
+        composite: str | None = None,
+    ) -> Frame:
+        """Fügt einen neuen Frame (PNG-Bytes) als neuesten hinzu und räumt auf.
+
+        Die Reihenfolge ist die des Hinzufügens: nach einem Wechsel auf eine
+        Quelle mit älterer Aufnahme (z. B. Rapid Scan -> 0°) ist das neu
+        gerenderte Bild trotzdem Frame 0.
+        """
         with self._lock:
             ts = timestamp or datetime.now(timezone.utc)
-            filename = f"{ts.strftime('%Y%m%dT%H%M%S%fZ')}.png"
+            stem = ts.strftime('%Y%m%dT%H%M%S%fZ')
+            filename = f"{stem}.png"
+            counter = 1
+            while (self.region_dir / filename).exists():
+                filename = f"{stem}-{counter}.png"
+                counter += 1
             (self.region_dir / filename).write_bytes(data)
-            frame = Frame(filename=filename, created_at=ts.isoformat())
+            frame = Frame(
+                filename=filename, created_at=ts.isoformat(), source=source, composite=composite
+            )
             self._frames.append(frame)
             self._cleanup()
             self._save_index()
@@ -211,7 +242,11 @@ def _merge_region_dir(source: Path, target: Path) -> int:
             shutil.move(str(src_file), str(target / entry["filename"]))
             merged[entry["filename"]] = entry
             moved += 1
-    entries = sorted(merged.values(), key=lambda e: e["created_at"])
+    # Ohne vorhandene Frames am Ziel bleibt die Reihenfolge des Hinzufügens
+    # erhalten (sie weicht nach Quellenwechseln von der Zeitreihenfolge ab).
+    entries = list(merged.values())
+    if len(entries) != moved:
+        entries.sort(key=lambda e: e["created_at"])
     (target / INDEX_FILENAME).write_text(json.dumps(entries), encoding="utf-8")
     shutil.rmtree(source, ignore_errors=True)
     logger.info("%d Frames von %s nach %s verschoben", moved, source, target)

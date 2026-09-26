@@ -26,6 +26,8 @@ from PIL import Image
 from ha_satellite import logbuffer, storage
 from ha_satellite.buffer import BufferManager
 from ha_satellite.config import (
+    COMPOSITES,
+    PLACEHOLDER_DRIVERS,
     VALID_DRIVERS,
     AppConfig,
     ConfigStore,
@@ -102,6 +104,8 @@ async def index(request: Request):
             "env_overrides": env_overrides().keys(),
             "status": status_store.all(),
             "drivers": VALID_DRIVERS,
+            "composites": COMPOSITES,
+            "placeholder_drivers": PLACEHOLDER_DRIVERS,
         },
     )
 
@@ -298,6 +302,8 @@ async def list_frames(region_name: str):
                 "index": i,
                 "filename": frame.filename,
                 "created_at": frame.created_at,
+                "source": frame.source,
+                "composite": frame.composite,
                 "url": f"/regions/{region_name}/history/{frame.filename}",
             }
             for i, frame in enumerate(buffer.frames_newest_first())

@@ -390,3 +390,83 @@ def test_source_window_ignores_points_with_only_one_valid_index():
     request = RenderRequest("r", ("f",), "c", 48.2, 16.37, 300, 20, 20, "wien")
     with pytest.raises(SatpyRenderError, match="außerhalb"):
         source_window(HalfValidArea(), target_area(request))
+
+
+# -- Quellen-/Kompositwechsel ----------------------------------------------------
+class OriginSource:
+    """Liefert je Quelle eine feste Aufnahmezeit (0° hinkt Rapid Scan hinterher)."""
+
+    SENSING_BY_SOURCE = {"msg_seviri": SENSING, "msg_seviri_0deg": SENSING - timedelta(minutes=13)}
+
+    def __init__(self):
+        self.calls: list[tuple[str, str, datetime | None]] = []
+
+    def render(self, region, config, last_sensing=None):
+        sensing = self.SENSING_BY_SOURCE[region.source]
+        self.calls.append((region.source, region.composite, last_sensing))
+        if last_sensing is not None and sensing <= last_sensing:
+            raise NoNewData("bereits gerendert")
+        return RenderedFrame(f"{region.source}/{region.composite}".encode(), sensing)
+
+
+def _switch(store: ConfigStore, **changes) -> None:
+    config = store.get()
+    regions = [r.model_copy(update=changes) if r.name == "wien" else r for r in config.regions]
+    store.update(config.model_copy(update={"regions": regions}))
+
+
+def test_switching_source_or_composite_renders_even_older_product(tmp_path, monkeypatch):
+    store = ConfigStore(tmp_path / "config.yaml")
+    buffers = BufferManager(tmp_path / "frames")
+    scheduler = RenderScheduler(store, buffers, StatusStore())
+    source = OriginSource()
+    monkeypatch.setattr("ha_satellite.scheduler.get_source", lambda name: source)
+    buffer = lambda: buffers.get("wien", 10, 500)  # noqa: E731
+
+    scheduler._run_region("wien")
+    assert len(buffer()) == 1
+
+    # Wechsel auf 0°: Aufnahme ist älter als der Rapid-Scan-Frame, wird aber
+    # trotzdem gerendert und ist danach der neueste Frame.
+    _switch(store, source="msg_seviri_0deg")
+    scheduler._run_region("wien")
+    assert len(buffer()) == 2
+    assert buffer().latest().source == "msg_seviri_0deg"
+    assert buffer().get(0).path(buffer().region_dir).read_bytes().startswith(b"msg_seviri_0deg/")
+
+    # Gleiche Quelle erneut: kein doppelter Frame.
+    scheduler._run_region("wien")
+    assert len(buffer()) == 2
+
+    # Nur das Komposit ändern: gleiche Aufnahme, trotzdem neues Bild.
+    _switch(store, composite="natural_color_hrv")
+    scheduler._run_region("wien")
+    assert len(buffer()) == 3
+    assert buffer().latest().composite == "natural_color_hrv"
+
+    # Zurück auf Rapid Scan: wieder sofort ein Bild.
+    _switch(store, source="msg_seviri")
+    scheduler._run_region("wien")
+    assert buffer().latest().source == "msg_seviri"
+    assert len(buffer()) == 4
+
+
+def test_reload_keeps_schedule_of_unchanged_regions(tmp_path):
+    store = ConfigStore(tmp_path / "config.yaml")
+    scheduler = RenderScheduler(store, BufferManager(tmp_path / "frames"), StatusStore())
+    scheduler._scheduler.start(paused=True)
+    try:
+        scheduler.reload()
+        later = datetime.now(timezone.utc) + timedelta(minutes=10)
+        for name in ("wien", "mallorca"):
+            scheduler._scheduler.get_job(f"render-{name}").modify(next_run_time=later)
+
+        _switch(store, composite="natural_color_hrv")
+        scheduler.reload()
+
+        wien = scheduler._scheduler.get_job("render-wien").next_run_time
+        mallorca = scheduler._scheduler.get_job("render-mallorca").next_run_time
+        assert wien < later - timedelta(minutes=5)  # geändert -> sofort
+        assert mallorca == later  # unverändert -> Takt bleibt
+    finally:
+        scheduler._scheduler.shutdown(wait=False)

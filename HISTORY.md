@@ -1,5 +1,31 @@
 # HISTORY.md — Chronik und Fallstricke
 
+## Quellenwechsel ohne Wirkung, Bildtyp-Auswahl, API-Links
+
+**Befund (Rollout):** Wechsel einer Region von Rapid Scan auf 0° (Full Disk)
+zeigte kein neues Bild. Die 0°-Aufnahme (13:27) war älter als der neueste
+Rapid-Scan-Frame (13:40), der Vergleich "Aufnahme nicht neuer als neuester
+Frame" meldete daher dauerhaft `NoNewData`. **Lösung:** Frames speichern
+Quelle und Komposit; verglichen wird nur bei gleicher Herkunft, der Puffer
+behält die Reihenfolge des Hinzufügens (damit ist das neu gerenderte Bild
+Frame 0). Gleiche Zeitstempel bekommen einen Suffix statt sich zu
+überschreiben.
+
+**Missverständnis „bessere Qualität“:** 0° ist nicht höher aufgelöst als
+Rapid Scan (beides SEVIRI), nur seltener (15 statt 5 min). Die echte
+Qualitätsverbesserung ist das Komposit (HRV-Schärfung, siehe unten); das war
+in der UI nicht einstellbar. Jetzt: Auswahlliste „Bildtyp“ je Region, und
+Quellen mit Platzhalter-Treibern (`data_tailor`, `mtg_fci`) sind als
+„Platzhalter“ gekennzeichnet.
+
+**Nebenbefund:** Jedes Speichern (auch Intervall, Quellen-Häkchen) setzte alle
+Region-Jobs auf „sofort“ - mehrere Render-Läufe hintereinander und
+APScheduler-Warnungen „maximum number of running instances“. Jetzt behalten
+unveränderte Regionen ihren Takt.
+
+**API-Links:** Ganz unten in der UI, Standort-Auswahl ändert die
+Regions-Links; POST-Endpunkte werden nur angezeigt.
+
 ## HRV-Schärfung (höhere Auflösung tagsüber)
 
 **Anlass:** Die Bilder waren sehr pixelig. SEVIRI-Farbkanäle haben ~3 km
