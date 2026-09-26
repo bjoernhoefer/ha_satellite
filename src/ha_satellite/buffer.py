@@ -217,10 +217,27 @@ class BufferManager:
             moved = 0
             if move_existing and old_base_dir.exists() and old_base_dir.resolve() != new_base_dir.resolve():
                 for region_dir in sorted(p for p in old_base_dir.iterdir() if p.is_dir()):
+                    if region_dir.name.startswith("_"):
+                        # Interne Verzeichnisse (z. B. FCI-Rohdaten-Archiv)
+                        # haben keinen Frame-Index und werden als Ganzes verschoben.
+                        _move_internal_dir(region_dir, new_base_dir / region_dir.name)
+                        continue
                     moved += _merge_region_dir(region_dir, new_base_dir / region_dir.name)
             self.base_dir = new_base_dir
             self._buffers.clear()
             return moved
+
+
+def _move_internal_dir(source: Path, target: Path) -> None:
+    """Verschiebt Unterordner, die am Ziel noch fehlen; Rest wird verworfen."""
+    target.mkdir(parents=True, exist_ok=True)
+    for child in source.iterdir():
+        destination = target / child.name
+        if child.is_dir() and destination.exists():
+            _move_internal_dir(child, destination)
+        elif not destination.exists():
+            shutil.move(str(child), str(destination))
+    shutil.rmtree(source, ignore_errors=True)
 
 
 def _merge_region_dir(source: Path, target: Path) -> int:

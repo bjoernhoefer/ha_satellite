@@ -54,8 +54,46 @@ COMPOSITES: dict[str, str] = {
     "airmass": "Luftmassen",
 }
 
+# MTG FCI (1 km sichtbar / 2 km IR). Tagsüber Echtfarben, nachts
+# IR-Wolken; definiert in satpy_config/composites/visir.yaml. true_color
+# und airmass sprengen auf dem Pi 5 das Speicherlimit (bis 1,7 GB).
+DEFAULT_FCI_COMPOSITE = "natural_color_with_night_cloudtop"
+FCI_COMPOSITES: dict[str, str] = {
+    "natural_color_with_night_cloudtop": "Echtfarben (~1 km), nachts IR – beste Qualität",
+    "natural_color": "Echtfarben (~1 km), nachts schwarz",
+    "hrv_clouds": "Wolken hochaufgelöst (~1 km, Tag)",
+    "cloudtop": "Wolkenobergrenzen (IR, ~2 km)",
+    "colorized_ir_clouds": "IR-Wolken eingefärbt",
+}
+# SEVIRI-spezifische Namen, die für FCI auf ein Gegenstück abgebildet
+# werden (Quellenwechsel ohne Kompositwechsel funktioniert so weiter).
+FCI_COMPOSITE_ALIASES: dict[str, str] = {
+    "natural_color_hrv_with_night_ir": DEFAULT_FCI_COMPOSITE,
+    "natural_color_raw_with_night_ir": DEFAULT_FCI_COMPOSITE,
+    "natural_color_hrv": "natural_color",
+}
+
+COMPOSITES_BY_DRIVER: dict[str, dict[str, str]] = {"mtg_fci": FCI_COMPOSITES}
+
+
+def composites_for(driver: str | None) -> dict[str, str]:
+    return COMPOSITES_BY_DRIVER.get(driver or "", COMPOSITES)
+
+
+def default_composite_for(driver: str | None) -> str:
+    return DEFAULT_FCI_COMPOSITE if driver == "mtg_fci" else DEFAULT_COMPOSITE
+
+
+def resolve_fci_composite(name: str) -> str:
+    return FCI_COMPOSITE_ALIASES.get(name, name)
+
+
 # Treiber, die noch keine echten Bilder liefern (Platzhalter-Frames).
-PLACEHOLDER_DRIVERS = ("data_tailor", "mtg_fci", "dummy")
+PLACEHOLDER_DRIVERS = ("data_tailor", "dummy")
+
+DEFAULT_FCI_COLLECTION = "EO:EUM:DAT:0662"
+# FCI liefert die Vollscheibe in 40 Streifen ("Chunks", Süd -> Nord).
+FCI_CHUNK_COUNT = 40
 
 # MSG SEVIRI Rapid Scan (Europa, alle 5 Minuten, Meteosat-11).
 DEFAULT_MSG_COLLECTION = "EO:EUM:DAT:MSG:MSG15-RSS"
@@ -95,6 +133,15 @@ class RegionConfig(BaseModel):
     # Verweist auf die ``id`` eines Eintrags im Quellen-Katalog.
     source: str = "msg_seviri"
     max_frames: int | None = None
+
+    @field_validator("name")
+    @classmethod
+    def _validate_name(cls, value: str) -> str:
+        if not value or value.startswith("_") or "/" in value or value in (".", ".."):
+            raise ValueError(
+                f"Ungültiger Regionsname '{value}' (nicht leer, ohne '/', darf nicht mit '_' beginnen)"
+            )
+        return value
 
     def bounding_box(self):
         return bounding_box(self.lat, self.lon, self.radius_km)
@@ -155,7 +202,7 @@ def default_catalog() -> list[SourceDefinition]:
             id="mtg_fci",
             driver="mtg_fci",
             label="MTG FCI Level 1c Normal Resolution (10 min)",
-            collection="EO:EUM:DAT:0662",
+            collection=DEFAULT_FCI_COLLECTION,
             enabled=False,
         ),
         SourceDefinition(
@@ -234,6 +281,24 @@ class StorageConfig(BaseModel):
         return value.rstrip("/") or ("/" if value else "")
 
 
+class ArchiveConfig(BaseModel):
+    """Rohdaten-Archiv der MTG-FCI-Chunks (Rendern bei Bedarf).
+
+    Heruntergeladen werden die Chunks ``chunk_min``..``chunk_max`` (Vorgabe:
+    Europa) plus alle, die eine konfigurierte Region benötigt.
+    """
+
+    retention_hours: int = Field(default=12, ge=0, le=168)
+    chunk_min: int = Field(default=32, ge=1, le=FCI_CHUNK_COUNT)
+    chunk_max: int = Field(default=FCI_CHUNK_COUNT, ge=1, le=FCI_CHUNK_COUNT)
+
+    @model_validator(mode="after")
+    def _ordered(self) -> "ArchiveConfig":
+        if self.chunk_min > self.chunk_max:
+            raise ValueError("Chunk-Bereich: 'von' darf nicht größer als 'bis' sein")
+        return self
+
+
 class ServerConfig(BaseModel):
     mjpeg_fps: float = Field(default=2.0, gt=0)
 
@@ -243,6 +308,7 @@ class AppConfig(BaseModel):
     sources: SourcesConfig = Field(default_factory=SourcesConfig)
     history: HistoryConfig = Field(default_factory=HistoryConfig)
     storage: StorageConfig = Field(default_factory=StorageConfig)
+    archive: ArchiveConfig = Field(default_factory=ArchiveConfig)
     server: ServerConfig = Field(default_factory=ServerConfig)
     regions: list[RegionConfig] = Field(default_factory=list)
 

@@ -37,7 +37,7 @@ COPY src /app/src
 # --only-binary: nie aus dem Sdist kompilieren (auf dem Pi/unter QEMU
 # extrem langsam) - fehlt ein Wheel, soll der Build sofort scheitern.
 RUN micromamba run -n base pip install --no-cache-dir \
-        --only-binary=numpy,pyproj,pyresample,pykdtree,trollimage,pillow .
+        --only-binary=numpy,pyproj,pyresample,pykdtree,trollimage,pillow,netCDF4,cftime .
 
 # Healthchecks und `docker exec` durchlaufen das Entrypoint nicht, d. h. die
 # conda-Umgebung ist dort nicht aktiviert und `python3` läge nicht im PATH.

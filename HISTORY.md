@@ -1,5 +1,33 @@
 # HISTORY.md — Chronik und Fallstricke
 
+## MTG FCI mit Rohdaten-Archiv (Europa-Chunks)
+
+**Ziel:** schärfere Bilder als SEVIRI (FCI: 1 km sichtbar, 2 km IR) ohne
+~1 GB je 10-min-Slot, und die Möglichkeit, Region/Bildtyp erst beim
+Anschauen zu wählen. Data Tailor wurde verworfen: spart nur Volumen, liefert
+aber keine bessere Qualität als die Quelle.
+
+**Spike auf dem Pi 5** (ein Slot, Chunks 32–40 = ~175 MB):
+- `fci_l1c_nc` scheiterte zunächst am fehlenden `netCDF4` → Dependency.
+- Satpy füllt fehlende Chunks selbst auf (lazy); Wien aus nur 36–37 gerendert
+  ist pixelgleich zum Render aus allen 9 Chunks → die berechnete Chunk-Zuordnung
+  stimmt.
+- Speicher: alle 9 Chunks ~600–640 MB Spitze (einmal beendet, trotz
+  `num_workers=1` bzw. kleineren dask-Chunks kaum besser); nur Regions-Chunks
+  ~410–480 MB → Rendern immer nur mit den Chunks der Region.
+- Komposite: `natural_color` 8 s, `cloudtop` 11 s, eigenes
+  `natural_color_with_night_cloudtop` 11 s / 410 MB; `true_color*` > 6 GB
+  und Zeitlimit (Rayleigh/ndvi_hybrid_green), `airmass` ~1,7 GB → nicht
+  anbieten.
+- Ein Parallel-Render außerhalb des Render-Locks (Spike neben dem laufenden
+  Dienst) wurde beendet („Exit-Code None“) - im Betrieb verhindert das der
+  globale Lock, der auch für das Rendern bei Bedarf gilt.
+
+**Entscheidungen:** Archiv am Bilder-Speicherort unter `_archive/` (große
+Platte), beim Speicherort-Wechsel als Ganzes mit umgezogen, nicht als Region
+behandelt. Download als eigener Job ohne Render-Lock. Bei Bedarf gerenderte
+Bilder werden im Slot gecacht und mit ihm gelöscht.
+
 ## Quellenwechsel ohne Wirkung, Bildtyp-Auswahl, API-Links
 
 **Befund (Rollout):** Wechsel einer Region von Rapid Scan auf 0° (Full Disk)

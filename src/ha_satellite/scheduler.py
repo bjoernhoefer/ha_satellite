@@ -26,7 +26,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 
 from ha_satellite.buffer import BufferManager
 from ha_satellite.config import AppConfig, ConfigStore
-from ha_satellite.sources import NoNewData, RenderError, get_source
+from ha_satellite.sources import NoNewData, RenderError, get_source, sync_fci_archive
 from ha_satellite.status import StatusStore
 
 if TYPE_CHECKING:
@@ -35,6 +35,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 JOB_ID_PREFIX = "render-"
+ARCHIVE_JOB_PREFIX = "archive-"
 SYNC_JOB_ID = "source-sync"
 # Download (~100 MB) + Rendering einer Region bleibt deutlich darunter.
 LOCK_TIMEOUT_SECONDS = 15 * 60
@@ -89,13 +90,28 @@ class RenderScheduler:
     def _reschedule(self) -> None:
         previous_runs: dict[str, datetime | None] = {}
         for job in self._scheduler.get_jobs():
-            if job.id.startswith(JOB_ID_PREFIX) or job.id == SYNC_JOB_ID:
+            if job.id.startswith((JOB_ID_PREFIX, ARCHIVE_JOB_PREFIX)) or job.id == SYNC_JOB_ID:
                 previous_runs[job.id] = getattr(job, "next_run_time", None)
                 job.remove()
         config = self._config_store.get()
         interval = config.sources.poll_interval_minutes
         self._schedule_sync(config.sources.auto_sync_hours)
         now = datetime.now(timezone.utc)
+        # FCI-Rohdaten-Archiv: unabhängig davon, ob eine Region die Quelle
+        # nutzt - so lassen sich später beliebige Regionen/Komposite rendern.
+        for entry in config.sources.catalog:
+            if entry.enabled and entry.driver == "mtg_fci":
+                job_id = f"{ARCHIVE_JOB_PREFIX}{entry.id}"
+                self._scheduler.add_job(
+                    self._run_archive,
+                    "interval",
+                    minutes=interval,
+                    args=[entry.id],
+                    id=job_id,
+                    next_run_time=previous_runs.get(job_id) or now,
+                    max_instances=1,
+                    coalesce=True,
+                )
         for region in config.regions:
             if not config.sources.is_enabled(region.source):
                 logger.info(
@@ -142,6 +158,20 @@ class RenderScheduler:
             max_instances=1,
             coalesce=True,
         )
+
+    def _run_archive(self, source_id: str) -> None:
+        """Lädt den neuesten FCI-Slot ins Archiv (ohne Render-Lock: nur I/O)."""
+        config = self._config_store.get()
+        entry = config.sources.get(source_id)
+        if entry is None or entry.driver != "mtg_fci":
+            return
+        try:
+            slot = sync_fci_archive(config, entry.collection or "")
+            logger.debug("FCI-Archiv %s aktuell: %s", source_id, slot.name)
+        except RenderError as exc:
+            logger.error("FCI-Archiv %s: %s", source_id, exc)
+        except Exception:  # pragma: no cover - defensive
+            logger.exception("FCI-Archiv %s: unerwarteter Fehler", source_id)
 
     def trigger_now(self, region_name: str) -> None:
         """Für den UI-Button "Jetzt aktualisieren"."""

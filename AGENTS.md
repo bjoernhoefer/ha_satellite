@@ -35,9 +35,10 @@ src/ha_satellite/
                    Quellen-Abgleich-Job
   sources/         Treiber: msg_seviri, data_tailor, mtg_fci (+ dummy)
     eumetsat.py      Data-Store-Suche + Download (eumdac), Produkt-Cache /data/cache
+    fci_archive.py   MTG-FCI-Rohdaten-Archiv: Chunk-Geometrie, Download je Slot, Aufräumen
     satpy_render.py  Satpy-Rendering im Kindprozess (Crop-Fenster, Resampling, PNG)
     hrv_composite.py Eigener Compositor: Echtfarben mit HRV geschärft
-  satpy_config/    Eigene Satpy-Komposit-Definitionen (composites/seviri.yaml)
+  satpy_config/    Eigene Satpy-Komposit-Definitionen (composites/seviri.yaml, visir.yaml)
   source_sync.py   Abgleich des Katalogs mit dem EUMETSAT Data Store (öffentliche API)
   storage.py       Speicherort-Kandidaten, Schreibtest, System-Disk-/Container-Warnung
   logbuffer.py     In-Memory-Log (für die UI) + rotierende Logdatei
@@ -48,8 +49,9 @@ src/ha_satellite/
 Zustand liegt unter `/data` (Konfiguration, `source_sync.json`, `logs/`,
 Produkt-Cache `cache/`)
 und am konfigurierten Bilder-Speicherort (Default `/data/frames`, in der UI
-änderbar, z. B. `/mnt/data/ha_satellite`). Der Container selbst ist
-zustandslos.
+änderbar, z. B. `/mnt/data/ha_satellite`; dort auch das FCI-Archiv unter
+`_archive/`). Der Container selbst ist zustandslos. Regionsnamen dürfen
+nicht mit `_` beginnen (reserviert für interne Verzeichnisse).
 
 ### Quellen-Katalog
 
@@ -80,15 +82,17 @@ von einem Treiber unterstützte Collections („entdeckt“, per Klick
   aber generierte Platzhalterbilder ("Dummy-Frames"). So lässt sich der
   ARM64-Build und die gesamte Infrastruktur früh verifizieren, bevor die
   deutlich komplexere Satpy/eumdac-Kette dazukommt.
-- **Phase 2 (dieser Stand):** `msg_seviri` liefert echte Bilder: neuestes
+- **Phase 2 (abgeschlossen):** `msg_seviri` liefert echte Bilder: neuestes
   Produkt der Collection `sources.msg_collection` (Default
   `EO:EUM:DAT:MSG:MSG15-RSS`, Rapid Scan Europa, alle 5 min) wird per
   `eumdac` geladen (nur die `.nat`-Datei, ~100 MB), **einmal pro Produkt**
   in `/data/cache/` abgelegt und von allen Regionen genutzt. Gerendert wird
   mit Satpy (`seviri_l1b_native`) in einem **Kindprozess** (Speicher wird
   danach vollständig freigegeben; ein OOM trifft nicht den Webserver).
-  Frame-Zeitstempel = Aufnahmeende. `data_tailor`/`mtg_fci` liefern noch
-  Dummy-Frames (Folgeschritt, FCI-Produkte sind ~1 GB/Slot → Data Tailor).
+  Frame-Zeitstempel = Aufnahmeende. `data_tailor` liefert noch
+  Dummy-Frames.
+- **Phase 3 (dieser Stand):** `mtg_fci` liefert echte Bilder aus MTG FCI
+  (1 km sichtbar, 2 km IR) über ein Rohdaten-Archiv, siehe unten.
 - `Source.render(region, config, last_sensing) -> RenderedFrame`: ist die
   neueste Aufnahme nicht jünger als `last_sensing` (neuester Frame im
   Puffer), wird `NoNewData` ausgelöst — kein Fehler, kein doppelter Frame.
@@ -111,6 +115,40 @@ zugeschnitten, geladen wird mit `generate=False` (siehe HISTORY.md,
 "HRV-Schärfung"). Funktioniert für Rapid Scan und 0° (Full Disk).
 Richtwerte auf dem Pi 5: ~8–9 s und ~400–450 MB Spitzen-RSS pro Region und
 Lauf.
+
+### MTG FCI und Rohdaten-Archiv (mtg_fci)
+
+Ein FCI-Slot (alle 10 min, Collection `EO:EUM:DAT:0662`) ist ~1 GB, geteilt
+in 40 Streifen („Chunks“, 1 = Süd … 40 = Nord). Geladen werden nur die
+Chunks `archive.chunk_min`..`archive.chunk_max` (Default 32–40 = Europa,
+~180 MB/Slot, ~25 s) **plus** alle, die eine konfigurierte Region braucht
+(`fci_archive.chunks_for_region`: Bounding Box → geos-Projektion →
+Zeile im 2-km-Grid; gegen pyproj getestet). Ablage:
+`<Speicherort>/_archive/<Collection>/<Slot>/` (`.part` + Rename, `meta.json`
+zuletzt), Aufbewahrung `archive.retention_hours` (Default 12 h, 0 = nur
+neuester Slot; ~8–13 GB bei 15/10 min Intervall). Beides in der UI unter
+„Speicherort & Historie“.
+
+- Heruntergeladen wird, sobald ein `mtg_fci`-Katalogeintrag **aktiv** ist
+  (eigener Scheduler-Job `archive-<id>`, ohne Render-Lock - nur I/O),
+  unabhängig davon, ob eine Region die Quelle nutzt.
+- Gerendert (planmäßig oder bei Bedarf) werden nur die Chunks der Region:
+  hält den Kindprozess bei ~410–480 MB. Mit allen 9 Chunks lag die Spitze
+  bei ~600–640 MB und wurde neben dem Webserver gelegentlich beendet.
+- **Rendern bei Bedarf:** `GET /regions/{r}/archive/{slot}.png?composite=…`
+  rendert jede Region (auch mit SEVIRI-Quelle oder neu angelegt) aus jedem
+  archivierten Slot, unter dem globalen Render-Lock; das PNG wird im Slot
+  unter `renders/` gecacht und verschwindet mit ihm. In der UI: Button
+  „🛰 FCI-Archiv“ je Region (Betrachter mit Bildtyp-Auswahl, kein Zeitraffer,
+  da jedes Bild ~10–20 s Rendern kostet).
+- Reader `fci_l1c_nc` braucht `netCDF4` (Wheel für aarch64 vorhanden).
+- Komposite (UI-Liste je Treiber, `config.FCI_COMPOSITES`): Default
+  `natural_color_with_night_cloudtop` (eigene Definition in
+  `satpy_config/composites/visir.yaml`, ~11 s / ~410 MB), `natural_color`,
+  `hrv_clouds`, `cloudtop`, `colorized_ir_clouds`. **Nicht**: `true_color*`
+  (> 6 GB, Zeitlimit) und `airmass` (~1,7 GB). SEVIRI-Namen werden auf ein
+  FCI-Gegenstück abgebildet (`FCI_COMPOSITE_ALIASES`), die UI setzt beim
+  Quellenwechsel einen passenden Bildtyp.
 
 ## ARM64-Build-Entscheidung
 
@@ -207,7 +245,10 @@ docker compose up -d
 | `POST /api/sources/sync` | Abgleich mit dem EUMETSAT Data Store jetzt ausführen |
 | `POST /api/sources/adopt` | Entdeckte Collection (`{"collection": ...}`) in den Katalog übernehmen |
 | `GET /api/storage` | Aktueller Speicherort, Belegung, Kandidaten mit freiem Platz/Warnungen |
-| `POST /api/storage` | Speicherort/Historie setzen (`frames_dir`, `move_existing`, `history_minutes`, `max_storage_mb`) |
+| `POST /api/storage` | Speicherort/Historie/Archiv setzen (`frames_dir`, `move_existing`, `history_minutes`, `max_storage_mb`, `archive_retention_hours`, `archive_chunk_min`, `archive_chunk_max`) |
+| `GET /api/archive` | FCI-Rohdaten-Archiv: Aufbewahrung, geladene Chunks, Slots/Belegung je Collection, letzter Fehler |
+| `GET /api/regions/{region}/archive` | Archivierte FCI-Slots für die Region (`?composite=`), mit Bild-URL und Cache-Status |
+| `GET /regions/{region}/archive/{slot}.png` | Region aus einem FCI-Slot rendern (`?composite=`, gecacht) |
 | `GET /api/logs` | Log-Einträge (`?after=<id>`, `?format=text`) |
 | `GET /live/{region}` | Merkbare Adresse: öffnet den Live-Stream im Browser |
 | `GET /healthz` | Liveness |
