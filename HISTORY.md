@@ -11,7 +11,7 @@
 `satpy.config config_path` eingebunden). Tagsüber werden die
 Echtfarbkanäle mit dem HRV-Kanal (~1 km, in derselben `.nat`-Datei, kein
 Mehr-Download) geschärft, nachts wie bisher `cloudtop` (IR, ~3 km).
-Laufzeit auf dem Pi 5 ~9 s, Spitzen-RSS ~450 MB pro Region.
+Laufzeit auf dem Pi 5 ~8–9 s, Spitzen-RSS ~400–450 MB pro Region.
 
 **Fallstricke:**
 
@@ -20,7 +20,19 @@ Laufzeit auf dem Pi 5 ~9 s, Spitzen-RSS ~450 MB pro Region.
   `Scene.resample`. Das Crop-Fenster wird deshalb je Datensatz aus dessen
   eigener Area berechnet und in die *ursprüngliche* Scene zurückgeschrieben
   (`scene._datasets[...]`, damit Wishlist/Abhängigkeitsbaum erhalten
-  bleiben); danach erzeugt `resample` das Komposit.
+  bleiben); danach erzeugt `resample` das Komposit. Geladen wird mit
+  `scene.load(..., generate=False)`, d. h. auch Ein-Raster-Komposite und
+  Modifier (`sunz_corrected`) entstehen erst auf dem kleinen Zielraster -
+  Spitzen-RSS sank dadurch für alle Komposite (z. B.
+  `natural_color_raw_with_night_ir` auf RSS 570 → 380 MB, auf 0° 880 →
+  430 MB).
+- **Full Disk (0°, Katalogeintrag `msg_seviri_0deg`):** HRV liegt dort als
+  zwei gestapelte Fenster vor (`StackedAreaDefinition`), daran scheitern
+  Zuschnitt und `sunz_corrected` (dask: "Shapes do not align"). Der Reader
+  läuft deshalb mit `fill_disk=True` (HRV als ein 11136×11136-Raster, lazy
+  aufgefüllt). Außerdem wertet `source_window` nur noch Punkte aus, bei
+  denen Zeile *und* Spalte gültig sind (vorher unabhängig komprimiert -
+  im südlichen HRV-Fenster waren nur die Spalten gültig).
 - **`RatioSharpenedRGB` (Satpy):** ersetzt einen Kanal durch HRV und
   skaliert die anderen mit HRV/Kanal - über dunklem Meer (HRV enthält
   blaues Streulicht, VIS008 fast 0) entstand ein deutlicher Magentastich.

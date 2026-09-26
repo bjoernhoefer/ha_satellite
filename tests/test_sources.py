@@ -367,3 +367,26 @@ def test_default_composite_is_defined_for_seviri():
         compositors, _ = load_compositor_configs_for_sensors(["seviri"])
     names = {key["name"] for key in compositors["seviri"]}
     assert {DEFAULT_COMPOSITE, "natural_color_hrv"} <= names
+
+
+def test_source_window_ignores_points_with_only_one_valid_index():
+    from ha_satellite.sources.satpy_render import (
+        RenderRequest,
+        SatpyRenderError,
+        source_window,
+        target_area,
+    )
+
+    class HalfValidArea:
+        """Wie das südliche HRV-Fenster im Full Disk: Spalten gültig, Zeilen nicht."""
+
+        shape = (100, 100)
+
+        def get_array_indices_from_lonlat(self, lons, lats):
+            cols = np.ma.masked_array(np.full(lons.shape, 50), mask=False)
+            rows = np.ma.masked_array(np.zeros(lons.shape, dtype=int), mask=True)
+            return cols, rows
+
+    request = RenderRequest("r", ("f",), "c", 48.2, 16.37, 300, 20, 20, "wien")
+    with pytest.raises(SatpyRenderError, match="außerhalb"):
+        source_window(HalfValidArea(), target_area(request))

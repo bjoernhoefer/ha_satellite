@@ -107,8 +107,10 @@ Default, ~3 km), `natural_color` (nachts schwarz), `convection`, `airmass`,
 scheitert am Hash). Unbekannte Namen führen zu einem Fehler im Status,
 nicht zum Absturz. Komposite aus Kanälen unterschiedlicher Auflösung
 entstehen erst beim Resampling: jeder Kanal wird mit eigenem Fenster
-zugeschnitten (siehe HISTORY.md, "HRV-Schärfung"). Richtwerte auf dem Pi 5:
-~9 s und ~450 MB Spitzen-RSS pro Region und Lauf.
+zugeschnitten, geladen wird mit `generate=False` (siehe HISTORY.md,
+"HRV-Schärfung"). Funktioniert für Rapid Scan und 0° (Full Disk).
+Richtwerte auf dem Pi 5: ~8–9 s und ~400–450 MB Spitzen-RSS pro Region und
+Lauf.
 
 ## ARM64-Build-Entscheidung
 

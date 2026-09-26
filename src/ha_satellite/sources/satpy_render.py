@@ -56,7 +56,8 @@ def source_window(source_area, target_area, margin: int = WINDOW_MARGIN_PX):
     edge_lons = np.concatenate([lons[0], lons[-1], lons[:, 0], lons[:, -1]])
     edge_lats = np.concatenate([lats[0], lats[-1], lats[:, 0], lats[:, -1]])
     cols, rows = source_area.get_array_indices_from_lonlat(edge_lons, edge_lats)
-    cols, rows = np.ma.compressed(cols), np.ma.compressed(rows)
+    valid = ~(np.ma.getmaskarray(cols) | np.ma.getmaskarray(rows))
+    cols, rows = np.ma.getdata(cols)[valid], np.ma.getdata(rows)[valid]
     if cols.size == 0:
         raise SatpyRenderError("Region liegt außerhalb des Satelliten-Sichtbereichs")
     height, width = source_area.shape
@@ -115,7 +116,14 @@ def render_png(request: RenderRequest) -> tuple[bytes, datetime]:
     from satpy import Scene
 
     satpy.config.set(config_path=[str(SATPY_CONFIG_DIR)])
-    scene = Scene(reader=request.reader, filenames=list(request.filenames))
+    # fill_disk: HRV liegt im Full Disk (0°) sonst als zwei gestapelte
+    # Fenster vor (StackedAreaDefinition) - daran scheitern Zuschnitt und
+    # sunz_corrected. Aufgefüllt wird lazy, der Zuschnitt lädt nur das Fenster.
+    scene = Scene(
+        reader=request.reader,
+        filenames=list(request.filenames),
+        reader_kwargs={"fill_disk": True} if request.reader == "seviri_l1b_native" else None,
+    )
     available = set(scene.available_composite_names()) | {
         str(name) for name in scene.available_dataset_names()
     }
@@ -125,7 +133,7 @@ def render_png(request: RenderRequest) -> tuple[bytes, datetime]:
         )
     # Komposite aus Kanälen unterschiedlicher Auflösung (z. B. HRV + VIS)
     # erzeugt Satpy erst beim Resampling; bis dahin liegen nur die Kanäle vor.
-    scene.load([request.composite])
+    scene.load([request.composite], generate=False)
     area = target_area(request)
     for key in list(scene.keys()):
         scene._datasets[key] = _crop_to(scene[key], area)
