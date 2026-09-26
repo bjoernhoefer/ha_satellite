@@ -62,6 +62,8 @@ class RenderScheduler:
         self._source_sync = source_sync
         self._render_lock = threading.Lock()
         self._scheduler = BackgroundScheduler()
+        # Region -> Einstellungen beim letzten Aufsetzen (erkennt Änderungen).
+        self._signatures: dict[str, tuple[int, str]] = {}
 
     def start(self) -> None:
         self._reschedule()
@@ -85,8 +87,10 @@ class RenderScheduler:
             self._render_lock.release()
 
     def _reschedule(self) -> None:
+        previous_runs: dict[str, datetime | None] = {}
         for job in self._scheduler.get_jobs():
             if job.id.startswith(JOB_ID_PREFIX) or job.id == SYNC_JOB_ID:
+                previous_runs[job.id] = getattr(job, "next_run_time", None)
                 job.remove()
         config = self._config_store.get()
         interval = config.sources.poll_interval_minutes
@@ -100,13 +104,22 @@ class RenderScheduler:
                 )
                 continue
             job_id = f"{JOB_ID_PREFIX}{region.name}"
+            # Unveränderte Regionen behalten ihren Takt; neue oder geänderte
+            # (z. B. andere Quelle/Komposit) werden sofort neu gerendert.
+            signature = (interval, region.model_dump_json())
+            next_run = previous_runs.get(job_id)
+            if next_run is None or self._signatures.get(region.name) != signature:
+                if region.name in self._signatures:
+                    logger.info("Region %s geändert - rendere sofort neu", region.name)
+                next_run = now
+            self._signatures[region.name] = signature
             self._scheduler.add_job(
                 self._run_region,
                 "interval",
                 minutes=interval,
                 args=[region.name],
                 id=job_id,
-                next_run_time=now,
+                next_run_time=next_run,
                 max_instances=1,
                 coalesce=True,
             )
@@ -167,13 +180,27 @@ class RenderScheduler:
                 region.name, config.max_frames_for(region), config.history.max_storage_mb
             )
             latest = buffer.latest()
-            last_sensing = _parse_timestamp(latest.created_at) if latest else None
+            # Nur vergleichen, wenn der neueste Frame aus derselben Quelle mit
+            # demselben Komposit stammt - sonst (Quellen-/Kompositwechsel) sofort
+            # neu rendern, auch wenn die Aufnahme älter ist (0° hinkt Rapid Scan
+            # ~15 min hinterher).
+            same_origin = (
+                latest is not None
+                and latest.source == region.source
+                and latest.composite == region.composite
+            )
+            last_sensing = _parse_timestamp(latest.created_at) if same_origin else None
             try:
                 rendered = source.render(region, config, last_sensing)
             except NoNewData as info:
                 logger.info("Keine neue Aufnahme für %s: %s", region_name, info)
             else:
-                frame = buffer.add_frame(rendered.png, timestamp=rendered.sensing_time)
+                frame = buffer.add_frame(
+                    rendered.png,
+                    timestamp=rendered.sensing_time,
+                    source=region.source,
+                    composite=region.composite,
+                )
                 logger.info(
                     "Render %s fertig in %.1f s: %s (%d KB), %d Frames im Puffer",
                     region.name, time.monotonic() - started, frame.filename,

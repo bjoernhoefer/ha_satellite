@@ -40,6 +40,23 @@ VALID_SOURCES = VALID_DRIVERS
 # NASA-Hintergrundkarten nach (Hash-Fehler, siehe HISTORY.md).
 DEFAULT_COMPOSITE = "natural_color_hrv_with_night_ir"
 
+# Auswahl in der Web-UI (Name -> Beschreibung); per JSON/API sind auch
+# andere Satpy-Komposite möglich.
+COMPOSITES: dict[str, str] = {
+    "natural_color_hrv_with_night_ir": "Echtfarben HRV-geschärft (~1 km), nachts IR – beste Qualität",
+    "natural_color_hrv": "Echtfarben HRV-geschärft (~1 km), nur Tag",
+    "natural_color_raw_with_night_ir": "Echtfarben (~3 km), nachts IR",
+    "natural_color": "Echtfarben (~3 km), nachts schwarz",
+    "hrv_clouds": "HRV-Wolken (~1 km, Tag)",
+    "cloudtop": "Wolkenobergrenzen (IR)",
+    "colorized_ir_clouds": "IR-Wolken eingefärbt",
+    "convection": "Konvektion",
+    "airmass": "Luftmassen",
+}
+
+# Treiber, die noch keine echten Bilder liefern (Platzhalter-Frames).
+PLACEHOLDER_DRIVERS = ("data_tailor", "mtg_fci", "dummy")
+
 # MSG SEVIRI Rapid Scan (Europa, alle 5 Minuten, Meteosat-11).
 DEFAULT_MSG_COLLECTION = "EO:EUM:DAT:MSG:MSG15-RSS"
 

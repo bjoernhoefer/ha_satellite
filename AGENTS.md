@@ -172,7 +172,15 @@ docker compose up -d
   Index abgeglichen: fehlende Dateien werden aus dem Index entfernt, Dateien
   ohne Index-Eintrag ("Waisen") gelöscht.
 - Konfigurationsänderungen über `POST /api/config` lösen sofort ein
-  Neuaufsetzen der Scheduler-Jobs aus (`scheduler.reload()`).
+  Neuaufsetzen der Scheduler-Jobs aus (`scheduler.reload()`). Nur neue oder
+  geänderte Regionen (z. B. andere Quelle/Komposit) rendern dabei sofort,
+  unveränderte behalten ihren Takt.
+- Jeder Frame merkt sich im Index Quelle (`source`) und Komposit. „Keine
+  neue Aufnahme“ (`NoNewData`) gilt nur, wenn der neueste Frame dieselbe
+  Herkunft hat - nach einem Wechsel wird sofort gerendert, auch wenn die
+  neue Quelle eine ältere Aufnahme hat (0° hinkt Rapid Scan ~15 min
+  hinterher). Die Puffer-Reihenfolge ist die des Hinzufügens, nicht die der
+  Aufnahmezeit.
 - Ein Speicherort-Wechsel hält den Render-Lock (`scheduler.exclusive()`),
   prüft den Zielpfad per Schreibtest und führt beim Verschieben die
   Ringpuffer-Indizes zusammen.
@@ -189,7 +197,7 @@ docker compose up -d
 
 | Methode/Pfad | Zweck |
 |---|---|
-| `GET /` | Konfigurations-UI |
+| `GET /` | Konfigurations-UI (ganz unten: API-Link-Sammlung mit Standort-Auswahl) |
 | `GET /api/config` | Aktuelle Konfiguration (Secret maskiert) |
 | `POST /api/config` | Konfiguration speichern (Merge auf gespeicherte Werte; leeres oder maskiertes Secret = unverändert) |
 | `GET /api/status` | Letzter/nächster Lauf, Frame-Anzahl, Alter, Fehler je Region |
@@ -238,7 +246,10 @@ Viewport (Desktop **und** Handy-Viewport 390×844 mit Touch, Zurück-Taste
 schließt), Historie blättern/Zeitraffer, Live-Stream im Browser inkl.
 Deep-Link `/live/{region}`, Logs ganz unten, Quellen-JSON (eingeklappt,
 editierbar, Validierung), Quellen aktivieren, Abgleich + Übernehmen,
-Speicherort wechseln inkl. Verschieben, kein horizontales Scrollen am Handy.
+Speicherort wechseln inkl. Verschieben, kein horizontales Scrollen am Handy,
+Bildtyp/Quelle je Region wechseln (rendert ohne weiteren Klick neu),
+Platzhalter-Quellen gekennzeichnet, API-Links folgen dem gewählten Standort
+und sind anklickbar.
 Selektoren laufen ausschließlich über `data-testid` - Markup und Styling
 dürfen sich frei ändern, die IDs müssen erhalten bleiben. Ohne installiertes
 Playwright werden die Klicktests lokal übersprungen; in CI erzwingt
