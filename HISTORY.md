@@ -23,6 +23,14 @@ aber keine bessere Qualität als die Quelle.
   Dienst) wurde beendet („Exit-Code None“) - im Betrieb verhindert das der
   globale Lock, der auch für das Rendern bei Bedarf gilt.
 
+**Rollout-Befund:** Der erste FCI-Render für Mallorca starb nach ~9 s
+ohne Ergebnis („Exit-Code None“), obwohl der Host 6 GB frei hatte und
+kein OOM-Kill im Kernel-Log stand; der manuelle Neuversuch lief sofort
+durch. Der Exit-Code wurde gelesen, bevor der Prozess eingesammelt war.
+Jetzt: Signal/Exit-Code wird korrekt gemeldet (`SIGKILL` → Hinweis auf
+Speicher), und ein ohne Ergebnis gestorbener Kindprozess wird **einmal**
+neu gestartet (nicht bei Zeitüberschreitung).
+
 **Entscheidungen:** Archiv am Bilder-Speicherort unter `_archive/` (große
 Platte), beim Speicherort-Wechsel als Ganzes mit umgezogen, nicht als Region
 behandelt. Download als eigener Job ohne Render-Lock. Bei Bedarf gerenderte

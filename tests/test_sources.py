@@ -470,3 +470,43 @@ def test_reload_keeps_schedule_of_unchanged_regions(tmp_path):
         assert mallorca == later  # unverändert -> Takt bleibt
     finally:
         scheduler._scheduler.shutdown(wait=False)
+
+
+def test_render_subprocess_retries_once_after_crash(monkeypatch):
+    import signal
+
+    from ha_satellite.sources import satpy_render
+
+    calls = []
+
+    def flaky(request, timeout):
+        calls.append(1)
+        if len(calls) == 1:
+            raise satpy_render.RenderProcessCrashed("Render-Prozess durch SIGSEGV beendet")
+        return b"png", "t"
+
+    monkeypatch.setattr(satpy_render, "_run_once", flaky)
+    assert satpy_render.render_in_subprocess(object()) == (b"png", "t")
+    assert len(calls) == 2
+
+    def always_crash(request, timeout):
+        raise satpy_render.RenderProcessCrashed("kaputt")
+
+    monkeypatch.setattr(satpy_render, "_run_once", always_crash)
+    with pytest.raises(satpy_render.SatpyRenderError, match="kaputt"):
+        satpy_render.render_in_subprocess(object())
+
+    def timeout(request, timeout):
+        calls.append(1)
+        raise satpy_render.SatpyRenderError("Zeitlimit")
+
+    calls.clear()
+    monkeypatch.setattr(satpy_render, "_run_once", timeout)
+    with pytest.raises(satpy_render.SatpyRenderError, match="Zeitlimit"):
+        satpy_render.render_in_subprocess(object())
+    assert len(calls) == 1  # kein Retry bei Zeitüberschreitung
+
+    assert "SIGKILL" in satpy_render._describe_exit(-signal.SIGKILL)
+    assert "Speicherlimit" in satpy_render._describe_exit(-signal.SIGKILL)
+    assert "SIGSEGV" in satpy_render._describe_exit(-signal.SIGSEGV)
+    assert "Exit-Code 1" in satpy_render._describe_exit(1)
