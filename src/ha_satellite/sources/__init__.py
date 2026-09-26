@@ -1,9 +1,9 @@
 """Source-Abstraktion für die verschiedenen EUMETSAT-Datenquellen.
 
 Jede Quelle implementiert ``render(region, config, last_sensing) ->
-RenderedFrame``. ``msg_seviri`` lädt echte Daten aus dem EUMETSAT Data
-Store und rendert sie mit Satpy; ``data_tailor`` und ``mtg_fci`` liefern
-bis zu ihrer Umsetzung noch Platzhalterbilder ("Dummy-Frames").
+RenderedFrame``. ``msg_seviri`` und ``mtg_fci`` laden echte Daten aus dem
+EUMETSAT Data Store und rendern sie mit Satpy; ``data_tailor`` liefert
+bis zu seiner Umsetzung noch Platzhalterbilder ("Dummy-Frames").
 """
 
 from __future__ import annotations
@@ -173,17 +173,102 @@ class DataTailorSource(Source):
         return self._dummy(region)
 
 
+def frames_root(config: AppConfig) -> Path:
+    return Path(config.storage.frames_dir) if config.storage.frames_dir else data_dir() / "frames"
+
+
+def archive_root(config: AppConfig) -> Path:
+    from ha_satellite.sources.fci_archive import ARCHIVE_SUBDIR
+
+    return frames_root(config) / ARCHIVE_SUBDIR
+
+
+def fci_source_for(config: AppConfig, region: RegionConfig | None = None):
+    """FCI-Katalogeintrag für eine Region: ihre eigene Quelle, falls FCI,
+    sonst der erste aktivierte (bzw. erste) FCI-Eintrag."""
+    if region is not None:
+        own = config.sources.get(region.source)
+        if own is not None and own.driver == "mtg_fci":
+            return own
+    entries = [e for e in config.sources.catalog if e.driver == "mtg_fci"]
+    return next((e for e in entries if e.enabled), entries[0] if entries else None)
+
+
+def render_fci_slot(slot, region: RegionConfig, composite: str) -> RenderedFrame:
+    """Rendert eine Region aus einem archivierten FCI-Slot."""
+    from ha_satellite.config import resolve_fci_composite
+    from ha_satellite.sources.fci_archive import chunks_for_region, format_chunks
+    from ha_satellite.sources.satpy_render import (
+        RenderRequest,
+        SatpyRenderError,
+        render_in_subprocess,
+    )
+
+    needed = chunks_for_region(region)
+    if not needed:
+        raise RenderError(f"Region {region.name} liegt außerhalb der FCI-Vollscheibe")
+    files = slot.chunk_files()
+    missing = needed - set(files)
+    if missing:
+        raise RenderError(
+            f"Slot {slot.name} enthält nicht alle Chunks für {region.name} "
+            f"(benötigt {format_chunks(needed)}, fehlt {format_chunks(missing)})"
+        )
+    request = RenderRequest(
+        reader="fci_l1c_nc",
+        filenames=tuple(str(files[c]) for c in sorted(needed)),
+        composite=resolve_fci_composite(composite),
+        lat=region.lat,
+        lon=region.lon,
+        radius_km=region.radius_km,
+        width=region.width,
+        height=region.height,
+        label=region.name,
+    )
+    try:
+        png, sensing_end = render_in_subprocess(request)
+    except SatpyRenderError as exc:
+        raise RenderError(str(exc)) from exc
+    if sensing_end.tzinfo is None:
+        sensing_end = sensing_end.replace(tzinfo=timezone.utc)
+    return RenderedFrame(png, sensing_end)
+
+
+def sync_fci_archive(config: AppConfig, collection: str):
+    """Neuesten FCI-Slot ins Archiv laden (idempotent), liefert den Slot."""
+    from ha_satellite.config import DEFAULT_FCI_COLLECTION
+    from ha_satellite.sources.fci_archive import ArchiveError, get_archive, wanted_chunks
+
+    try:
+        return get_archive(archive_root(config)).sync(
+            collection or DEFAULT_FCI_COLLECTION,
+            config.eumetsat,
+            wanted_chunks(config),
+            config.archive.retention_hours,
+        )
+    except ArchiveError as exc:
+        raise RenderError(str(exc)) from exc
+
+
 class MtgFciSource(Source):
-    """MTG/FCI-Chunks mit höherer Auflösung (folgt)."""
+    """MTG/FCI (1 km sichtbar, 2 km IR) aus dem Chunk-Archiv.
+
+    Pro Slot werden nur die benötigten Chunks geladen (Europa ~180 MB statt
+    ~1 GB) und für ``archive.retention_hours`` aufbewahrt; gerendert werden
+    nur die Chunks der Region (hält den Speicher unter ~500 MB).
+    """
 
     name = "mtg_fci"
 
     def render(self, region, config, last_sensing=None) -> RenderedFrame:
-        logger.warning(
-            "mtg_fci: Anbindung noch nicht implementiert, liefere Dummy-Frame für %s",
-            region.name,
+        from ha_satellite.config import DEFAULT_FCI_COLLECTION
+
+        slot = sync_fci_archive(
+            config, config.sources.collection_for(region.source, DEFAULT_FCI_COLLECTION)
         )
-        return self._dummy(region)
+        if last_sensing is not None and slot.sensing_end <= last_sensing:
+            raise NoNewData(f"{slot.product_id} bereits gerendert")
+        return render_fci_slot(slot, region, region.composite)
 
 
 SOURCE_REGISTRY: dict[str, type[Source]] = {

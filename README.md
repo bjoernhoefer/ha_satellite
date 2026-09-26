@@ -4,9 +4,10 @@ Containerisierter Dienst, der EUMETSAT-Satellitenbilder herunterlädt, zu
 Bildausschnitten rendert und sie **Home Assistant** als Kamera-Entitäten
 bereitstellt (Standbild, Historie, MJPEG-Loop, GIF/MP4-Animation).
 
-> **Status:** Phase 2. Die Quelle `msg_seviri` liefert echte Bilder aus
-> dem MSG-SEVIRI-Rapid-Scan (alle 5 Minuten, Europa), gerendert mit Satpy;
-> `data_tailor` und `mtg_fci` liefern noch Platzhalterbilder
+> **Status:** Phase 3. `msg_seviri` liefert echte Bilder aus MSG SEVIRI
+> (Rapid Scan alle 5 Minuten bzw. 0°), `mtg_fci` aus MTG FCI (1 km, mit
+> Rohdaten-Archiv zum nachträglichen Rendern), beides gerendert mit Satpy;
+> `data_tailor` liefert noch Platzhalterbilder
 > (siehe [HISTORY.md](HISTORY.md) und [AGENTS.md](AGENTS.md)).
 
 ## Schnellstart
@@ -57,7 +58,8 @@ gesetzt werden, damit Compose nicht lokal zu bauen versucht.
   lokales Satpy-Rendering, Default; ein Download pro Aufnahme für alle
   Regionen, ~100 MB, d. h. bei 15 min Intervall ~9 GB/Tag, bei 5 min
   ~28 GB/Tag), `data_tailor` (serverseitiger Zuschnitt bei EUMETSAT),
-  `mtg_fci` (höher aufgelöste Chunks). Ein automatischer Abgleich mit dem
+  `mtg_fci` (MTG FCI, ~1 km: nur die Europa-Chunks, ~180 MB je Aufnahme).
+  Ein automatischer Abgleich mit dem
   EUMETSAT Data Store prüft Verfügbarkeit/Aktualität und schlägt neue
   Collections vor.
 - **Regionen**: Name, Mittelpunkt (Lat/Lon), Umkreis in km (daraus wird die
@@ -65,6 +67,10 @@ gesetzt werden, damit Compose nicht lokal zu bauen versucht.
   `wien` und `mallorca` mit dem Komposit `natural_color_hrv_with_night_ir`
   (tagsüber Echtfarben, mit dem HRV-Kanal auf ~1 km geschärft, nachts
   IR-Wolken; weitere siehe AGENTS.md).
+- **FCI-Rohdaten-Archiv**: Ist eine `mtg_fci`-Quelle aktiv, werden die
+  Rohdaten (Europa + alle Regionen) für 12 h aufbewahrt (einstellbar).
+  Über „🛰 FCI-Archiv“ lässt sich jede Region – auch eine neu angelegte –
+  zu jedem archivierten Zeitpunkt und in jedem Bildtyp rendern.
 - **Historie**: Rollierender Ringpuffer pro Region unter
   `<Speicherort>/{region}/`, Dauer in der UI einstellbar (Default 60
   Minuten), zusätzlich Speicher-Limit (MB) als Notbremse. Alte Frames und

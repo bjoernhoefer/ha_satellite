@@ -92,6 +92,7 @@
     .viewer-title small { display: block; color: #cbd5e1; font-size: 0.8rem; }
     .live-badge { background: #dc2626; color: #fff; border-radius: 4px; padding: 0.05rem 0.4rem; font-size: 0.75rem; font-weight: 700; margin-right: 0.3rem; }
     .viewer .viewer-empty { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: #9ca3af; }
+    .viewer .viewer-loading { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); background: rgba(0,0,0,.7); color: #e5e7eb; padding: 0.6rem 1rem; border-radius: 8px; pointer-events: none; }
 
     @media (max-width: 600px) {
       main { padding: 0.6rem; }
@@ -131,6 +132,9 @@
                   data-testid="live-{{ region.name }}">● Live</button>
           <button type="button" class="open-play" data-region="{{ region.name }}"
                   data-testid="play-{{ region.name }}">▶ Zeitraffer</button>
+          <button type="button" class="open-archive" data-region="{{ region.name }}"
+                  title="Aus dem MTG-FCI-Rohdaten-Archiv rendern (Zeitpunkt und Bildtyp frei wählbar)"
+                  data-testid="archive-{{ region.name }}">🛰 FCI-Archiv</button>
         </div>
         <label for="region-source-{{ region.name }}">Quelle</label>
         <select id="region-source-{{ region.name }}" class="region-source" data-region="{{ region.name }}"
@@ -145,10 +149,11 @@
         <label for="region-composite-{{ region.name }}">Bildtyp (Komposit)</label>
         <select id="region-composite-{{ region.name }}" class="region-composite" data-region="{{ region.name }}"
                 data-testid="region-composite-{{ region.name }}">
-          {% for name, label in composites.items() %}
+          {% set region_composites = composites_by_driver.get(driver_of.get(region.source), composites) %}
+          {% for name, label in region_composites.items() %}
           <option value="{{ name }}" {% if name == region.composite %}selected{% endif %}>{{ label }}</option>
           {% endfor %}
-          {% if region.composite not in composites %}
+          {% if region.composite not in region_composites %}
           <option value="{{ region.composite }}" selected>{{ region.composite }}</option>
           {% endif %}
         </select>
@@ -238,6 +243,29 @@
           <label for="max-storage">Speicherlimit je Region (MB)</label>
           <input id="max-storage" type="number" min="1" step="1" data-testid="max-storage"
                  value="{{ config.history.max_storage_mb }}">
+        </div>
+      </div>
+      <h3 style="font-size:1rem;margin-top:1rem">MTG-FCI-Rohdaten-Archiv</h3>
+      <p class="muted">Ist eine MTG-FCI-Quelle aktiv, werden je Aufnahme nur die Streifen („Chunks“, 1 = Süd …
+        40 = Nord) geladen, die der Bereich unten und alle Regionen brauchen (Europa ≈ 32–40, ~180 MB je Aufnahme),
+        und hier aufbewahrt. Daraus lassen sich Regionen und Bildtypen nachträglich rendern
+        („🛰 FCI-Archiv“ bei der Region) – auch für neu angelegte Regionen.</p>
+      <p class="muted" data-testid="archive-summary">…</p>
+      <div class="grid2">
+        <div>
+          <label for="archive-retention">Aufbewahrung (Stunden, 0 = nur neueste Aufnahme)</label>
+          <input id="archive-retention" type="number" min="0" max="168" step="1" data-testid="archive-retention"
+                 value="{{ config.archive.retention_hours }}">
+        </div>
+        <div>
+          <label>Chunk-Bereich (von – bis)</label>
+          <div class="row">
+            <input id="archive-chunk-min" type="number" min="1" max="40" step="1" data-testid="archive-chunk-min"
+                   value="{{ config.archive.chunk_min }}" style="width:6rem" aria-label="Chunk von">
+            <span>–</span>
+            <input id="archive-chunk-max" type="number" min="1" max="40" step="1" data-testid="archive-chunk-max"
+                   value="{{ config.archive.chunk_max }}" style="width:6rem" aria-label="Chunk bis">
+          </div>
         </div>
       </div>
       <button type="submit" class="primary" data-testid="save-storage">Speicherort &amp; Historie speichern</button>
@@ -331,6 +359,7 @@
     <div class="viewer-stage" id="viewer-stage">
       <img id="viewer-img" data-testid="viewer-image" alt="">
       <div class="viewer-empty" id="viewer-empty" hidden>Keine Bilder vorhanden</div>
+      <div class="viewer-loading" id="viewer-loading" data-testid="viewer-loading" hidden>Wird aus den Rohdaten gerendert (ca. 10 s) …</div>
     </div>
     <div class="viewer-bar viewer-top">
       <div class="viewer-title"><span id="viewer-live-badge" class="live-badge" hidden>LIVE</span><span id="viewer-region"></span>
@@ -347,12 +376,19 @@
         <option value="1000">1 fps</option><option value="500" selected>2 fps</option>
         <option value="250">4 fps</option><option value="125">8 fps</option>
       </select>
+      <select id="viewer-composite" data-testid="viewer-composite" title="Bildtyp (FCI-Archiv)" hidden>
+        {% for name, label in fci_composites.items() %}
+        <option value="{{ name }}">{{ label }}</option>
+        {% endfor %}
+      </select>
       <button type="button" id="viewer-mode" data-testid="viewer-mode">● Live</button>
     </div>
   </div>
 
   <script>
     const PLACEHOLDER_DRIVERS = {{ placeholder_drivers | list | tojson }};
+    const COMPOSITES_BY_DRIVER = {{ composites_by_driver | tojson }};
+    const DEFAULT_COMPOSITES = {{ default_composites | tojson }};
 {% raw %}
     "use strict";
     const $ = (sel, root = document) => root.querySelector(sel);
@@ -583,20 +619,44 @@
     // Quelle/Komposit einer Region ändern: der Server rendert die Region
     // danach sofort neu, die Vorschau lädt nach, sobald der Lauf fertig ist.
     async function saveRegionField(region, field, value, okText) {
+      return saveRegionPatch(region, { [field]: value }, okText);
+    }
+    async function saveRegionPatch(region, patch, okText) {
       const message = byTestId("refresh-message-" + region);
       try {
         const config = await api("/api/config");
-        const regions = config.regions.map((r) => (r.name === region ? { ...r, [field]: value } : r));
+        const regions = config.regions.map((r) => (r.name === region ? { ...r, ...patch } : r));
         await postConfig({ regions });
-        if (field === "source") updateRegionWarning(region, value);
+        if (patch.source) updateRegionWarning(region, patch.source);
         showMessage(message, okText + " – neues Bild wird erzeugt …", true);
         fastPollUntil = Date.now() + 90000;
       } catch (err) {
         showMessage(message, "Speichern fehlgeschlagen: " + err.message, false);
       }
     }
+    function driverOf(sourceId) {
+      const entry = sourcesState.catalog.find((e) => e.id === sourceId);
+      return entry ? entry.driver : null;
+    }
+    // Bildtypen hängen vom Satelliten ab (SEVIRI vs. FCI): Auswahl beim
+    // Quellenwechsel austauschen, nicht verfügbaren Bildtyp auf den Standard setzen.
+    function fillCompositeSelect(select, driver, current) {
+      const list = COMPOSITES_BY_DRIVER[driver] || COMPOSITES_BY_DRIVER.msg_seviri;
+      const options = Object.entries(list).map(([name, label]) => el("option", { value: name, text: label, selected: name === current }));
+      if (!(current in list)) options.push(el("option", { value: current, text: current, selected: true }));
+      select.replaceChildren(...options);
+    }
     document.querySelectorAll("select.region-source").forEach((select) => {
-      select.addEventListener("change", () => saveRegionField(select.dataset.region, "source", select.value, "Quelle gespeichert"));
+      select.addEventListener("change", () => {
+        const region = select.dataset.region;
+        const driver = driverOf(select.value);
+        const compositeSelect = byTestId("region-composite-" + region);
+        const patch = { source: select.value };
+        const list = COMPOSITES_BY_DRIVER[driver];
+        if (list && !(compositeSelect.value in list)) patch.composite = DEFAULT_COMPOSITES[driver];
+        fillCompositeSelect(compositeSelect, driver, patch.composite || compositeSelect.value);
+        saveRegionPatch(region, patch, patch.composite ? "Quelle und Bildtyp gespeichert" : "Quelle gespeichert");
+      });
     });
     document.querySelectorAll("select.region-composite").forEach((select) => {
       select.addEventListener("change", () => saveRegionField(select.dataset.region, "composite", select.value, "Bildtyp gespeichert"));
@@ -663,6 +723,8 @@
       b.addEventListener("click", () => openViewer({ mode: "live", region: b.dataset.region })));
     document.querySelectorAll("button.open-play").forEach((b) =>
       b.addEventListener("click", () => openViewer({ mode: "frames", region: b.dataset.region, play: true })));
+    document.querySelectorAll("button.open-archive").forEach((b) =>
+      b.addEventListener("click", () => openViewer({ mode: "archive", region: b.dataset.region })));
 
     /* ---------- Status (Polling, lädt bei neuen Frames Vorschau/Historie nach) ---------- */
     const lastSeenRun = {};
@@ -696,6 +758,7 @@
         byTestId("storage-current").textContent = data.current;
         byTestId("storage-used").textContent = fmtBytes(data.used_bytes);
         byTestId("storage-uid").textContent = "UID " + data.uid + " / GID " + data.gid;
+        renderArchiveSummary(data.archive);
         const input = document.getElementById("storage-path");
         if (!input.dataset.touched) input.value = data.current;
         const list = byTestId("storage-candidates");
@@ -722,6 +785,21 @@
         showMessage(byTestId("storage-message"), "Speicherinfo nicht verfügbar: " + err.message, false);
       }
     }
+    function renderArchiveSummary(a) {
+      if (!a) return;
+      const parts = [];
+      if (!a.enabled_sources.length) parts.push("Keine MTG-FCI-Quelle aktiv – es wird nichts archiviert.");
+      else parts.push("Aktiv für " + a.enabled_sources.join(", ") + ".");
+      parts.push("Geladene Chunks: " + a.chunks_text + ".");
+      for (const [collection, c] of Object.entries(a.collections)) {
+        parts.push(collection + ": " + c.slots + " Aufnahme(n), " + fmtBytes(c.used_bytes)
+          + (c.slots ? " (" + fmtTime(c.oldest, true) + " – " + fmtTime(c.newest, true) + ")" : "") + ".");
+      }
+      for (const [collection, st] of Object.entries(a.status || {})) {
+        if (st.last_error) parts.push("Fehler (" + collection + "): " + st.last_error);
+      }
+      byTestId("archive-summary").textContent = parts.join(" ");
+    }
     document.getElementById("storage-path").addEventListener("input", (ev) => { ev.target.dataset.touched = "1"; });
     document.getElementById("storage-form").addEventListener("submit", async (event) => {
       event.preventDefault();
@@ -735,6 +813,9 @@
           move_existing: document.getElementById("storage-move").checked,
           history_minutes: parseInt(document.getElementById("history-minutes").value, 10),
           max_storage_mb: parseInt(document.getElementById("max-storage").value, 10),
+          archive_retention_hours: parseInt(document.getElementById("archive-retention").value, 10),
+          archive_chunk_min: parseInt(document.getElementById("archive-chunk-min").value, 10),
+          archive_chunk_max: parseInt(document.getElementById("archive-chunk-max").value, 10),
         });
         delete document.getElementById("storage-path").dataset.touched;
         showMessage(message, "Gespeichert. Speicherort: " + result.current + " (" + result.moved_frames + " Bilder verschoben).", true);
@@ -783,7 +864,9 @@
     /* ---------- Vollbild-Betrachter ---------- */
     const viewer = document.getElementById("viewer");
     const viewerImg = document.getElementById("viewer-img");
-    const vs = { open: false, mode: "frames", region: null, index: 0, frames: [], playing: false, timer: null, pushed: false };
+    const vs = { open: false, mode: "frames", region: null, index: 0, frames: [], playing: false, timer: null, pushed: false, composite: null };
+    const viewerLoading = document.getElementById("viewer-loading");
+    const viewerComposite = byTestId("viewer-composite");
 
     function stopPlaying() {
       vs.playing = false;
@@ -809,17 +892,27 @@
     }
     function stateHash() {
       if (vs.mode === "live") return "live=" + encodeURIComponent(vs.region);
+      if (vs.mode === "archive") return "archive=" + encodeURIComponent(vs.region) + "&i=" + vs.index
+        + (vs.composite ? "&c=" + encodeURIComponent(vs.composite) : "");
       return "view=" + encodeURIComponent(vs.region) + "&i=" + vs.index;
     }
 
     function renderViewer() {
       const live = vs.mode === "live";
-      document.getElementById("viewer-region").textContent = vs.region;
+      const archive = vs.mode === "archive";
+      document.getElementById("viewer-region").textContent = vs.region + (archive ? " · FCI-Archiv" : "");
       document.getElementById("viewer-live-badge").hidden = !live;
-      byTestId("viewer-mode").textContent = live ? "Historie" : "● Live";
-      for (const id of ["viewer-prev", "viewer-next", "viewer-play", "viewer-speed", "viewer-position"]) byTestId(id).hidden = live;
+      byTestId("viewer-mode").textContent = live || archive ? "Historie" : "● Live";
+      for (const id of ["viewer-prev", "viewer-next", "viewer-position"]) byTestId(id).hidden = live;
+      // Archiv-Bilder werden bei Bedarf gerendert (~10 s) - kein Zeitraffer.
+      for (const id of ["viewer-play", "viewer-speed"]) byTestId(id).hidden = live || archive;
+      viewerComposite.hidden = !archive;
       const empty = document.getElementById("viewer-empty");
+      empty.textContent = archive
+        ? "Keine FCI-Rohdaten im Archiv – MTG-FCI-Quelle unter „Quellen“ aktivieren."
+        : "Keine Bilder vorhanden";
       if (live) {
+        viewerLoading.hidden = true;
         empty.hidden = true;
         const src = "/regions/" + encodeURIComponent(vs.region) + "/mjpeg";
         if (viewerImg.dataset.stream !== src) {
@@ -833,21 +926,36 @@
       const frame = vs.frames[vs.index];
       empty.hidden = !!frame;
       if (!frame) {
+        viewerLoading.hidden = true;
         viewerImg.removeAttribute("src");
         byTestId("viewer-caption").textContent = "";
         byTestId("viewer-position").textContent = "0 / 0";
         return;
       }
-      viewerImg.src = frame.url;
+      if (viewerImg.getAttribute("src") !== frame.url) {
+        viewerLoading.hidden = !(archive && !frame.cached);
+        viewerImg.src = frame.url;
+      }
       viewerImg.alt = vs.region + " " + frame.created_at;
-      byTestId("viewer-caption").textContent = fmtTime(frame.created_at, true) + (vs.index === 0 ? " · neuestes Bild" : "");
+      byTestId("viewer-caption").textContent = fmtTime(frame.created_at, true) + (vs.index === 0 ? " · neuestes Bild" : "")
+        + (archive ? " · MTG FCI · " + (viewerComposite.selectedOptions[0] || {}).textContent : "");
       byTestId("viewer-position").textContent = (vs.frames.length - vs.index) + " / " + vs.frames.length;
       byTestId("viewer-prev").disabled = vs.index >= vs.frames.length - 1;
       byTestId("viewer-next").disabled = vs.index <= 0;
       if (!vs.playing) setHash(stateHash());
     }
 
-    async function openViewer({ mode, region, index = 0, play = false }, fromHash = false) {
+    async function loadArchive(region, composite) {
+        const query = composite ? "?composite=" + encodeURIComponent(composite) : "";
+        try {
+          const data = await api("/api/regions/" + encodeURIComponent(region) + "/archive" + query);
+          return { composite: data.composite, frames: data.slots.filter((s) => s.available) };
+        } catch (err) {
+          return { composite, frames: [], error: err.message };
+        }
+    }
+
+    async function openViewer({ mode, region, index = 0, play = false, composite = null }, fromHash = false) {
       stopPlaying();
       vs.mode = mode; vs.region = region; vs.index = index;
       if (!vs.open) {
@@ -861,7 +969,19 @@
           vs.pushed = true;
         }
       }
-      if (mode === "frames") {
+      if (mode === "archive") {
+        vs.frames = [];
+        vs.composite = composite;
+        renderViewer();
+        const data = await loadArchive(region, composite);
+        if (vs.mode !== "archive" || vs.region !== region || !vs.open) return;
+        vs.composite = data.composite;
+        if (data.composite) viewerComposite.value = data.composite;
+        vs.frames = data.frames;
+        vs.index = Math.min(vs.index, Math.max(vs.frames.length - 1, 0));
+        renderViewer();
+        if (data.error) byTestId("viewer-caption").textContent = "Archiv nicht verfügbar: " + data.error;
+      } else if (mode === "frames") {
         vs.frames = framesCache[region] || [];
         renderViewer();
         vs.frames = await loadHistory(region);
@@ -893,7 +1013,7 @@
       else setHash("");
     }
     function step(delta) {
-      if (vs.mode !== "frames" || !vs.frames.length) return;
+      if (vs.mode === "live" || !vs.frames.length) return;
       stopPlaying();
       vs.index = Math.min(Math.max(vs.index + delta, 0), vs.frames.length - 1);
       renderViewer();
@@ -905,7 +1025,21 @@
     byTestId("viewer-play").addEventListener("click", () => (vs.playing ? stopPlaying() : startPlaying()));
     byTestId("viewer-speed").addEventListener("change", () => { if (vs.playing) startPlaying(); });
     byTestId("viewer-mode").addEventListener("click", () =>
-      openViewer({ mode: vs.mode === "live" ? "frames" : "live", region: vs.region, index: 0 }));
+      openViewer({ mode: vs.mode === "frames" ? "live" : "frames", region: vs.region, index: 0 }));
+    viewerComposite.addEventListener("change", () =>
+      openViewer({ mode: "archive", region: vs.region, index: vs.index, composite: viewerComposite.value }));
+    viewerImg.addEventListener("load", () => { viewerLoading.hidden = true; });
+    viewerImg.addEventListener("error", async () => {
+      viewerLoading.hidden = true;
+      if (vs.mode !== "archive" || !viewerImg.getAttribute("src")) return;
+      const src = viewerImg.getAttribute("src");
+      try {
+        const response = await fetch(src);
+        const body = await response.json().catch(() => ({}));
+        if (viewerImg.getAttribute("src") === src)
+          byTestId("viewer-caption").textContent = "Rendern fehlgeschlagen: " + (body.detail || "HTTP " + response.status);
+      } catch (err) { /* Netzfehler: Beschriftung unverändert lassen */ }
+    });
     const fsButton = byTestId("viewer-fullscreen");
     fsButton.hidden = !(viewer.requestFullscreen && document.fullscreenEnabled);
     fsButton.addEventListener("click", () => {
@@ -944,7 +1078,10 @@
       const params = new URLSearchParams(location.hash.replace(/^#/, ""));
       const live = params.get("live");
       const view = params.get("view");
-      if (live && REGIONS.includes(live)) openViewer({ mode: "live", region: live }, true);
+      const archive = params.get("archive");
+      if (archive && REGIONS.includes(archive)) openViewer({ mode: "archive", region: archive,
+        index: parseInt(params.get("i") || "0", 10) || 0, composite: params.get("c") }, true);
+      else if (live && REGIONS.includes(live)) openViewer({ mode: "live", region: live }, true);
       else if (view && REGIONS.includes(view)) openViewer({ mode: "frames", region: view, index: parseInt(params.get("i") || "0", 10) || 0 }, true);
       else if (vs.open) { vs.pushed = false; teardownViewer(); }
     }
@@ -956,6 +1093,7 @@
       ["status", "/api/status", "Letzter/nächster Lauf, Frame-Anzahl, Fehler je Region"],
       ["sources", "/api/sources", "Quellen-Katalog + Ergebnis des letzten Abgleichs"],
       ["storage", "/api/storage", "Speicherort, Belegung, Kandidaten"],
+      ["archive-info", "/api/archive", "MTG-FCI-Rohdaten-Archiv: Aufbewahrung, Chunks, Belegung"],
       ["logs", "/api/logs", "Log-Einträge (JSON)"],
       ["logs-text", "/api/logs?format=text", "Log-Einträge als Text"],
       ["healthz", "/healthz", "Liveness"],
@@ -968,6 +1106,7 @@
       ["gif", "/regions/{r}/animation.gif", "Animation der Historie (GIF)"],
       ["mp4", "/regions/{r}/animation.mp4", "Animation der Historie (MP4)"],
       ["mjpeg", "/regions/{r}/mjpeg", "MJPEG-Stream (Home-Assistant-Kamera)"],
+      ["archive", "/api/regions/{r}/archive", "FCI-Archiv: verfügbare Aufnahmen (JSON, Bild-URLs mit ?composite=…)"],
     ];
     const API_POST = [
       ["/api/config", "Konfiguration speichern"],

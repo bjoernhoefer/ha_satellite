@@ -513,3 +513,88 @@ def test_api_links_on_mobile_do_not_overflow(mobile_page, live_server):
     expect(mobile_page.get_by_test_id("api-link-latest")).to_be_visible()
     width = mobile_page.evaluate("() => document.documentElement.scrollWidth")
     assert width <= 390
+
+
+# --- MTG FCI: Bildtypen, Rohdaten-Archiv ----------------------------------------
+
+def _png(color) -> bytes:
+    import io
+
+    from PIL import Image
+
+    out = io.BytesIO()
+    Image.new("RGB", (40, 40), color).save(out, format="PNG")
+    return out.getvalue()
+
+
+def test_switching_to_fci_offers_fci_composites(ui, live_server):
+    select = ui.get_by_test_id("region-composite-wien")
+    expect(select).to_have_value("natural_color_hrv_with_night_ir")
+
+    ui.get_by_test_id("region-source-wien").select_option("mtg_fci")
+    expect(ui.get_by_test_id("refresh-message-wien")).to_contain_text("Quelle und Bildtyp gespeichert")
+    expect(select).to_have_value("natural_color_with_night_cloudtop")
+    expect(select.locator("option", has_text="HRV")).to_have_count(0)
+    region = {r["name"]: r for r in _stored(live_server)["regions"]}["wien"]
+    assert (region["source"], region["composite"]) == ("mtg_fci", "natural_color_with_night_cloudtop")
+    expect(ui.get_by_test_id("region-placeholder-wien")).to_be_hidden()
+
+    # "natural_color" gibt es für beide Satelliten -> bleibt beim Zurückwechseln.
+    select.select_option("natural_color")
+    expect(ui.get_by_test_id("refresh-message-wien")).to_contain_text("Bildtyp gespeichert")
+    ui.get_by_test_id("region-source-wien").select_option("msg_seviri")
+    expect(ui.get_by_test_id("refresh-message-wien")).to_contain_text("Quelle gespeichert")
+    expect(select).to_have_value("natural_color")
+    expect(select.locator("option", has_text="HRV").first).to_be_attached()
+
+
+def test_archive_viewer_browses_slots_and_composites(ui, live_server):
+    from test_fci import write_fci_slot
+
+    frames = live_server.data_dir / "frames"
+    write_fci_slot(frames, "20260926T141000Z", cached={("wien", "natural_color_with_night_cloudtop"): _png("red")})
+    write_fci_slot(frames, "20260926T142000Z", cached={
+        ("wien", "natural_color_with_night_cloudtop"): _png("green"),
+        ("wien", "cloudtop"): _png("blue"),
+    })
+    ui.get_by_test_id("archive-wien").click()
+    viewer = ui.get_by_test_id("viewer")
+    expect(viewer).to_be_visible()
+    expect(ui.get_by_test_id("viewer-position")).to_have_text("2 / 2")
+    expect(ui.get_by_test_id("viewer-image")).to_have_attribute("src", re.compile(r"/archive/20260926T142000Z\.png"))
+    _image_loaded(ui, "viewer-image")
+    expect(ui.get_by_test_id("viewer-caption")).to_contain_text("MTG FCI")
+    expect(ui.get_by_test_id("viewer-play")).to_be_hidden()
+    expect(ui.get_by_test_id("viewer-loading")).to_be_hidden()
+    assert "archive=wien" in ui.url
+
+    ui.get_by_test_id("viewer-prev").click()
+    expect(ui.get_by_test_id("viewer-position")).to_have_text("1 / 2")
+    expect(ui.get_by_test_id("viewer-image")).to_have_attribute("src", re.compile(r"20260926T141000Z"))
+
+    ui.get_by_test_id("viewer-next").click()
+    ui.get_by_test_id("viewer-composite").select_option("cloudtop")
+    expect(ui.get_by_test_id("viewer-image")).to_have_attribute("src", re.compile(r"142000Z\.png\?composite=cloudtop"))
+    _image_loaded(ui, "viewer-image")
+    assert "c=cloudtop" in ui.url
+
+    ui.get_by_test_id("viewer-mode").click()  # zurück zur normalen Historie
+    expect(ui.get_by_test_id("viewer-composite")).to_be_hidden()
+    ui.get_by_test_id("viewer-close").click()
+    expect(viewer).to_be_hidden()
+
+
+def test_archive_viewer_without_data_explains_why(ui):
+    ui.get_by_test_id("archive-mallorca").click()
+    expect(ui.get_by_test_id("viewer")).to_contain_text("Keine FCI-Rohdaten im Archiv")
+
+
+def test_archive_settings_are_saved(ui, live_server):
+    expect(ui.get_by_test_id("archive-summary")).to_contain_text("Keine MTG-FCI-Quelle aktiv")
+    expect(ui.get_by_test_id("archive-summary")).to_contain_text("32–40")
+    ui.get_by_test_id("archive-retention").fill("6")
+    ui.get_by_test_id("archive-chunk-min").fill("30")
+    ui.get_by_test_id("save-storage").click()
+    expect(ui.get_by_test_id("storage-message")).to_contain_text("Gespeichert")
+    assert _stored(live_server)["archive"] == {"retention_hours": 6, "chunk_min": 30, "chunk_max": 40}
+    expect(ui.get_by_test_id("archive-summary")).to_contain_text("30–40")

@@ -1,0 +1,16 @@
+# Eigene sensorübergreifende Komposite (SEVIRI, FCI), ergänzen Satpys
+# eingebaute Definitionen (Einbindung siehe satpy_render.py).
+sensor_name: visir
+
+composites:
+  # Tagsüber Echtfarben, nachts IR-Wolken - ohne die Hintergrundkarten,
+  # die Satpys "*_with_night_ir" zur Laufzeit nachladen würden. Bei FCI
+  # ~1 km tagsüber; Standard für mtg_fci.
+  natural_color_with_night_cloudtop:
+    compositor: !!python/name:satpy.composites.fill.DayNightCompositor
+    standard_name: natural_color_with_night_ir
+    lim_low: 80
+    lim_high: 90
+    prerequisites:
+      - natural_color
+      - cloudtop

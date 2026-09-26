@@ -6,6 +6,7 @@ import asyncio
 import io
 import logging
 import os
+import re
 import tempfile
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -27,14 +28,31 @@ from ha_satellite import logbuffer, storage
 from ha_satellite.buffer import BufferManager
 from ha_satellite.config import (
     COMPOSITES,
+    FCI_COMPOSITES,
     PLACEHOLDER_DRIVERS,
     VALID_DRIVERS,
     AppConfig,
     ConfigStore,
     EumetsatCredentials,
+    composites_for,
+    default_composite_for,
     env_overrides,
+    resolve_fci_composite,
 )
 from ha_satellite.scheduler import RenderScheduler
+from ha_satellite.sources import (
+    RenderError,
+    archive_root,
+    fci_source_for,
+    render_fci_slot,
+)
+from ha_satellite.sources.fci_archive import (
+    chunks_for_region,
+    format_chunks,
+    get_archive,
+    render_cache_path,
+    wanted_chunks,
+)
 from ha_satellite.source_sync import SourceSync
 from ha_satellite.status import StatusStore
 
@@ -105,6 +123,10 @@ async def index(request: Request):
             "status": status_store.all(),
             "drivers": VALID_DRIVERS,
             "composites": COMPOSITES,
+            "composites_by_driver": {d: composites_for(d) for d in VALID_DRIVERS},
+            "default_composites": {d: default_composite_for(d) for d in VALID_DRIVERS},
+            "driver_of": {e.id: e.driver for e in config.sources.catalog},
+            "fci_composites": FCI_COMPOSITES,
             "placeholder_drivers": PLACEHOLDER_DRIVERS,
         },
     )
@@ -205,6 +227,7 @@ async def get_storage():
             "candidates": storage.candidates(DEFAULT_FRAMES_DIR, current, DATA_DIR),
             "history_minutes": config.history.history_minutes,
             "max_storage_mb": config.history.max_storage_mb,
+            "archive": _archive_summary(config),
         }
 
     return JSONResponse(await run_in_threadpool(_collect))
@@ -222,12 +245,151 @@ async def post_storage(payload: dict):
     for key in ("history_minutes", "max_storage_mb"):
         if payload.get(key) is not None:
             data["history"][key] = payload[key]
+    for key in ("retention_hours", "chunk_min", "chunk_max"):
+        if payload.get(f"archive_{key}") is not None:
+            data["archive"][key] = payload[f"archive_{key}"]
     try:
         new_config = AppConfig(**data)
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     moved = await _save_config(stored, new_config, move_existing=bool(payload.get("move_existing", True)))
+    # Kürzere Aufbewahrung wirkt sofort, nicht erst beim nächsten Download.
+    await run_in_threadpool(
+        get_archive(archive_root(new_config)).prune_all, new_config.archive.retention_hours
+    )
     return {"current": str(frames_dir_for(new_config)), "moved_frames": moved}
+
+
+def _archive_summary(config: AppConfig) -> dict:
+    archive = get_archive(archive_root(config))
+    collections = {}
+    for collection in archive.collections():
+        slots = archive.slots(collection)
+        collections[collection] = {
+            "slots": len(slots),
+            "newest": slots[0].sensing_end.isoformat() if slots else None,
+            "oldest": slots[-1].sensing_end.isoformat() if slots else None,
+            "used_bytes": storage.directory_size(archive.collection_dir(collection)),
+        }
+    chunks = wanted_chunks(config)
+    return {
+        "dir": str(archive.root),
+        "retention_hours": config.archive.retention_hours,
+        "chunk_min": config.archive.chunk_min,
+        "chunk_max": config.archive.chunk_max,
+        "chunks": sorted(chunks),
+        "chunks_text": format_chunks(chunks),
+        "enabled_sources": [
+            e.id for e in config.sources.catalog if e.driver == "mtg_fci" and e.enabled
+        ],
+        "collections": collections,
+        "status": archive.status(),
+    }
+
+
+@app.get("/api/archive")
+async def get_archive_info():
+    """FCI-Rohdaten-Archiv: Aufbewahrung, Chunks, Slots und Belegung."""
+    return JSONResponse(await run_in_threadpool(_archive_summary, config_store.get()))
+
+
+_COMPOSITE_RE = re.compile(r"^[A-Za-z0-9_]+$")
+
+
+def _archive_context(region_name: str):
+    config = config_store.get()
+    region = _get_region_or_404(config, region_name)
+    entry = fci_source_for(config, region)
+    if entry is None:
+        raise HTTPException(status_code=404, detail="Keine MTG-FCI-Quelle im Katalog")
+    archive = get_archive(archive_root(config))
+    return config, region, entry, archive
+
+
+def _default_archive_composite(config: AppConfig, region) -> str:
+    own = config.sources.get(region.source)
+    if own is not None and own.driver == "mtg_fci":
+        return resolve_fci_composite(region.composite)
+    return default_composite_for("mtg_fci")
+
+
+@app.get("/api/regions/{region_name}/archive")
+async def list_archive(region_name: str, composite: str | None = None):
+    """Archivierte FCI-Slots, aus denen die Region gerendert werden kann."""
+    config, region, entry, archive = _archive_context(region_name)
+    composite = composite or _default_archive_composite(config, region)
+    if not _COMPOSITE_RE.match(composite):
+        raise HTTPException(status_code=400, detail="Ungültiger Kompositname")
+    needed = chunks_for_region(region)
+
+    def _collect() -> list[dict]:
+        items = []
+        for slot in archive.slots(entry.collection or ""):
+            available = bool(needed) and needed <= set(slot.chunks)
+            items.append({
+                "name": slot.name,
+                "created_at": slot.sensing_end.isoformat(),
+                "available": available,
+                "cached": render_cache_path(slot, region, composite).exists(),
+                "url": f"/regions/{region_name}/archive/{slot.name}.png?composite={composite}",
+            })
+        return items
+
+    return {
+        "region": region_name,
+        "source": entry.id,
+        "collection": entry.collection,
+        "composite": composite,
+        "composites": FCI_COMPOSITES,
+        "chunks": sorted(needed),
+        "retention_hours": config.archive.retention_hours,
+        "slots": await run_in_threadpool(_collect),
+    }
+
+
+# Wartezeit auf den Render-Lock (ein planmäßiger Lauf inkl. Download).
+ARCHIVE_RENDER_LOCK_TIMEOUT = 600
+
+
+@app.get("/regions/{region_name}/archive/{slot_name}.png")
+async def archive_png(region_name: str, slot_name: str, composite: str | None = None):
+    """Rendert eine Region aus einem archivierten FCI-Slot (mit Cache)."""
+    config, region, entry, archive = _archive_context(region_name)
+    composite = composite or _default_archive_composite(config, region)
+    if not _COMPOSITE_RE.match(composite):
+        raise HTTPException(status_code=400, detail="Ungültiger Kompositname")
+    slot = archive.slot(entry.collection or "", slot_name)
+    if slot is None:
+        raise HTTPException(status_code=404, detail="Slot nicht (mehr) im Archiv")
+    cache = render_cache_path(slot, region, composite)
+
+    def _render() -> bytes:
+        if cache.exists():
+            return cache.read_bytes()
+        with scheduler.exclusive(timeout=ARCHIVE_RENDER_LOCK_TIMEOUT):
+            if cache.exists():  # während des Wartens von einer anderen Anfrage erzeugt
+                return cache.read_bytes()
+            logger.info("Archiv-Render %s / %s / %s gestartet", region.name, slot.name, composite)
+            frame = render_fci_slot(slot, region, composite)
+        cache.parent.mkdir(parents=True, exist_ok=True)
+        partial = cache.with_name(cache.name + ".part")
+        partial.write_bytes(frame.png)
+        partial.rename(cache)
+        return frame.png
+
+    try:
+        png = await run_in_threadpool(_render)
+    except RenderError as exc:
+        logger.error("Archiv-Render %s / %s fehlgeschlagen: %s", region.name, slot_name, exc)
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except TimeoutError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Slot wurde inzwischen entfernt") from exc
+    return Response(
+        content=png, media_type="image/png",
+        headers={"Cache-Control": "public, max-age=31536000, immutable"},
+    )
 
 
 @app.get("/api/sources")
