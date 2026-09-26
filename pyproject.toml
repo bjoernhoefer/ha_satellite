@@ -44,7 +44,7 @@ ui = [
 where = ["src"]
 
 [tool.setuptools.package-data]
-ha_satellite = ["templates/*.html"]
+ha_satellite = ["templates/*.html", "satpy_config/composites/*.yaml"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

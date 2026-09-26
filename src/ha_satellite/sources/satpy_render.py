@@ -13,6 +13,10 @@ import warnings
 from dataclasses import dataclass
 from datetime import datetime
 from io import BytesIO
+from pathlib import Path
+
+# Eigene Komposit-Definitionen (z. B. natural_color_hrv_with_night_ir).
+SATPY_CONFIG_DIR = Path(__file__).resolve().parent.parent / "satpy_config"
 
 # Randpixel um das berechnete Fenster, damit das Nearest-Neighbour-Resampling
 # auch an den Kanten der Zielregion Nachbarn findet.
@@ -76,6 +80,18 @@ def target_area(request: RenderRequest):
     )
 
 
+def _crop_to(data, target):
+    """Schneidet einen Datensatz auf das Fenster um die Zielregion zu.
+
+    Das Fenster wird je Datensatz aus dessen eigener Area berechnet, damit
+    Kanäle unterschiedlicher Auflösung (HRV ~1 km, übrige ~3 km) passen.
+    """
+    rows, cols = source_window(data.attrs["area"], target)
+    cropped = data[..., rows, cols]
+    cropped.attrs["area"] = data.attrs["area"][rows, cols]
+    return cropped
+
+
 def _annotate(image, text: str):
     from PIL import ImageDraw
 
@@ -95,8 +111,10 @@ def render_png(request: RenderRequest) -> tuple[bytes, datetime]:
 
     # Zwei Threads: genug für den Pi 5, ohne Grafana auszubremsen.
     dask.config.set(scheduler="threads", num_workers=2)
+    import satpy
     from satpy import Scene
 
+    satpy.config.set(config_path=[str(SATPY_CONFIG_DIR)])
     scene = Scene(reader=request.reader, filenames=list(request.filenames))
     available = set(scene.available_composite_names()) | {
         str(name) for name in scene.available_dataset_names()
@@ -105,20 +123,20 @@ def render_png(request: RenderRequest) -> tuple[bytes, datetime]:
         raise SatpyRenderError(
             f"Komposit '{request.composite}' ist für {request.reader} nicht verfügbar"
         )
+    # Komposite aus Kanälen unterschiedlicher Auflösung (z. B. HRV + VIS)
+    # erzeugt Satpy erst beim Resampling; bis dahin liegen nur die Kanäle vor.
     scene.load([request.composite])
-    data = scene[request.composite]
     area = target_area(request)
-    rows, cols = source_window(data.attrs["area"], area)
-
-    cropped = data[..., rows, cols]
-    cropped.attrs["area"] = data.attrs["area"][rows, cols]
-    local_scene = Scene()
-    local_scene[request.composite] = cropped
-    local = local_scene.resample(area, resampler="nearest", reduce_data=False)
+    for key in list(scene.keys()):
+        scene._datasets[key] = _crop_to(scene[key], area)
+    local = scene.resample(area, resampler="nearest", reduce_data=False)
+    if request.composite not in local:
+        raise SatpyRenderError(f"Komposit '{request.composite}' konnte nicht erzeugt werden")
+    data = local[request.composite]
 
     from satpy.writers import get_enhanced_image
 
-    pil_image = get_enhanced_image(local[request.composite]).pil_image().convert("RGB")
+    pil_image = get_enhanced_image(data).pil_image().convert("RGB")
     sensing_end = data.attrs["end_time"]
     _annotate(pil_image, f"{request.label} · {sensing_end:%Y-%m-%d %H:%M} UTC · {request.composite}")
     out = BytesIO()

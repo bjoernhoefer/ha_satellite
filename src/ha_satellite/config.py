@@ -34,10 +34,11 @@ VALID_DRIVERS = ("msg_seviri", "data_tailor", "mtg_fci", "dummy")
 # Rückwärtskompatibler Alias.
 VALID_SOURCES = VALID_DRIVERS
 
-# Tagsüber Echtfarben, nachts Infrarot-Wolken. Das naheliegende
-# "natural_color_with_night_ir" lädt zur Laufzeit NASA-Hintergrundkarten
-# nach (Hash-Fehler, siehe HISTORY.md) - diese Variante kommt ohne aus.
-DEFAULT_COMPOSITE = "natural_color_raw_with_night_ir"
+# Tagsüber Echtfarben (mit dem ~1-km-HRV-Kanal geschärft), nachts
+# Infrarot-Wolken; definiert in satpy_config/composites/seviri.yaml. Das
+# naheliegende "natural_color_with_night_ir" lädt zur Laufzeit
+# NASA-Hintergrundkarten nach (Hash-Fehler, siehe HISTORY.md).
+DEFAULT_COMPOSITE = "natural_color_hrv_with_night_ir"
 
 # MSG SEVIRI Rapid Scan (Europa, alle 5 Minuten, Meteosat-11).
 DEFAULT_MSG_COLLECTION = "EO:EUM:DAT:MSG:MSG15-RSS"

@@ -293,3 +293,77 @@ def test_source_window_rejects_region_outside_disk(rss_area):
     request = RenderRequest("r", ("f",), "c", 35.0, 139.0, 300, 50, 50, "tokio")
     with pytest.raises(SatpyRenderError, match="außerhalb"):
         source_window(rss_area, target_area(request))
+
+
+# -- HRV-Schärfung -----------------------------------------------------------------
+HRV_EXTENT = (5566247.7, 5571249.0, -5571249.0, 1392686.9)
+
+
+def test_crop_uses_own_window_per_resolution(rss_area):
+    import xarray as xr
+    from pyresample.geometry import AreaDefinition
+
+    from ha_satellite.sources.satpy_render import RenderRequest, _crop_to, target_area
+
+    hrv_area = AreaDefinition("hrv", "hrv", "hrv", RSS_PROJ, 3712 * 3, 1392 * 3, HRV_EXTENT)
+    target = target_area(RenderRequest("r", ("f",), "c", 48.2, 16.37, 300, 200, 200, "wien"))
+    vis = xr.DataArray(np.zeros(rss_area.shape), dims=("y", "x"), attrs={"area": rss_area})
+    hrv = xr.DataArray(np.zeros(hrv_area.shape), dims=("y", "x"), attrs={"area": hrv_area})
+
+    vis_crop, hrv_crop = _crop_to(vis, target), _crop_to(hrv, target)
+
+    assert vis_crop.attrs["area"].shape == vis_crop.shape
+    assert hrv_crop.attrs["area"].shape == hrv_crop.shape
+    # gleiches Gebiet, dreifache Auflösung (± Rand)
+    assert abs(hrv_crop.shape[0] - 3 * vis_crop.shape[0]) < 3 * 2 * 16
+    assert abs(hrv_crop.shape[1] - 3 * vis_crop.shape[1]) < 3 * 2 * 16
+
+
+def _band(values, name):
+    import xarray as xr
+
+    return xr.DataArray(
+        np.array(values, dtype=float), dims=("y", "x"), attrs={"name": name, "units": "%"}
+    )
+
+
+def test_hrv_sharpening_scales_brightness_and_keeps_hue():
+    pytest.importorskip("satpy")
+    from ha_satellite.sources.hrv_composite import MAX_RATIO, HrvLuminanceSharpenedRGB
+
+    red, green, blue = _band([[10, 10]], "IR_016"), _band([[20, 20]], "VIS008"), _band([[40, 40]], "VIS006")
+    hrv = _band([[60, 300]], "HRV")  # Faktor 2 bzw. 10 (-> gekappt)
+
+    result = HrvLuminanceSharpenedRGB("natural_color_hrv")((red, green, blue), optional_datasets=(hrv,))
+
+    assert result.sel(bands="R").values.tolist() == [[20, 10 * MAX_RATIO]]
+    assert result.sel(bands="G").values.tolist() == [[40, 20 * MAX_RATIO]]
+    assert result.sel(bands="B").values.tolist() == [[80, 40 * MAX_RATIO]]
+
+
+def test_hrv_sharpening_ignores_invalid_hrv_and_waits_for_resampling():
+    pytest.importorskip("satpy")
+    from satpy.composites.core import IncompatibleAreas
+
+    from ha_satellite.sources.hrv_composite import HrvLuminanceSharpenedRGB
+
+    compositor = HrvLuminanceSharpenedRGB("natural_color_hrv")
+    rgb = (_band([[10]], "IR_016"), _band([[20]], "VIS008"), _band([[40]], "VIS006"))
+    result = compositor(rgb, optional_datasets=(_band([[np.nan]], "HRV"),))
+    assert result.sel(bands="G").values.tolist() == [[20]]
+
+    with pytest.raises(IncompatibleAreas):
+        compositor(rgb, optional_datasets=(_band([[1, 2, 3]], "HRV"),))
+
+
+def test_default_composite_is_defined_for_seviri():
+    satpy = pytest.importorskip("satpy")
+    from satpy.composites.config_loader import load_compositor_configs_for_sensors
+
+    from ha_satellite.config import DEFAULT_COMPOSITE
+    from ha_satellite.sources.satpy_render import SATPY_CONFIG_DIR
+
+    with satpy.config.set(config_path=[str(SATPY_CONFIG_DIR)]):
+        compositors, _ = load_compositor_configs_for_sensors(["seviri"])
+    names = {key["name"] for key in compositors["seviri"]}
+    assert {DEFAULT_COMPOSITE, "natural_color_hrv"} <= names

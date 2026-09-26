@@ -36,6 +36,8 @@ src/ha_satellite/
   sources/         Treiber: msg_seviri, data_tailor, mtg_fci (+ dummy)
     eumetsat.py      Data-Store-Suche + Download (eumdac), Produkt-Cache /data/cache
     satpy_render.py  Satpy-Rendering im Kindprozess (Crop-Fenster, Resampling, PNG)
+    hrv_composite.py Eigener Compositor: Echtfarben mit HRV geschärft
+  satpy_config/    Eigene Satpy-Komposit-Definitionen (composites/seviri.yaml)
   source_sync.py   Abgleich des Katalogs mit dem EUMETSAT Data Store (öffentliche API)
   storage.py       Speicherort-Kandidaten, Schreibtest, System-Disk-/Container-Warnung
   logbuffer.py     In-Memory-Log (für die UI) + rotierende Logdatei
@@ -93,13 +95,20 @@ von einem Treiber unterstützte Collections („entdeckt“, per Klick
 
 ### Komposite (msg_seviri)
 
-Default `natural_color_raw_with_night_ir` (tagsüber Echtfarben, nachts
-IR-Wolken). Weitere funktionierende Satpy-Komposite: `natural_color`
-(nachts schwarz), `convection`, `airmass`, `cloudtop`,
-`colorized_ir_clouds`. **Nicht** verwenden: `natural_color_with_night_ir`
-(lädt zur Laufzeit NASA-BlackMarble nach, scheitert am Hash). Unbekannte
-Namen führen zu einem Fehler im Status, nicht zum Absturz. Richtwerte auf
-dem Pi 5: ~6 s und ~570 MB Spitzen-RSS pro Region und Lauf.
+Default `natural_color_hrv_with_night_ir` (tagsüber Echtfarben, mit dem
+~1-km-HRV-Kanal geschärft; nachts IR-Wolken). Eigene Komposite liegen in
+`src/ha_satellite/satpy_config/composites/seviri.yaml` (Compositor in
+`sources/hrv_composite.py`) und werden im Kindprozess per
+`satpy.config config_path` eingebunden. Weitere funktionierende Komposite:
+`natural_color_hrv` (nur Tag), `natural_color_raw_with_night_ir` (bisheriger
+Default, ~3 km), `natural_color` (nachts schwarz), `convection`, `airmass`,
+`cloudtop`, `colorized_ir_clouds`, `hrv_clouds`. **Nicht** verwenden:
+`natural_color_with_night_ir` (lädt zur Laufzeit NASA-BlackMarble nach,
+scheitert am Hash). Unbekannte Namen führen zu einem Fehler im Status,
+nicht zum Absturz. Komposite aus Kanälen unterschiedlicher Auflösung
+entstehen erst beim Resampling: jeder Kanal wird mit eigenem Fenster
+zugeschnitten (siehe HISTORY.md, "HRV-Schärfung"). Richtwerte auf dem Pi 5:
+~9 s und ~450 MB Spitzen-RSS pro Region und Lauf.
 
 ## ARM64-Build-Entscheidung
 
