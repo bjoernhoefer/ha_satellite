@@ -11,11 +11,12 @@
 # diese Pakete fertige linux-aarch64-Builds bereit, wodurch micromamba
 # (ein schlanker, statisch gelinkter conda-Ersatz ohne den Overhead von
 # Anaconda) den ARM64-Build drastisch beschleunigt und reproduzierbar
-# macht. Für das aktuelle Grundgerüst (ohne Satpy) sind ausschließlich
-# reine Python-Pakete nötig, die genauso gut per pip liefen - das Image
-# wird aber bereits jetzt auf micromamba/conda-forge umgestellt, damit
-# der ARM64-Build frühzeitig verifiziert ist und Phase 2 ohne Wechsel des
-# Basis-Images auskommt.
+# macht.
+#
+# Stand Phase 2: Inzwischen liefert PyPI für alle diese Pakete fertige
+# manylinux-aarch64-Wheels, während conda-forge für trollimage (Satpy-
+# Abhängigkeit) keine aktuelle linux-aarch64-Version führt. Die Satpy-Kette
+# kommt daher per pip aus den Wheels; conda-forge stellt nur Python selbst.
 FROM mambaorg/micromamba:1.5-bookworm
 
 USER root
@@ -23,23 +24,26 @@ WORKDIR /app
 
 ENV MAMBA_DOCKERFILE_ACTIVATE=1 \
     PYTHONUNBUFFERED=1 \
-    HA_SATELLITE_CONFIG=/data/config.yaml
+    HA_SATELLITE_CONFIG=/data/config.yaml \
+    SATPY_DATA_DIR=/data/satpy \
+    XDG_CACHE_HOME=/data/cache/xdg
 
-# Python-Interpreter aus conda-forge (liefert vorgebaute Wheels/Binaries
-# für alle unterstützten Architekturen inkl. linux-aarch64).
 RUN micromamba install -y -n base -c conda-forge python=3.12 pip && \
     micromamba clean --all --yes
 
 COPY pyproject.toml README.md /app/
 COPY src /app/src
 
-RUN micromamba run -n base pip install --no-cache-dir .
+# --only-binary: nie aus dem Sdist kompilieren (auf dem Pi/unter QEMU
+# extrem langsam) - fehlt ein Wheel, soll der Build sofort scheitern.
+RUN micromamba run -n base pip install --no-cache-dir \
+        --only-binary=numpy,pyproj,pyresample,pykdtree,trollimage,pillow .
 
 # Healthchecks und `docker exec` durchlaufen das Entrypoint nicht, d. h. die
 # conda-Umgebung ist dort nicht aktiviert und `python3` läge nicht im PATH.
 RUN ln -sf /opt/conda/bin/python /usr/local/bin/python3
 
-RUN mkdir -p /data/frames && chown -R $MAMBA_USER:$MAMBA_USER /data
+RUN mkdir -p /data/frames /data/cache /data/satpy && chown -R $MAMBA_USER:$MAMBA_USER /data
 
 COPY docker/entrypoint.sh /usr/local/bin/ha_satellite-entrypoint.sh
 RUN chmod +x /usr/local/bin/ha_satellite-entrypoint.sh

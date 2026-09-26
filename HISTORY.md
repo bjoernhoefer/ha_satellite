@@ -1,5 +1,37 @@
 # HISTORY.md — Chronik und Fallstricke
 
+## Phase 2 — MSG SEVIRI mit Satpy (echte Bilder)
+
+**Umsetzung:** `msg_seviri` lädt das neueste Produkt aus
+`EO:EUM:DAT:MSG:MSG15-RSS` (Rapid Scan, 5 min) und rendert es mit Satpy in
+einem Kindprozess. Details: AGENTS.md, Abschnitt Phasenmodell.
+
+**Fallstricke:**
+
+- **Produktgröße:** Ein RSS-Produkt ist ~97 MB (`.nat`), nicht die oft
+  genannten ~54 MB. Deshalb wird pro Produkt genau einmal geladen und für
+  alle Regionen aus `/data/cache/` gerendert (nur das neueste bleibt liegen).
+- **pyresample `reduce_data` / `Scene.crop` bei der RSS-Area:** Die
+  Rapid-Scan-Area (3712×1392, nur nördlicher Streifen) ist mit
+  gespiegeltem x-Extent gespeichert. pyresamples Vorab-Zuschnitt berechnet
+  dafür falsche Fenster — Wien war zu 99 % schwarz (Fenster 26×4 Pixel),
+  Mallorca zufällig korrekt. `reduce_data=False` ist korrekt, verarbeitet
+  aber die ganze Szene (~1,3 GB RAM). Lösung: eigenes Fenster über
+  `get_array_indices_from_lonlat` der Zielregion-Ränder
+  (`satpy_render.source_window`), Szene direkt slicen, dann Nearest-
+  Neighbour mit `reduce_data=False`. Regressionstest mit der echten
+  Geometrie in `tests/test_sources.py`.
+- **`natural_color_with_night_ir`** lädt zur Laufzeit die NASA-BlackMarble-
+  Karte per pooch — der hinterlegte Hash passt nicht, das Komposit
+  scheitert. Default ist daher `natural_color_raw_with_night_ir`.
+- **Scheduler-Lock:** Beide Regionen starten zur selben Zeit; der bisherige
+  nicht-blockierende Lock ließ die zweite Region *jedes Mal* aus (sie
+  bekam nie ein Bild). Jetzt wartet sie (Timeout 15 min) und nutzt das
+  bereits geladene Produkt.
+- **conda-forge/aarch64:** `satpy=0.60` ist auf linux-aarch64 nicht lösbar
+  (keine aktuelle `trollimage`). Die Satpy-Kette kommt deshalb aus
+  PyPI-Wheels (`--only-binary`), conda nur für Python.
+
 ## Phase 1 — Grundgerüst (Config + Web-Server + Dummy-Frame)
 
 **Entscheidung:** Bevor die EUMETSAT/Satpy-Kette angebunden wird, steht ein
