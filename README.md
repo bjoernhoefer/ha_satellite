@@ -62,8 +62,9 @@ gesetzt werden, damit Compose nicht lokal zu bauen versucht.
   Collections vor.
 - **Regionen**: Name, Mittelpunkt (Lat/Lon), Umkreis in km (daraus wird die
   Bounding-Box berechnet), Ausgabegröße, Komposit, Quelle. Vorkonfiguriert:
-  `wien` und `mallorca` mit dem Komposit `natural_color_raw_with_night_ir`
-  (tagsüber Echtfarben, nachts IR-Wolken; weitere siehe AGENTS.md).
+  `wien` und `mallorca` mit dem Komposit `natural_color_hrv_with_night_ir`
+  (tagsüber Echtfarben, mit dem HRV-Kanal auf ~1 km geschärft, nachts
+  IR-Wolken; weitere siehe AGENTS.md).
 - **Historie**: Rollierender Ringpuffer pro Region unter
   `<Speicherort>/{region}/`, Dauer in der UI einstellbar (Default 60
   Minuten), zusätzlich Speicher-Limit (MB) als Notbremse. Alte Frames und

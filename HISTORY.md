@@ -1,5 +1,52 @@
 # HISTORY.md — Chronik und Fallstricke
 
+## HRV-Schärfung (höhere Auflösung tagsüber)
+
+**Anlass:** Die Bilder waren sehr pixelig. SEVIRI-Farbkanäle haben ~3 km
+(über Mitteleuropa eher 4–6 km), die Regionen aber ~0,75 km/px (600 km auf
+800 px) - jedes Satellitenpixel wurde zu einem 5–8 px großen Block.
+
+**Umsetzung:** Neues Default-Komposit `natural_color_hrv_with_night_ir`
+(`src/ha_satellite/satpy_config/composites/seviri.yaml`, per
+`satpy.config config_path` eingebunden). Tagsüber werden die
+Echtfarbkanäle mit dem HRV-Kanal (~1 km, in derselben `.nat`-Datei, kein
+Mehr-Download) geschärft, nachts wie bisher `cloudtop` (IR, ~3 km).
+Laufzeit auf dem Pi 5 ~8–9 s, Spitzen-RSS ~400–450 MB pro Region.
+
+**Fallstricke:**
+
+- **Unterschiedliche Grids:** HRV (RSS: 5568×4176) und VIS/IR (3712×1392)
+  haben eigene Areas. Solche Komposite erzeugt Satpy erst beim
+  `Scene.resample`. Das Crop-Fenster wird deshalb je Datensatz aus dessen
+  eigener Area berechnet und in die *ursprüngliche* Scene zurückgeschrieben
+  (`scene._datasets[...]`, damit Wishlist/Abhängigkeitsbaum erhalten
+  bleiben); danach erzeugt `resample` das Komposit. Geladen wird mit
+  `scene.load(..., generate=False)`, d. h. auch Ein-Raster-Komposite und
+  Modifier (`sunz_corrected`) entstehen erst auf dem kleinen Zielraster -
+  Spitzen-RSS sank dadurch für alle Komposite (z. B.
+  `natural_color_raw_with_night_ir` auf RSS 570 → 380 MB, auf 0° 880 →
+  430 MB).
+- **Full Disk (0°, Katalogeintrag `msg_seviri_0deg`):** HRV liegt dort als
+  zwei gestapelte Fenster vor (`StackedAreaDefinition`), daran scheitern
+  Zuschnitt und `sunz_corrected` (dask: "Shapes do not align"). Der Reader
+  läuft deshalb mit `fill_disk=True` (HRV als ein 11136×11136-Raster, lazy
+  aufgefüllt). Außerdem wertet `source_window` nur noch Punkte aus, bei
+  denen Zeile *und* Spalte gültig sind (vorher unabhängig komprimiert -
+  im südlichen HRV-Fenster waren nur die Spalten gültig).
+- **`RatioSharpenedRGB` (Satpy):** ersetzt einen Kanal durch HRV und
+  skaliert die anderen mit HRV/Kanal - über dunklem Meer (HRV enthält
+  blaues Streulicht, VIS008 fast 0) entstand ein deutlicher Magentastich.
+- **Klassisches Pansharpening** (HRV / auf 3 km gemitteltes HRV): Das
+  3×3-Mittel liegt nicht deckungsgleich auf dem VIS-Raster, die Blöcke
+  blieben sichtbar.
+- **Lösung:** eigener `HrvLuminanceSharpenedRGB`
+  (`sources/hrv_composite.py`): alle drei Kanäle × `HRV / mean(VIS006,
+  VIS008)`. Der Nenner liegt exakt im Farbraster, Farbton bleibt erhalten;
+  Faktor auf 3 gekappt (1,5 ließ Wolken über Meer unscharf).
+- **Bestehende Installationen** behalten das in `/data/config.yaml`
+  gespeicherte Komposit - zum Umstellen dort `composite:` je Region auf
+  `natural_color_hrv_with_night_ir` setzen.
+
 ## Phase 2 — MSG SEVIRI mit Satpy (echte Bilder)
 
 **Umsetzung:** `msg_seviri` lädt das neueste Produkt aus
