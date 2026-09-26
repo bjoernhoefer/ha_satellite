@@ -12,32 +12,61 @@ from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
-from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingResponse
+from fastapi.responses import (
+    HTMLResponse,
+    JSONResponse,
+    PlainTextResponse,
+    RedirectResponse,
+    Response,
+    StreamingResponse,
+)
 from fastapi.templating import Jinja2Templates
 from PIL import Image
 
+from ha_satellite import logbuffer, storage
 from ha_satellite.buffer import BufferManager
-from ha_satellite.config import AppConfig, ConfigStore, EumetsatCredentials, env_overrides
+from ha_satellite.config import (
+    VALID_DRIVERS,
+    AppConfig,
+    ConfigStore,
+    EumetsatCredentials,
+    env_overrides,
+)
 from ha_satellite.scheduler import RenderScheduler
+from ha_satellite.source_sync import SourceSync
 from ha_satellite.status import StatusStore
-
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
 
 BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = Path(os.environ.get("HA_SATELLITE_DATA_DIR", "/data"))
-FRAMES_DIR = DATA_DIR / "frames"
+DEFAULT_FRAMES_DIR = DATA_DIR / "frames"
+
+log_buffer = logbuffer.install(log_dir=DATA_DIR / "logs")
+logger = logging.getLogger(__name__)
+
+
+def frames_dir_for(config: AppConfig) -> Path:
+    return Path(config.storage.frames_dir) if config.storage.frames_dir else DEFAULT_FRAMES_DIR
+
 
 config_store = ConfigStore()
-buffer_manager = BufferManager(FRAMES_DIR)
+buffer_manager = BufferManager(frames_dir_for(config_store.get()))
 status_store = StatusStore()
-scheduler = RenderScheduler(config_store, buffer_manager, status_store)
+source_sync = SourceSync(config_store, DATA_DIR / "source_sync.json")
+scheduler = RenderScheduler(config_store, buffer_manager, status_store, source_sync)
 
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
+    logger.info(
+        "ha_satellite startet: Daten in %s, Frames in %s (UID %d / GID %d)",
+        DATA_DIR, buffer_manager.base_dir, os.getuid(), os.getgid(),
+    )
+    try:
+        storage.ensure_writable(buffer_manager.base_dir)
+    except storage.StorageError as exc:
+        logger.error("%s", exc)
     scheduler.start()
     try:
         yield
@@ -58,8 +87,7 @@ def _get_region_or_404(config: AppConfig, region_name: str):
 def _buffer_for(region_name: str):
     config = config_store.get()
     region = _get_region_or_404(config, region_name)
-    max_frames = region.effective_max_frames(config.sources.poll_interval_minutes)
-    return buffer_manager.get(region.name, max_frames, config.history.max_storage_mb)
+    return buffer_manager.get(region.name, config.max_frames_for(region), config.history.max_storage_mb)
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -73,8 +101,16 @@ async def index(request: Request):
             "masked": config.masked(),
             "env_overrides": env_overrides().keys(),
             "status": status_store.all(),
+            "drivers": VALID_DRIVERS,
         },
     )
+
+
+@app.get("/live/{region_name}")
+async def live_redirect(region_name: str):
+    """Merkbare Adresse für den Live-Stream im Browser."""
+    _get_region_or_404(config_store.get(), region_name)
+    return RedirectResponse(url=f"/#live={region_name}")
 
 
 @app.get("/api/config")
@@ -120,9 +156,116 @@ async def post_config(payload: dict):
         new_config = AppConfig(**merged)
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    config_store.update(new_config)
-    scheduler.reload()
+    await _save_config(stored, new_config, move_existing=False)
+    changed = sorted(key for key in payload if key in AppConfig.model_fields)
+    logger.info("Konfiguration gespeichert (%s)", ", ".join(changed) or "keine Änderung")
     return JSONResponse(config_store.get().masked().model_dump())
+
+
+async def _save_config(old: AppConfig, new: AppConfig, move_existing: bool) -> int:
+    """Speichert die Konfiguration; wechselt bei Bedarf den Speicherort."""
+    old_dir, new_dir = frames_dir_for(old), frames_dir_for(new)
+    moved = 0
+    if old_dir != new_dir or buffer_manager.base_dir != new_dir:
+        def _relocate() -> int:
+            storage.ensure_writable(new_dir)
+            with scheduler.exclusive():
+                return buffer_manager.relocate(new_dir, move_existing)
+
+        try:
+            moved = await run_in_threadpool(_relocate)
+        except (storage.StorageError, TimeoutError, OSError) as exc:
+            logger.error("Speicherort-Wechsel nach %s fehlgeschlagen: %s", new_dir, exc)
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        logger.info(
+            "Speicherort gewechselt: %s -> %s (%d Frames verschoben)", old_dir, new_dir, moved
+        )
+    config_store.update(new)
+    scheduler.reload()
+    return moved
+
+
+@app.get("/api/storage")
+async def get_storage():
+    config = config_store.get()
+    current = frames_dir_for(config)
+
+    def _collect() -> dict:
+        return {
+            "current": str(current),
+            "default": str(DEFAULT_FRAMES_DIR),
+            "configured": config.storage.frames_dir,
+            "used_bytes": storage.directory_size(current),
+            "uid": os.getuid(),
+            "gid": os.getgid(),
+            "candidates": storage.candidates(DEFAULT_FRAMES_DIR, current, DATA_DIR),
+            "history_minutes": config.history.history_minutes,
+            "max_storage_mb": config.history.max_storage_mb,
+        }
+
+    return JSONResponse(await run_in_threadpool(_collect))
+
+
+@app.post("/api/storage")
+async def post_storage(payload: dict):
+    """Speicherort (und Historien-Limits) setzen, Frames optional verschieben."""
+    stored = config_store.stored()
+    data = stored.model_dump()
+    frames_dir = str(payload.get("frames_dir", data["storage"]["frames_dir"]) or "").strip()
+    if frames_dir and Path(frames_dir) == DEFAULT_FRAMES_DIR:
+        frames_dir = ""
+    data["storage"]["frames_dir"] = frames_dir
+    for key in ("history_minutes", "max_storage_mb"):
+        if payload.get(key) is not None:
+            data["history"][key] = payload[key]
+    try:
+        new_config = AppConfig(**data)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    moved = await _save_config(stored, new_config, move_existing=bool(payload.get("move_existing", True)))
+    return {"current": str(frames_dir_for(new_config)), "moved_frames": moved}
+
+
+@app.get("/api/sources")
+async def get_sources():
+    config = config_store.get()
+    return {
+        "catalog": [entry.model_dump() for entry in config.sources.catalog],
+        "auto_sync_hours": config.sources.auto_sync_hours,
+        "sync": source_sync.state(),
+    }
+
+
+@app.post("/api/sources/sync")
+async def sync_sources():
+    return JSONResponse(await run_in_threadpool(source_sync.run))
+
+
+@app.post("/api/sources/adopt")
+async def adopt_source(payload: dict):
+    collection = payload.get("collection")
+    stored = config_store.stored()
+    definition = source_sync.definition_for(
+        str(collection or ""), {entry.id for entry in stored.sources.catalog}
+    )
+    if definition is None:
+        raise HTTPException(status_code=404, detail=f"Collection {collection} wurde nicht entdeckt")
+    data = stored.model_dump()
+    data["sources"]["catalog"].append(definition.model_dump())
+    new_config = AppConfig(**data)
+    await _save_config(stored, new_config, move_existing=False)
+    source_sync.forget_discovered(definition.collection or "")
+    logger.info("Quelle %s (%s) in den Katalog übernommen", definition.id, definition.collection)
+    return definition.model_dump()
+
+
+@app.get("/api/logs")
+async def get_logs(after: int = 0, limit: int = 500, format: str = "json"):
+    entries = log_buffer.entries(after=after, limit=limit)
+    if format == "text":
+        lines = [f"{e['ts']} {e['level']:<7} {e['logger']}: {e['message']}" for e in entries]
+        return PlainTextResponse("\n".join(lines) + "\n")
+    return {"entries": entries}
 
 
 @app.get("/api/status")
@@ -140,7 +283,51 @@ async def refresh_region(region_name: str):
     config = config_store.get()
     _get_region_or_404(config, region_name)
     scheduler.trigger_now(region_name)
+    logger.info("Manuelle Aktualisierung für %s angefordert", region_name)
     return {"status": "scheduled", "region": region_name}
+
+
+@app.get("/api/regions/{region_name}/frames")
+async def list_frames(region_name: str):
+    """Historie: alle Frames im Puffer, neuester zuerst."""
+    buffer = _buffer_for(region_name)
+    return {
+        "region": region_name,
+        "frames": [
+            {
+                "index": i,
+                "filename": frame.filename,
+                "created_at": frame.created_at,
+                "url": f"/regions/{region_name}/history/{frame.filename}",
+            }
+            for i, frame in enumerate(buffer.frames_newest_first())
+        ],
+    }
+
+
+@app.get("/regions/{region_name}/history/{filename}")
+async def history_frame(region_name: str, filename: str, w: int | None = None):
+    """Frame per (stabilem) Dateinamen; ``?w=240`` liefert ein JPEG-Vorschaubild."""
+    buffer = _buffer_for(region_name)
+    frame = buffer.by_filename(filename)
+    path = frame.path(buffer.region_dir) if frame else None
+    if path is None or not path.exists():
+        raise HTTPException(status_code=404, detail="Frame nicht (mehr) vorhanden")
+    headers = {"Cache-Control": "public, max-age=31536000, immutable"}
+    if w:
+        width = max(32, min(w, 1600))
+        data = await run_in_threadpool(_thumbnail, path.read_bytes(), width)
+        return Response(content=data, media_type="image/jpeg", headers=headers)
+    return Response(content=path.read_bytes(), media_type="image/png", headers=headers)
+
+
+def _thumbnail(png_bytes: bytes, width: int) -> bytes:
+    with Image.open(io.BytesIO(png_bytes)) as img:
+        img = img.convert("RGB")
+        img.thumbnail((width, width * 4))
+        out = io.BytesIO()
+        img.save(out, format="JPEG", quality=80)
+        return out.getvalue()
 
 
 @app.get("/regions/{region_name}/latest.png")
@@ -149,7 +336,11 @@ async def latest_png(region_name: str):
     frame = buffer.latest()
     if frame is None:
         raise HTTPException(status_code=404, detail="Noch keine Frames vorhanden")
-    return Response(content=frame.path(buffer.region_dir).read_bytes(), media_type="image/png")
+    return Response(
+        content=frame.path(buffer.region_dir).read_bytes(),
+        media_type="image/png",
+        headers={"Cache-Control": "no-cache"},
+    )
 
 
 @app.get("/regions/{region_name}/frames/{index}.png")
@@ -230,20 +421,29 @@ async def animation_mp4(region_name: str):
 
 @app.get("/regions/{region_name}/mjpeg")
 async def mjpeg(region_name: str):
-    buffer = _buffer_for(region_name)
+    _buffer_for(region_name)
     fps = config_store.get().server.mjpeg_fps
     delay = 1.0 / fps if fps > 0 else 1.0
 
     async def _generate():
         while True:
+            # Pro Durchlauf neu holen: neue Frames und ein zwischenzeitlich
+            # gewechselter Speicherort werden so ohne Reconnect übernommen.
+            try:
+                buffer = _buffer_for(region_name)
+            except HTTPException:
+                return
             frames = buffer.frames_newest_first()
             if not frames:
                 await asyncio.sleep(delay)
                 continue
             for frame in reversed(frames):  # älteste zuerst abspielen, dann loopen
-                frame_bytes = await run_in_threadpool(
-                    frame.path(buffer.region_dir).read_bytes
-                )
+                try:
+                    frame_bytes = await run_in_threadpool(
+                        frame.path(buffer.region_dir).read_bytes
+                    )
+                except FileNotFoundError:
+                    continue
                 jpeg_bytes = await run_in_threadpool(_png_to_jpeg, frame_bytes)
                 yield (
                     b"--frame\r\n"

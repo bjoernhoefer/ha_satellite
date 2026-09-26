@@ -24,6 +24,7 @@ Danach:
 - Web-UI: http://\<host\>:6060/
 - Status-API: http://\<host\>:6060/api/status
 - Beispiel-Kamera (Wien): http://\<host\>:6060/regions/wien/mjpeg
+- Live-Ansicht im Browser (auch am Handy): http://\<host\>:6060/live/wien
 
 Die EUMETSAT-Zugangsdaten (Consumer Key + Secret) können entweder in der
 Web-UI eingegeben (wird nach `/data/config.yaml` persistiert) oder per
@@ -51,24 +52,31 @@ gesetzt werden, damit Compose nicht lokal zu bauen versucht.
 
 ## Funktionsumfang
 
-- **Quellen** (austauschbar je Region): `msg_seviri` (Full Disk + lokales
-  Satpy-Rendering, Default), `data_tailor` (serverseitiger Zuschnitt bei
-  EUMETSAT), `mtg_fci` (höher aufgelöste Chunks).
+- **Quellen-Katalog**: welche Quellen zur Verfügung stehen, ist in der UI
+  einstellbar (Tabelle mit Aktiv-Schalter + einklappbarer JSON-Editor).
+  Treiber: `msg_seviri` (Full Disk + lokales Satpy-Rendering, Default),
+  `data_tailor` (serverseitiger Zuschnitt bei EUMETSAT), `mtg_fci` (höher
+  aufgelöste Chunks). Ein automatischer Abgleich mit dem EUMETSAT Data Store
+  prüft Verfügbarkeit/Aktualität und schlägt neue Collections vor.
 - **Regionen**: Name, Mittelpunkt (Lat/Lon), Umkreis in km (daraus wird die
   Bounding-Box berechnet), Ausgabegröße, Komposit, Quelle. Vorkonfiguriert:
   `wien` und `mallorca`.
 - **Historie**: Rollierender Ringpuffer pro Region unter
-  `/data/frames/{region}/`, Anzahl konfigurierbar (Default ≈ 60 Minuten
-  Historie, abhängig vom Abrufintervall), zusätzlich Speicher-Limit (MB)
-  als Notbremse. Alte Frames und Waisen werden automatisch aufgeräumt.
+  `<Speicherort>/{region}/`, Dauer in der UI einstellbar (Default 60
+  Minuten), zusätzlich Speicher-Limit (MB) als Notbremse. Alte Frames und
+  Waisen werden automatisch aufgeräumt.
+- **Speicherort** der Bilder in der UI wählbar (z. B. `/mnt/data/ha_satellite`,
+  `docker-compose.yml` hängt dafür `/mnt` ein), inkl. Verschieben vorhandener
+  Bilder und Warnung bei System-Disk oder nicht persistentem Pfad.
 - **Web-API** (siehe [AGENTS.md](AGENTS.md) für Details):
   `GET/POST /api/config`, `GET /api/status`, `GET /healthz`,
   `GET /regions/{region}/latest.png`, `GET /regions/{region}/frames/{i}.png`,
   `GET /regions/{region}/animation.gif`, `GET /regions/{region}/animation.mp4`,
   `GET /regions/{region}/mjpeg`.
-- **Konfigurations-UI** unter `/`: Zugangsdaten (Secret maskiert), Regionen,
-  aktive Quellen, Abrufintervall, Status mit Vorschaubild, Button
-  „Jetzt aktualisieren“.
+- **Web-UI** unter `/` (auch fürs Handy): Vorschaubilder und Historie
+  anklickbar → Vollbild-Betrachter (Blättern per Pfeiltasten/Wischen,
+  Zeitraffer), Live-Stream im Browser, Quellen, Speicherort, Zugangsdaten
+  (Secret maskiert), Abrufintervall, Status und **Live-Logs** ganz unten.
 
 ## Home Assistant einbinden
 

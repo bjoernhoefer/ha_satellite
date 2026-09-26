@@ -4,9 +4,13 @@ from pathlib import Path
 import pytest
 
 from ha_satellite.config import (
+    VALID_DRIVERS,
     AppConfig,
     ConfigStore,
     RegionConfig,
+    SourceDefinition,
+    SourcesConfig,
+    StorageConfig,
     default_config,
     load_config,
     save_config,
@@ -26,15 +30,47 @@ def test_region_bounding_box_uses_center_and_radius():
     assert bbox.lon_min < 16.4 < bbox.lon_max
 
 
-def test_region_rejects_unknown_source():
-    with pytest.raises(ValueError):
-        RegionConfig(name="test", lat=0, lon=0, radius_km=10, source="not_a_real_source")
+def test_region_rejects_source_missing_from_catalog():
+    with pytest.raises(ValueError, match="unbekannte Quelle"):
+        AppConfig(regions=[RegionConfig(name="t", lat=0, lon=0, radius_km=10, source="nope")])
 
 
-def test_region_accepts_all_valid_sources():
-    for source in ("msg_seviri", "data_tailor", "mtg_fci", "dummy"):
-        region = RegionConfig(name="test", lat=0, lon=0, radius_km=10, source=source)
-        assert region.source == source
+def test_default_catalog_covers_all_drivers():
+    config = default_config()
+    assert {e.driver for e in config.sources.catalog} == set(VALID_DRIVERS)
+    assert [e.id for e in config.sources.catalog if e.enabled] == ["msg_seviri"]
+    for region in config.regions:
+        AppConfig(sources=config.sources, regions=[region.model_copy(update={"source": "dummy"})])
+
+
+def test_catalog_rejects_unknown_driver_and_duplicate_ids():
+    with pytest.raises(ValueError, match="Treiber"):
+        SourceDefinition(id="x", driver="nope")
+    with pytest.raises(ValueError, match="doppelt"):
+        SourcesConfig(catalog=[{"id": "a", "driver": "dummy"}, {"id": "a", "driver": "dummy"}])
+
+
+def test_custom_catalog_entry_can_be_used_by_region():
+    config = AppConfig(
+        sources={"catalog": [{"id": "iodc", "driver": "msg_seviri", "collection": "EO:EUM:DAT:MSG:HRSEVIRI-IODC"}]},
+        regions=[{"name": "r", "lat": 0, "lon": 60, "radius_km": 100, "source": "iodc"}],
+    )
+    assert config.sources.get("iodc").driver == "msg_seviri"
+    assert config.sources.is_enabled("iodc")
+
+
+def test_legacy_active_list_is_migrated_to_catalog():
+    sources = SourcesConfig(**{"active": ["mtg_fci"], "poll_interval_minutes": 10})
+    enabled = {e.id for e in sources.catalog if e.enabled}
+    assert enabled == {"mtg_fci"}
+    assert "active" not in sources.model_dump()
+
+
+def test_storage_path_must_be_absolute():
+    with pytest.raises(ValueError, match="absolut"):
+        StorageConfig(frames_dir="relative/path")
+    assert StorageConfig(frames_dir="/mnt/data/ha_satellite/").frames_dir == "/mnt/data/ha_satellite"
+    assert StorageConfig(frames_dir="").frames_dir == ""
 
 
 def test_effective_max_frames_defaults_to_60_minutes():
@@ -42,6 +78,12 @@ def test_effective_max_frames_defaults_to_60_minutes():
     assert region.effective_max_frames(poll_interval_minutes=15) == 4
     assert region.effective_max_frames(poll_interval_minutes=60) == 1
     assert region.effective_max_frames(poll_interval_minutes=1) == 60
+
+
+def test_history_minutes_controls_max_frames():
+    config = default_config()
+    config.history.history_minutes = 24 * 60
+    assert config.max_frames_for(config.regions[0]) == 96
 
 
 def test_effective_max_frames_can_be_overridden():

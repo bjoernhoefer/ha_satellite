@@ -105,3 +105,40 @@ Grundfunktionen der UI ab. Selektoren laufen ausschließlich über
 Umbau der UI müssen diese IDs erhalten bleiben. In CI erzwingt
 `HA_SATELLITE_REQUIRE_UI_TESTS=1`, dass die Klicktests laufen statt still
 übersprungen zu werden.
+
+## Web-UI-Ausbau: Quellen, Betrachter, Live, Logs, Speicherort
+
+- **Quellen-Katalog statt `sources.active`:** Welche Quellen es gibt, steht
+  jetzt als Liste in `sources.catalog` (in der UI als Tabelle und
+  einklappbares JSON editierbar). Regionen referenzieren eine Katalog-`id`,
+  die Validierung dafür sitzt auf `AppConfig`-Ebene (vorher: feste Liste in
+  `RegionConfig`). Alte Konfigurationen werden beim Laden migriert.
+- **Quellen-Abgleich:** Die Browse-/Search-Endpunkte des EUMETSAT Data Store
+  sind ohne Token nutzbar. Der Abgleich speichert sein Ergebnis bewusst in
+  `/data/source_sync.json` statt in `config.yaml`, damit der vom Nutzer
+  editierte Katalog nicht mit Laufzeitdaten vermischt wird. Tests laufen gegen
+  einen lokalen Fake-Server; der Test-Server zeigt per Default auf einen
+  geschlossenen Port, damit nie die echte API angefragt wird.
+- **Vollbild-Betrachter statt Popup:** Ein `position: fixed; inset: 0`-Overlay
+  mit `100dvh` (Handy-Browserleisten) und `object-fit: contain`. Öffnen legt
+  einen History-Eintrag an, damit die Zurück-Taste am Handy den Betrachter
+  schließt statt die Seite zu verlassen. Der MJPEG-Stream wird beim Schließen
+  durch Entfernen von `src` beendet, sonst liefe er im Hintergrund weiter.
+- **Fallstrick `[hidden]`:** Eine `display`-Regel für `button` überschreibt das
+  `hidden`-Attribut; die Klicktests haben das aufgedeckt. Global
+  `[hidden] { display: none !important; }`.
+- **Fallstrick Handy-Breite:** Lange Pfade (z. B. im Speicherort-Bereich) in
+  Flex-/Grid-Elementen erzwangen horizontales Scrollen. Lösung:
+  `overflow-wrap: anywhere` und `minmax(0, 1fr)`; ein Klicktest prüft
+  `scrollWidth <= 390` im Handy-Viewport.
+- **Startkollision der Regionen:** Alle Region-Jobs starteten gleichzeitig,
+  wegen des globalen Render-Locks wurde jede außer der ersten bis zum
+  nächsten Intervall (15 min) übersprungen - in den neuen Live-Logs sofort
+  sichtbar. Die Jobs starten jetzt um je 60 s versetzt.
+- **Speicherort:** Compose hängt `/mnt` ein, die UI bietet dessen
+  Unterordner an und warnt anhand von `st_dev`, wenn ein Pfad auf demselben
+  Datenträger wie `/data` oder nur im Container-Dateisystem liegt. Damit der
+  Dienst auf Host-Datenträger schreiben darf, unterstützt das Entrypoint
+  `PUID`/`PGID` (`usermod`/`groupmod` auf `mambauser`).
+- **APScheduler-Logs** stehen auf WARNING, sonst würden sie jeden Job-Lauf auf
+  INFO protokollieren und die Render-Meldungen in der UI verdrängen.

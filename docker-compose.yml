@@ -9,8 +9,19 @@ services:
     ports:
       - "6060:6060"
     volumes:
+      # Konfiguration, Logs und (standardmäßig) die Bilder.
       - ./data:/data
+      # Weitere Datenträger des Hosts (z. B. /mnt/data, /mnt/data2). Der
+      # Speicherort der Bilder wird in der Web-UI gewählt ("Speicherort &
+      # Historie") - nur Pfade unterhalb eingehängter Volumes sind dauerhaft.
+      # Sollen erst nach dem Containerstart eingehängte Datenträger sichtbar
+      # werden, stattdessen "/mnt:/mnt:rslave" verwenden.
+      - /mnt:/mnt
     environment:
+      # UID/GID, mit der der Dienst schreibt - muss zum Besitzer des
+      # Bilderverzeichnisses auf dem Host passen (siehe `id` auf dem Host).
+      - PUID=${PUID:-1000}
+      - PGID=${PGID:-1000}
       # Optional: überschreibt die in der UI gespeicherten Zugangsdaten.
       - EUMETSAT_CONSUMER_KEY=${EUMETSAT_CONSUMER_KEY:-}
       - EUMETSAT_CONSUMER_SECRET=${EUMETSAT_CONSUMER_SECRET:-}
