@@ -17,7 +17,10 @@ from __future__ import annotations
 
 import logging
 import threading
+import time
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
+from typing import TYPE_CHECKING
 
 from apscheduler.schedulers.background import BackgroundScheduler
 
@@ -26,9 +29,13 @@ from ha_satellite.config import AppConfig, ConfigStore
 from ha_satellite.sources import NoNewData, RenderError, get_source
 from ha_satellite.status import StatusStore
 
+if TYPE_CHECKING:
+    from ha_satellite.source_sync import SourceSync
+
 logger = logging.getLogger(__name__)
 
 JOB_ID_PREFIX = "render-"
+SYNC_JOB_ID = "source-sync"
 # Download (~100 MB) + Rendering einer Region bleibt deutlich darunter.
 LOCK_TIMEOUT_SECONDS = 15 * 60
 
@@ -47,10 +54,12 @@ class RenderScheduler:
         config_store: ConfigStore,
         buffer_manager: BufferManager,
         status_store: StatusStore,
+        source_sync: "SourceSync | None" = None,
     ) -> None:
         self._config_store = config_store
         self._buffers = buffer_manager
         self._status = status_store
+        self._source_sync = source_sync
         self._render_lock = threading.Lock()
         self._scheduler = BackgroundScheduler()
 
@@ -65,13 +74,30 @@ class RenderScheduler:
         """Nach Konfigurationsänderungen: Jobs neu aufsetzen."""
         self._reschedule()
 
+    @contextmanager
+    def exclusive(self, timeout: float = 120.0):
+        """Blockiert Render-Läufe (z. B. während des Speicherort-Wechsels)."""
+        if not self._render_lock.acquire(timeout=timeout):
+            raise TimeoutError("Render-Vorgang läuft noch, bitte später erneut versuchen")
+        try:
+            yield
+        finally:
+            self._render_lock.release()
+
     def _reschedule(self) -> None:
         for job in self._scheduler.get_jobs():
-            job.remove()
+            if job.id.startswith(JOB_ID_PREFIX) or job.id == SYNC_JOB_ID:
+                job.remove()
         config = self._config_store.get()
         interval = config.sources.poll_interval_minutes
+        self._schedule_sync(config.sources.auto_sync_hours)
+        now = datetime.now(timezone.utc)
         for region in config.regions:
-            if region.source not in config.sources.active:
+            if not config.sources.is_enabled(region.source):
+                logger.info(
+                    "Region %s: Quelle '%s' ist deaktiviert - keine automatischen Läufe",
+                    region.name, region.source,
+                )
                 continue
             job_id = f"{JOB_ID_PREFIX}{region.name}"
             self._scheduler.add_job(
@@ -80,10 +106,29 @@ class RenderScheduler:
                 minutes=interval,
                 args=[region.name],
                 id=job_id,
-                next_run_time=datetime.now(timezone.utc),
+                next_run_time=now,
                 max_instances=1,
                 coalesce=True,
             )
+        logger.info("Scheduler neu aufgesetzt: Abrufintervall %d min", interval)
+
+    def _schedule_sync(self, hours: int) -> None:
+        if self._source_sync is None or hours <= 0:
+            return
+        last = self._source_sync.last_run_at()
+        now = datetime.now(timezone.utc)
+        first = now + timedelta(seconds=30)
+        if last is not None and last + timedelta(hours=hours) > first:
+            first = last + timedelta(hours=hours)
+        self._scheduler.add_job(
+            self._source_sync.run,
+            "interval",
+            hours=hours,
+            id=SYNC_JOB_ID,
+            next_run_time=first,
+            max_instances=1,
+            coalesce=True,
+        )
 
     def trigger_now(self, region_name: str) -> None:
         """Für den UI-Button "Jetzt aktualisieren"."""
@@ -109,17 +154,31 @@ class RenderScheduler:
             logger.warning("Render-Lock nicht erhalten, überspringe %s in diesem Zyklus", region_name)
             return
         try:
-            source = get_source(region.source)
-            max_frames = region.effective_max_frames(config.sources.poll_interval_minutes)
-            buffer = self._buffers.get(region.name, max_frames, config.history.max_storage_mb)
+            definition = config.sources.get(region.source)
+            if definition is None:
+                raise RenderError(f"Quelle '{region.source}' ist nicht im Katalog")
+            started = time.monotonic()
+            logger.info(
+                "Render %s gestartet (Quelle %s, Treiber %s, Komposit %s)",
+                region.name, definition.id, definition.driver, region.composite,
+            )
+            source = get_source(definition.driver)
+            buffer = self._buffers.get(
+                region.name, config.max_frames_for(region), config.history.max_storage_mb
+            )
             latest = buffer.latest()
             last_sensing = _parse_timestamp(latest.created_at) if latest else None
             try:
-                frame = source.render(region, config, last_sensing)
+                rendered = source.render(region, config, last_sensing)
             except NoNewData as info:
                 logger.info("Keine neue Aufnahme für %s: %s", region_name, info)
             else:
-                buffer.add_frame(frame.png, timestamp=frame.sensing_time)
+                frame = buffer.add_frame(rendered.png, timestamp=rendered.sensing_time)
+                logger.info(
+                    "Render %s fertig in %.1f s: %s (%d KB), %d Frames im Puffer",
+                    region.name, time.monotonic() - started, frame.filename,
+                    len(rendered.png) // 1024, len(buffer),
+                )
             self._status.record_success(region.name, len(buffer), next_run_at)
         except RenderError as exc:
             logger.error("Rendering für %s fehlgeschlagen: %s", region_name, exc)

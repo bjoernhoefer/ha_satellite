@@ -133,7 +133,7 @@ class MsgSeviriSource(Source):
 
         try:
             product = _product_cache().latest(
-                config.sources.msg_collection, config.eumetsat, self.entry_suffix
+                config.sources.collection_for(region.source), config.eumetsat, self.entry_suffix
             )
         except DataStoreError as exc:
             raise RenderError(str(exc)) from exc

@@ -2,28 +2,234 @@
 <html lang="de">
 <head>
   <meta charset="utf-8">
-  <title>ha_satellite – Konfiguration</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0b1a2e">
+  <title>ha_satellite</title>
   <style>
-    body { font-family: sans-serif; max-width: 900px; margin: 2rem auto; color: #222; }
-    h1 { font-size: 1.4rem; }
-    section { border: 1px solid #ddd; border-radius: 8px; padding: 1rem 1.5rem; margin-bottom: 1.5rem; }
-    label { display: block; margin-top: 0.5rem; font-weight: bold; }
-    input, select { width: 100%; padding: 0.3rem; margin-top: 0.2rem; box-sizing: border-box; }
+    :root { --border: #d9dee5; --muted: #6b7280; --accent: #1d4ed8; --ok: #1a7f37; --err: #c62828; --warn: #b45309; }
+    * { box-sizing: border-box; }
+    [hidden] { display: none !important; }
+    code, .warning, .muted, .message { overflow-wrap: anywhere; }
+    body { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; margin: 0; color: #1f2937; background: #f5f7fa; }
+    main { max-width: 1100px; margin: 0 auto; padding: 1rem; padding-bottom: 2rem; }
+    header { background: #0b1a2e; color: #fff; padding: 0.8rem 1rem; }
+    header h1 { font-size: 1.15rem; margin: 0; max-width: 1100px; margin: 0 auto; }
+    nav.toc { max-width: 1100px; margin: 0.4rem auto 0; display: flex; gap: 0.8rem; flex-wrap: wrap; font-size: 0.85rem; }
+    nav.toc a { color: #bcd3f5; text-decoration: none; }
+    h2 { font-size: 1.1rem; margin: 0 0 0.6rem; }
+    section { background: #fff; border: 1px solid var(--border); border-radius: 10px; padding: 1rem 1.2rem; margin-bottom: 1.2rem; }
+    label { display: block; margin-top: 0.6rem; font-weight: 600; font-size: 0.92rem; }
+    label.inline { display: inline-flex; align-items: center; gap: 0.35rem; font-weight: normal; margin-top: 0.4rem; }
+    input, select, textarea { width: 100%; padding: 0.45rem; margin-top: 0.2rem; font: inherit; border: 1px solid var(--border); border-radius: 6px; }
+    input[type=checkbox], input[type=radio] { width: auto; margin: 0; }
     input:disabled { background: #f3f3f3; }
-    table { width: 100%; border-collapse: collapse; }
-    th, td { text-align: left; padding: 0.4rem; border-bottom: 1px solid #eee; }
-    img.preview { max-width: 220px; border: 1px solid #ccc; }
-    button { padding: 0.5rem 1rem; cursor: pointer; margin-top: 0.8rem; }
-    .muted { color: #777; font-size: 0.9rem; }
-    .message { margin-top: 0.8rem; min-height: 1.2em; }
-    .message.ok { color: #1a7f37; }
-    .message.error { color: #c62828; }
+    textarea { font-family: ui-monospace, Menlo, monospace; font-size: 0.82rem; min-height: 18rem; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+    th, td { text-align: left; padding: 0.4rem; border-bottom: 1px solid #eef0f3; vertical-align: top; }
+    .table-wrap { overflow-x: auto; }
+    button, .button { padding: 0.5rem 0.9rem; cursor: pointer; margin-top: 0.6rem; border: 1px solid var(--border); background: #fff; border-radius: 6px; font: inherit; color: inherit; text-decoration: none; display: inline-block; }
+    button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+    button:disabled { opacity: 0.6; cursor: default; }
+    .muted { color: var(--muted); font-size: 0.88rem; }
+    .message { margin-top: 0.6rem; min-height: 1.2em; font-size: 0.9rem; }
+    .message.ok { color: var(--ok); }
+    .message.error { color: var(--err); }
+    .badge { display: inline-block; font-size: 0.75rem; padding: 0.1rem 0.45rem; border-radius: 999px; background: #eef2f7; margin: 0.1rem 0.2rem 0.1rem 0; }
+    .badge.ok { background: #dcfce7; color: #14532d; }
+    .badge.warn { background: #fef3c7; color: #78350f; }
+    .badge.err { background: #fee2e2; color: #7f1d1d; }
+    .row { display: flex; gap: 0.6rem; flex-wrap: wrap; align-items: center; }
+    .grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 0 1rem; }
+
+    /* Regionen */
+    .regions { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 1rem; }
+    .region-card { border: 1px solid var(--border); border-radius: 10px; padding: 0.8rem; background: #fcfdfe; min-width: 0; }
+    .region-card h3 { margin: 0 0 0.3rem; font-size: 1rem; }
+    .preview-wrap { position: relative; background: #0b1a2e; border-radius: 8px; overflow: hidden; aspect-ratio: 1 / 1; }
+    img.preview { width: 100%; height: 100%; object-fit: contain; display: block; cursor: zoom-in; }
+    .preview-wrap .placeholder { position: absolute; inset: 0; display: none; align-items: center; justify-content: center; color: #9fb3cf; font-size: 0.9rem; }
+    .preview-wrap.missing .placeholder { display: flex; }
+    .preview-wrap.missing img.preview { visibility: hidden; }
+    .history-strip { display: flex; gap: 0.4rem; overflow-x: auto; padding: 0.4rem 0 0.2rem; scroll-snap-type: x proximity; }
+    .history-strip button { margin: 0; padding: 0; border: 2px solid transparent; background: none; flex: 0 0 auto; scroll-snap-align: start; border-radius: 6px; overflow: hidden; width: 84px; }
+    .history-strip button:hover, .history-strip button:focus-visible { border-color: var(--accent); }
+    .history-strip img { width: 100%; aspect-ratio: 1 / 1; object-fit: cover; display: block; background: #0b1a2e; }
+    .history-strip span { display: block; font-size: 0.7rem; text-align: center; color: var(--muted); padding: 0.1rem 0; }
+    .warning { color: var(--warn); font-size: 0.85rem; margin-top: 0.3rem; }
+
+    /* Speicherort */
+    .candidates { display: grid; grid-template-columns: minmax(0, 1fr); gap: 0.4rem; margin-top: 0.4rem; }
+    .candidate { border: 1px solid var(--border); border-radius: 8px; padding: 0.5rem 0.7rem; cursor: pointer; display: flex; gap: 0.6rem; align-items: flex-start; font-weight: normal; margin: 0; }
+    .candidate.selected { border-color: var(--accent); background: #eff6ff; }
+    .candidate > div { min-width: 0; flex: 1; }
+    .candidate code { word-break: break-all; }
+
+    /* Logs */
+    .logs { background: #0d1117; color: #d1d5db; font-family: ui-monospace, Menlo, monospace; font-size: 0.78rem; height: 45vh; min-height: 14rem; overflow: auto; border-radius: 8px; padding: 0.5rem; margin-top: 0.6rem; }
+    .log-line { white-space: pre-wrap; word-break: break-word; padding: 1px 0; }
+    .log-line .ts { color: #6b7280; }
+    .log-line.WARNING .lvl { color: #fbbf24; }
+    .log-line.ERROR .lvl, .log-line.CRITICAL .lvl { color: #f87171; }
+    .log-line.INFO .lvl { color: #60a5fa; }
+    .log-line .src { color: #a78bfa; }
+
+    /* Vollbild-Betrachter (kein Popup: füllt den gesamten Viewport) */
+    body.viewer-open { overflow: hidden; }
+    .viewer { position: fixed; inset: 0; z-index: 1000; background: #000; color: #fff; height: 100vh; height: 100dvh; width: 100vw; touch-action: none; user-select: none; -webkit-user-select: none; }
+    .viewer[hidden] { display: none; }
+    .viewer-stage { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; }
+    .viewer-stage img { width: 100%; height: 100%; object-fit: contain; display: block; }
+    .viewer-bar { position: absolute; left: 0; right: 0; display: flex; gap: 0.5rem; align-items: center; padding: 0.5rem 0.7rem; background: linear-gradient(rgba(0,0,0,.75), rgba(0,0,0,.35)); transition: opacity 0.2s; flex-wrap: wrap; }
+    .viewer-top { top: 0; padding-top: max(0.5rem, env(safe-area-inset-top)); }
+    .viewer-bottom { bottom: 0; justify-content: center; padding-bottom: max(0.6rem, env(safe-area-inset-bottom)); background: linear-gradient(rgba(0,0,0,.35), rgba(0,0,0,.75)); }
+    .viewer.controls-hidden .viewer-bar { opacity: 0; pointer-events: none; }
+    .viewer-bar button, .viewer-bar select, .viewer-bar a { margin: 0; background: rgba(255,255,255,.12); color: #fff; border: 1px solid rgba(255,255,255,.3); border-radius: 6px; padding: 0.45rem 0.8rem; min-height: 40px; font: inherit; width: auto; text-decoration: none; }
+    .viewer-bar select option { color: #000; }
+    .viewer-title { flex: 1; min-width: 0; font-size: 0.95rem; }
+    .viewer-title small { display: block; color: #cbd5e1; font-size: 0.8rem; }
+    .live-badge { background: #dc2626; color: #fff; border-radius: 4px; padding: 0.05rem 0.4rem; font-size: 0.75rem; font-weight: 700; margin-right: 0.3rem; }
+    .viewer .viewer-empty { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: #9ca3af; }
+
+    @media (max-width: 600px) {
+      main { padding: 0.6rem; }
+      section { padding: 0.8rem; }
+      .viewer-bar button, .viewer-bar select { padding: 0.45rem 0.6rem; }
+      .hide-mobile { display: none; }
+    }
   </style>
 </head>
 <body>
-  <h1>ha_satellite – Satellitenbilder für Home Assistant</h1>
+  <header>
+    <h1>ha_satellite – Satellitenbilder für Home Assistant</h1>
+    <nav class="toc">
+      <a href="#sec-regions">Regionen</a><a href="#sec-sources">Quellen</a><a href="#sec-storage">Speicherort</a>
+      <a href="#sec-credentials">Zugangsdaten</a><a href="#sec-status">Status</a><a href="#sec-logs">Logs</a>
+    </nav>
+  </header>
+  <main>
 
-  <section>
+  <section id="sec-regions">
+    <h2>Regionen</h2>
+    <div class="regions">
+      {% for region in config.regions %}
+      <div class="region-card" data-testid="region-{{ region.name }}" data-region="{{ region.name }}">
+        <h3>{{ region.name }}</h3>
+        <div class="muted">{{ region.lat }}, {{ region.lon }} · {{ region.radius_km }} km · {{ region.composite }}</div>
+        <div class="preview-wrap" data-preview-wrap="{{ region.name }}">
+          <img class="preview" src="/regions/{{ region.name }}/latest.png" alt="{{ region.name }} – neuestes Bild"
+               role="button" tabindex="0" title="Groß anzeigen"
+               data-region="{{ region.name }}" data-testid="preview-{{ region.name }}">
+          <div class="placeholder">Noch kein Bild vorhanden</div>
+        </div>
+        <div class="row">
+          <button type="button" class="refresh primary" data-region="{{ region.name }}"
+                  data-testid="refresh-{{ region.name }}">Jetzt aktualisieren</button>
+          <button type="button" class="open-live" data-region="{{ region.name }}"
+                  data-testid="live-{{ region.name }}">● Live</button>
+          <button type="button" class="open-play" data-region="{{ region.name }}"
+                  data-testid="play-{{ region.name }}">▶ Zeitraffer</button>
+        </div>
+        <label for="region-source-{{ region.name }}">Quelle</label>
+        <select id="region-source-{{ region.name }}" class="region-source" data-region="{{ region.name }}"
+                data-testid="region-source-{{ region.name }}">
+          {% for entry in config.sources.catalog %}
+          <option value="{{ entry.id }}" {% if entry.id == region.source %}selected{% endif %}>{{ entry.label or entry.id }}{% if not entry.enabled %} (deaktiviert){% endif %}</option>
+          {% endfor %}
+        </select>
+        <div class="warning" data-testid="region-warning-{{ region.name }}"
+             {% if config.sources.is_enabled(region.source) %}hidden{% endif %}>
+          Quelle deaktiviert – keine automatischen Läufe, nur „Jetzt aktualisieren“.</div>
+        <div class="message" data-testid="refresh-message-{{ region.name }}" role="status"></div>
+        <div class="muted" data-testid="history-summary-{{ region.name }}">Historie wird geladen …</div>
+        <div class="history-strip" data-testid="history-{{ region.name }}" data-region="{{ region.name }}"></div>
+      </div>
+      {% endfor %}
+    </div>
+  </section>
+
+  <section id="sec-sources">
+    <h2>Quellen &amp; Abrufintervall</h2>
+    <p class="muted">Nur aktivierte Quellen werden automatisch abgerufen. Welche Quelle eine Region nutzt,
+      wird oben bei der Region gewählt.</p>
+    <div class="table-wrap">
+      <table data-testid="sources-table">
+        <thead><tr><th>Aktiv</th><th>Quelle</th><th class="hide-mobile">Treiber</th><th>EUMETSAT-Abgleich</th></tr></thead>
+        <tbody id="sources-tbody"></tbody>
+      </table>
+    </div>
+    <div class="message" data-testid="sources-table-message" role="status"></div>
+
+    <form id="sources-form" data-testid="sources-form">
+      <div class="grid2">
+        <div>
+          <label for="poll-interval">Abrufintervall (Minuten)</label>
+          <input id="poll-interval" name="poll_interval_minutes" type="number" min="1" step="1" required
+                 data-testid="poll-interval" value="{{ config.sources.poll_interval_minutes }}">
+        </div>
+        <div>
+          <label for="auto-sync-hours">Automatischer Quellen-Abgleich (Stunden, 0 = aus)</label>
+          <input id="auto-sync-hours" name="auto_sync_hours" type="number" min="0" step="1" required
+                 data-testid="auto-sync-hours" value="{{ config.sources.auto_sync_hours }}">
+        </div>
+      </div>
+      <button type="submit" data-testid="save-sources">Speichern</button>
+      <div class="message" data-testid="sources-message" role="status"></div>
+    </form>
+
+    <h3 style="font-size:1rem;margin-top:1rem">Abgleich mit dem EUMETSAT Data Store</h3>
+    <p class="muted">Prüft, ob die Collections der Quellen verfügbar sind und wie aktuell das letzte Produkt ist,
+      und findet neue, unterstützte Collections.
+      Letzter Abgleich: <span data-testid="sources-last-sync">–</span></p>
+    <button type="button" data-testid="sources-sync">Jetzt abgleichen</button>
+    <div class="message" data-testid="sources-sync-message" role="status"></div>
+    <div data-testid="discovered-list"></div>
+
+    <details data-testid="sources-json-details" style="margin-top:1rem">
+      <summary style="cursor:pointer;font-weight:600">Quellen-Katalog als JSON bearbeiten</summary>
+      <p class="muted">Felder: <code>id</code> (eindeutig, wird von Regionen referenziert), <code>driver</code>
+        ({{ drivers | join(", ") }}), <code>label</code>, <code>collection</code> (EUMETSAT-Collection-ID),
+        <code>enabled</code>, <code>description</code>.</p>
+      <textarea id="sources-json" data-testid="sources-json" spellcheck="false" autocomplete="off"></textarea>
+      <div class="row">
+        <button type="button" class="primary" data-testid="sources-json-save">JSON speichern</button>
+        <button type="button" data-testid="sources-json-reset">Zurücksetzen</button>
+      </div>
+      <div class="message" data-testid="sources-json-message" role="status"></div>
+    </details>
+  </section>
+
+  <section id="sec-storage">
+    <h2>Speicherort &amp; Historie</h2>
+    <p class="muted">Aktuell: <code data-testid="storage-current">…</code> · belegt
+      <span data-testid="storage-used">…</span> · Dienst läuft als <span data-testid="storage-uid">…</span></p>
+    <p class="muted">Im Container sind nur eingehängte Volumes dauerhaft. <code>docker-compose.yml</code> hängt
+      <code>/mnt</code> des Hosts unter <code>/mnt</code> ein – Datenträger wie <code>/mnt/data</code> oder
+      <code>/mnt/data2</code> erscheinen daher unten automatisch.</p>
+    <div class="candidates" data-testid="storage-candidates"></div>
+    <form id="storage-form" data-testid="storage-form">
+      <label for="storage-path">Speicherort der Bilder</label>
+      <input id="storage-path" type="text" data-testid="storage-path" autocomplete="off" spellcheck="false"
+             placeholder="/mnt/data/ha_satellite">
+      <label class="inline"><input type="checkbox" id="storage-move" data-testid="storage-move" checked>
+        vorhandene Bilder an den neuen Ort verschieben</label>
+      <div class="grid2">
+        <div>
+          <label for="history-minutes">Historie (Minuten)</label>
+          <input id="history-minutes" type="number" min="1" step="1" data-testid="history-minutes"
+                 value="{{ config.history.history_minutes }}">
+        </div>
+        <div>
+          <label for="max-storage">Speicherlimit je Region (MB)</label>
+          <input id="max-storage" type="number" min="1" step="1" data-testid="max-storage"
+                 value="{{ config.history.max_storage_mb }}">
+        </div>
+      </div>
+      <button type="submit" class="primary" data-testid="save-storage">Speicherort &amp; Historie speichern</button>
+      <div class="message" data-testid="storage-message" role="status"></div>
+    </form>
+  </section>
+
+  <section id="sec-credentials">
     <h2>EUMETSAT-Zugangsdaten</h2>
     <p class="muted">Consumer Key und Secret gibt es unter
       <a href="https://api.eumetsat.int/api-key/" target="_blank" rel="noopener">api.eumetsat.int/api-key</a>.</p>
@@ -51,80 +257,119 @@
     </form>
   </section>
 
-  <section>
-    <h2>Regionen</h2>
-    <table>
-      <tr><th>Name</th><th>Lat</th><th>Lon</th><th>Umkreis (km)</th><th>Komposit</th><th>Quelle</th><th>Vorschau</th></tr>
-      {% for region in config.regions %}
-      <tr data-testid="region-{{ region.name }}">
-        <td>{{ region.name }}</td>
-        <td>{{ region.lat }}</td>
-        <td>{{ region.lon }}</td>
-        <td>{{ region.radius_km }}</td>
-        <td>{{ region.composite }}</td>
-        <td>{{ region.source }}</td>
-        <td>
-          <img class="preview" src="/regions/{{ region.name }}/latest.png" alt="{{ region.name }}"
-               data-testid="preview-{{ region.name }}">
-          <button type="button" class="refresh" data-region="{{ region.name }}"
-                  data-testid="refresh-{{ region.name }}">Jetzt aktualisieren</button>
-          <div class="message" data-testid="refresh-message-{{ region.name }}" role="status"></div>
-        </td>
-      </tr>
-      {% endfor %}
-    </table>
-  </section>
-
-  <section>
-    <h2>Quellen &amp; Abrufintervall</h2>
-    <p>Aktive Quellen: {{ config.sources.active | join(", ") }}</p>
-    <form id="sources-form" data-testid="sources-form">
-      <label for="poll-interval">Abrufintervall (Minuten)</label>
-      <input id="poll-interval" name="poll_interval_minutes" type="number" min="1" step="1" required
-             data-testid="poll-interval" value="{{ config.sources.poll_interval_minutes }}">
-      <button type="submit" data-testid="save-sources">Intervall speichern</button>
-      <div class="message" data-testid="sources-message" role="status"></div>
-    </form>
-  </section>
-
-  <section>
+  <section id="sec-status">
     <h2>Status</h2>
-    <table>
-      <tr><th>Region</th><th>Letzter Lauf</th><th>Nächster Lauf</th><th>Frames</th><th>Letzter Fehler</th></tr>
-      {% for name, s in status.items() %}
-      <tr data-testid="status-{{ name }}">
-        <td>{{ name }}</td>
-        <td>{{ s.last_run_at or "–" }}</td>
-        <td>{{ s.next_run_at or "–" }}</td>
-        <td>{{ s.frame_count }}</td>
-        <td>{{ s.last_error or "–" }}</td>
-      </tr>
-      {% endfor %}
-    </table>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Region</th><th>Letzter Lauf</th><th>Nächster Lauf</th><th>Frames</th><th>Letzter Fehler</th></tr></thead>
+        <tbody id="status-tbody">
+          {% for name, s in status.items() %}
+          <tr data-testid="status-{{ name }}">
+            <td>{{ name }}</td>
+            <td>{{ s.last_run_at or "–" }}</td>
+            <td>{{ s.next_run_at or "–" }}</td>
+            <td>{{ s.frame_count }}</td>
+            <td>{{ s.last_error or "–" }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
   </section>
+
+  <section id="sec-logs">
+    <h2>Logs</h2>
+    <div class="row">
+      <label class="inline">Level
+        <select data-testid="logs-level" id="logs-level" style="width:auto">
+          <option value="INFO">Info+</option>
+          <option value="WARNING">Warnungen+</option>
+          <option value="ERROR">Nur Fehler</option>
+        </select></label>
+      <label class="inline"><input type="checkbox" id="logs-autoscroll" data-testid="logs-autoscroll" checked> automatisch scrollen</label>
+      <button type="button" data-testid="logs-clear" style="margin-top:0.4rem">Anzeige leeren</button>
+      <a class="button" style="margin-top:0.4rem" href="/api/logs?format=text&amp;limit=0" download="ha_satellite.log"
+         data-testid="logs-download">Herunterladen</a>
+    </div>
+    <div class="logs" data-testid="logs" id="logs" aria-live="polite"></div>
+  </section>
+  </main>
+
+  <div class="viewer" id="viewer" data-testid="viewer" hidden>
+    <div class="viewer-stage" id="viewer-stage">
+      <img id="viewer-img" data-testid="viewer-image" alt="">
+      <div class="viewer-empty" id="viewer-empty" hidden>Keine Bilder vorhanden</div>
+    </div>
+    <div class="viewer-bar viewer-top">
+      <div class="viewer-title"><span id="viewer-live-badge" class="live-badge" hidden>LIVE</span><span id="viewer-region"></span>
+        <small data-testid="viewer-caption" id="viewer-caption"></small></div>
+      <button type="button" id="viewer-fullscreen" data-testid="viewer-fullscreen" title="Vollbild" hidden>⛶</button>
+      <button type="button" id="viewer-close" data-testid="viewer-close" title="Schließen (Esc)">✕</button>
+    </div>
+    <div class="viewer-bar viewer-bottom" id="viewer-controls">
+      <button type="button" id="viewer-prev" data-testid="viewer-prev" title="Älter (←)">◀ älter</button>
+      <span id="viewer-position" data-testid="viewer-position"></span>
+      <button type="button" id="viewer-next" data-testid="viewer-next" title="Neuer (→)">neuer ▶</button>
+      <button type="button" id="viewer-play" data-testid="viewer-play" title="Zeitraffer (Leertaste)">▶</button>
+      <select id="viewer-speed" data-testid="viewer-speed" title="Geschwindigkeit">
+        <option value="1000">1 fps</option><option value="500" selected>2 fps</option>
+        <option value="250">4 fps</option><option value="125">8 fps</option>
+      </select>
+      <button type="button" id="viewer-mode" data-testid="viewer-mode">● Live</button>
+    </div>
+  </div>
 
   <script>
+{% raw %}
+    "use strict";
+    const $ = (sel, root = document) => root.querySelector(sel);
+    const byTestId = (id) => document.querySelector('[data-testid="' + id + '"]');
+    const REGIONS = Array.from(document.querySelectorAll(".region-card")).map((el) => el.dataset.region);
+
     function showMessage(el, text, ok) {
       el.textContent = text;
       el.className = "message " + (ok ? "ok" : "error");
     }
-
-    async function postConfig(payload) {
-      const response = await fetch("/api/config", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-      const body = await response.json().catch(() => ({}));
-      if (!response.ok) {
-        throw new Error(body.detail || ("HTTP " + response.status));
+    function el(tag, attrs = {}, ...children) {
+      const node = document.createElement(tag);
+      for (const [key, value] of Object.entries(attrs)) {
+        if (value === null || value === undefined || value === false) continue;
+        if (key === "text") node.textContent = value;
+        else if (key === "class") node.className = value;
+        else if (key.startsWith("on")) node.addEventListener(key.slice(2), value);
+        else node.setAttribute(key, value === true ? "" : value);
       }
+      for (const child of children) if (child !== null && child !== undefined) node.append(child);
+      return node;
+    }
+    function fmtTime(iso, withDate = false) {
+      if (!iso) return "–";
+      const d = new Date(iso);
+      if (isNaN(d)) return iso;
+      return withDate ? d.toLocaleString("de-AT") : d.toLocaleTimeString("de-AT", { hour: "2-digit", minute: "2-digit" });
+    }
+    function fmtBytes(n) {
+      if (n === null || n === undefined) return "–";
+      const units = ["B", "KB", "MB", "GB", "TB"];
+      let i = 0;
+      while (n >= 1024 && i < units.length - 1) { n /= 1024; i++; }
+      return n.toFixed(i ? 1 : 0) + " " + units[i];
+    }
+    async function api(url, options = {}) {
+      const response = await fetch(url, options);
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body.detail || ("HTTP " + response.status));
       return body;
     }
+    function postJson(url, payload) {
+      return api(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+    }
+    const postConfig = (payload) => postJson("/api/config", payload);
 
+    /* ---------- Zugangsdaten ---------- */
     document.getElementById("credentials-form").addEventListener("submit", async (event) => {
       event.preventDefault();
-      const message = document.querySelector('[data-testid="credentials-message"]');
+      const message = byTestId("credentials-message");
       const keyInput = document.getElementById("consumer-key");
       const secretInput = document.getElementById("consumer-secret");
       const eumetsat = {};
@@ -134,7 +379,7 @@
         const saved = await postConfig({ eumetsat });
         secretInput.value = "";
         const masked = saved.eumetsat.consumer_secret;
-        document.querySelector('[data-testid="secret-masked"]').textContent = masked || "–";
+        byTestId("secret-masked").textContent = masked || "–";
         secretInput.placeholder = masked
           ? "gespeichert (" + masked + ") – leer lassen, um es beizubehalten"
           : "noch nicht gesetzt";
@@ -144,27 +389,227 @@
       }
     });
 
+    /* ---------- Quellen ---------- */
+    let sourcesState = { catalog: [], sync: {} };
+    let jsonDirty = false;
+
+    function renderSources() {
+      const tbody = document.getElementById("sources-tbody");
+      tbody.replaceChildren();
+      const syncSources = (sourcesState.sync && sourcesState.sync.sources) || {};
+      for (const entry of sourcesState.catalog) {
+        const sync = syncSources[entry.id];
+        let syncCell;
+        if (!sync) syncCell = el("span", { class: "muted", text: "noch nicht abgeglichen" });
+        else if (sync.status === "ok") syncCell = el("span", {},
+          el("span", { class: "badge ok", text: "verfügbar" }),
+          el("span", { class: "muted", text: "letztes Produkt " + fmtTime(sync.latest_product_at, true) }));
+        else if (sync.status === "local") syncCell = el("span", { class: "badge", text: "lokal" });
+        else syncCell = el("span", {}, el("span", { class: "badge err", text: sync.status }),
+          el("span", { class: "muted", text: sync.message || "" }));
+        const checkbox = el("input", { type: "checkbox", "data-testid": "source-enabled-" + entry.id,
+          "aria-label": (entry.label || entry.id) + " aktiv", checked: entry.enabled,
+          onchange: (ev) => toggleSource(entry.id, ev.target.checked) });
+        tbody.append(el("tr", { "data-testid": "source-row-" + entry.id },
+          el("td", {}, checkbox),
+          el("td", {}, el("div", { text: entry.label || entry.id }),
+            el("div", { class: "muted" }, el("code", { text: entry.id }), entry.collection ? " · " + entry.collection : "")),
+          el("td", { class: "hide-mobile" }, el("code", { text: entry.driver })),
+          el("td", { "data-testid": "source-sync-status-" + entry.id }, syncCell)));
+      }
+      const sync = sourcesState.sync || {};
+      byTestId("sources-last-sync").textContent = sync.last_run_at
+        ? fmtTime(sync.last_run_at, true) + (sync.error ? " (Fehler: " + sync.error + ")" : "") : "noch nie";
+      const list = byTestId("discovered-list");
+      list.replaceChildren();
+      const discovered = sync.discovered || [];
+      if (discovered.length) {
+        list.append(el("p", { class: "muted", text: "Neu entdeckte, unterstützte Collections:" }));
+        for (const item of discovered) {
+          const slug = item.collection.replace(/[^A-Za-z0-9]+/g, "-");
+          list.append(el("div", { class: "row", "data-testid": "discovered-" + slug },
+            el("span", {}, el("strong", { text: item.title }), " ", el("code", { class: "muted", text: item.collection }),
+              " ", el("span", { class: "badge", text: item.driver })),
+            el("button", { type: "button", "data-testid": "adopt-" + slug, text: "Übernehmen",
+              onclick: () => adoptSource(item.collection) })));
+        }
+      }
+      if (!jsonDirty) document.getElementById("sources-json").value = JSON.stringify(sourcesState.catalog, null, 2);
+      updateRegionSourceSelects();
+    }
+
+    function updateRegionSourceSelects() {
+      document.querySelectorAll("select.region-source").forEach((select) => {
+        const current = select.value;
+        select.replaceChildren(...sourcesState.catalog.map((entry) =>
+          el("option", { value: entry.id, selected: entry.id === current,
+            text: (entry.label || entry.id) + (entry.enabled ? "" : " (deaktiviert)") })));
+        if (!sourcesState.catalog.some((e) => e.id === current)) select.value = "";
+        updateRegionWarning(select.dataset.region, select.value);
+      });
+    }
+    function updateRegionWarning(region, sourceId) {
+      const entry = sourcesState.catalog.find((e) => e.id === sourceId);
+      byTestId("region-warning-" + region).hidden = !!(entry && entry.enabled);
+    }
+
+    async function loadSources() {
+      try {
+        sourcesState = await api("/api/sources");
+        renderSources();
+      } catch (err) {
+        showMessage(byTestId("sources-table-message"), "Quellen konnten nicht geladen werden: " + err.message, false);
+      }
+    }
+
+    async function saveCatalog(catalog, message, okText) {
+      try {
+        const saved = await postConfig({ sources: { catalog } });
+        sourcesState.catalog = saved.sources.catalog;
+        jsonDirty = false;
+        renderSources();
+        showMessage(message, okText, true);
+        return true;
+      } catch (err) {
+        showMessage(message, "Speichern fehlgeschlagen: " + err.message, false);
+        return false;
+      }
+    }
+
+    async function toggleSource(id, enabled) {
+      const catalog = sourcesState.catalog.map((e) => (e.id === id ? { ...e, enabled } : e));
+      const ok = await saveCatalog(catalog, byTestId("sources-table-message"),
+        "Quelle " + id + (enabled ? " aktiviert." : " deaktiviert."));
+      if (!ok) renderSources();
+    }
+
+    document.getElementById("sources-json").addEventListener("input", () => { jsonDirty = true; });
+    byTestId("sources-json-save").addEventListener("click", async () => {
+      const message = byTestId("sources-json-message");
+      let catalog;
+      try {
+        catalog = JSON.parse(document.getElementById("sources-json").value);
+        if (!Array.isArray(catalog)) throw new Error("Erwartet wird eine Liste ([...]) von Quellen");
+      } catch (err) {
+        showMessage(message, "Ungültiges JSON: " + err.message, false);
+        return;
+      }
+      await saveCatalog(catalog, message, "Quellen-Katalog gespeichert.");
+    });
+    byTestId("sources-json-reset").addEventListener("click", () => {
+      jsonDirty = false;
+      renderSources();
+      showMessage(byTestId("sources-json-message"), "Auf gespeicherten Stand zurückgesetzt.", true);
+    });
+
+    byTestId("sources-sync").addEventListener("click", async (event) => {
+      const button = event.currentTarget;
+      const message = byTestId("sources-sync-message");
+      button.disabled = true;
+      showMessage(message, "Abgleich läuft …", true);
+      try {
+        sourcesState.sync = await postJson("/api/sources/sync", {});
+        renderSources();
+        if (sourcesState.sync.error) showMessage(message, "Abgleich fehlgeschlagen: " + sourcesState.sync.error, false);
+        else showMessage(message, "Abgleich abgeschlossen.", true);
+      } catch (err) {
+        showMessage(message, "Abgleich fehlgeschlagen: " + err.message, false);
+      } finally {
+        button.disabled = false;
+      }
+    });
+
+    async function adoptSource(collection) {
+      const message = byTestId("sources-sync-message");
+      try {
+        const entry = await postJson("/api/sources/adopt", { collection });
+        await loadSources();
+        showMessage(message, "Quelle " + entry.id + " übernommen (deaktiviert – bei Bedarf aktivieren).", true);
+      } catch (err) {
+        showMessage(message, "Übernehmen fehlgeschlagen: " + err.message, false);
+      }
+    }
+
     document.getElementById("sources-form").addEventListener("submit", async (event) => {
       event.preventDefault();
-      const message = document.querySelector('[data-testid="sources-message"]');
-      const value = parseInt(document.getElementById("poll-interval").value, 10);
+      const message = byTestId("sources-message");
+      const poll = parseInt(document.getElementById("poll-interval").value, 10);
+      const autoSync = parseInt(document.getElementById("auto-sync-hours").value, 10);
       try {
-        await postConfig({ sources: { poll_interval_minutes: value } });
-        showMessage(message, "Abrufintervall gespeichert.", true);
+        await postConfig({ sources: { poll_interval_minutes: poll, auto_sync_hours: autoSync } });
+        showMessage(message, "Einstellungen gespeichert.", true);
+        refreshStatus();
       } catch (err) {
         showMessage(message, "Speichern fehlgeschlagen: " + err.message, false);
       }
     });
 
+    document.querySelectorAll("select.region-source").forEach((select) => {
+      select.addEventListener("change", async () => {
+        const region = select.dataset.region;
+        const message = byTestId("refresh-message-" + region);
+        try {
+          const config = await api("/api/config");
+          const regions = config.regions.map((r) => (r.name === region ? { ...r, source: select.value } : r));
+          await postConfig({ regions });
+          updateRegionWarning(region, select.value);
+          showMessage(message, "Quelle gespeichert.", true);
+        } catch (err) {
+          showMessage(message, "Speichern fehlgeschlagen: " + err.message, false);
+        }
+      });
+    });
+
+    /* ---------- Regionen: Vorschau, Historie, Aktualisieren ---------- */
+    const framesCache = {};
+
+    function reloadPreview(region) {
+      const img = byTestId("preview-" + region);
+      img.src = "/regions/" + encodeURIComponent(region) + "/latest.png?t=" + Date.now();
+    }
+    document.querySelectorAll("img.preview").forEach((img) => {
+      const wrap = img.closest(".preview-wrap");
+      img.addEventListener("error", () => wrap.classList.add("missing"));
+      img.addEventListener("load", () => wrap.classList.remove("missing"));
+      if (img.complete && img.naturalWidth === 0) wrap.classList.add("missing");
+      const open = () => openViewer({ mode: "frames", region: img.dataset.region, index: 0 });
+      img.addEventListener("click", open);
+      img.addEventListener("keydown", (ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); open(); } });
+    });
+
+    async function loadHistory(region) {
+      try {
+        const data = await api("/api/regions/" + encodeURIComponent(region) + "/frames");
+        framesCache[region] = data.frames;
+        const strip = byTestId("history-" + region);
+        strip.replaceChildren(...data.frames.map((frame) =>
+          el("button", { type: "button", title: fmtTime(frame.created_at, true),
+            "data-testid": "history-item-" + region + "-" + frame.index,
+            onclick: () => openViewer({ mode: "frames", region, index: frame.index }) },
+            el("img", { src: frame.url + "?w=240", alt: "", loading: "lazy" }),
+            el("span", { text: fmtTime(frame.created_at) }))));
+        const summary = byTestId("history-summary-" + region);
+        if (data.frames.length) {
+          const oldest = data.frames[data.frames.length - 1];
+          summary.textContent = "Historie: " + data.frames.length + " Bild(er) seit " + fmtTime(oldest.created_at, true);
+        } else summary.textContent = "Historie: noch keine Bilder";
+        return data.frames;
+      } catch (err) {
+        byTestId("history-summary-" + region).textContent = "Historie nicht verfügbar: " + err.message;
+        return [];
+      }
+    }
+
     document.querySelectorAll("button.refresh").forEach((button) => {
       button.addEventListener("click", async () => {
         const region = button.dataset.region;
-        const message = document.querySelector('[data-testid="refresh-message-' + region + '"]');
+        const message = byTestId("refresh-message-" + region);
         button.disabled = true;
         try {
           const response = await fetch("/api/regions/" + encodeURIComponent(region) + "/refresh", { method: "POST" });
           if (!response.ok) throw new Error("HTTP " + response.status);
           showMessage(message, "Aktualisierung angestoßen.", true);
+          fastPollUntil = Date.now() + 30000;
         } catch (err) {
           showMessage(message, "Fehlgeschlagen: " + err.message, false);
         } finally {
@@ -172,6 +617,305 @@
         }
       });
     });
+    document.querySelectorAll("button.open-live").forEach((b) =>
+      b.addEventListener("click", () => openViewer({ mode: "live", region: b.dataset.region })));
+    document.querySelectorAll("button.open-play").forEach((b) =>
+      b.addEventListener("click", () => openViewer({ mode: "frames", region: b.dataset.region, play: true })));
+
+    /* ---------- Status (Polling, lädt bei neuen Frames Vorschau/Historie nach) ---------- */
+    const lastSeenRun = {};
+    let fastPollUntil = 0;
+    async function refreshStatus() {
+      let status;
+      try { status = await api("/api/status"); } catch (err) { return; }
+      const tbody = document.getElementById("status-tbody");
+      tbody.replaceChildren(...Object.entries(status).map(([name, s]) =>
+        el("tr", { "data-testid": "status-" + name },
+          el("td", { text: name }), el("td", { text: fmtTime(s.last_run_at, true) }),
+          el("td", { text: fmtTime(s.next_run_at, true) }), el("td", { text: String(s.frame_count) }),
+          el("td", { text: s.last_error || "–" }))));
+      for (const [name, s] of Object.entries(status)) {
+        if (!REGIONS.includes(name)) continue;
+        if (s.last_run_at && lastSeenRun[name] !== s.last_run_at) {
+          const first = lastSeenRun[name] === undefined;
+          lastSeenRun[name] = s.last_run_at;
+          if (!first) { reloadPreview(name); loadHistory(name); }
+        }
+      }
+    }
+    function statusLoop() {
+      refreshStatus().finally(() => setTimeout(statusLoop, Date.now() < fastPollUntil ? 1000 : 5000));
+    }
+
+    /* ---------- Speicherort ---------- */
+    async function loadStorage() {
+      try {
+        const data = await api("/api/storage");
+        byTestId("storage-current").textContent = data.current;
+        byTestId("storage-used").textContent = fmtBytes(data.used_bytes);
+        byTestId("storage-uid").textContent = "UID " + data.uid + " / GID " + data.gid;
+        const input = document.getElementById("storage-path");
+        if (!input.dataset.touched) input.value = data.current;
+        const list = byTestId("storage-candidates");
+        list.replaceChildren(...data.candidates.map((c, i) => {
+          const badges = [];
+          if (c.is_current) badges.push(el("span", { class: "badge ok", text: "aktuell" }));
+          if (c.is_default) badges.push(el("span", { class: "badge", text: "Standard (/data-Volume)" }));
+          if (c.free_bytes !== null) badges.push(el("span", { class: "badge", text: fmtBytes(c.free_bytes) + " frei von " + fmtBytes(c.total_bytes) }));
+          if (!c.writable) badges.push(el("span", { class: "badge err", text: "nicht beschreibbar" }));
+          if (c.container_only) badges.push(el("span", { class: "badge err", text: "nicht persistent" }));
+          else if (c.same_disk_as_data) badges.push(el("span", { class: "badge warn", text: "System-Disk" }));
+          const radio = el("input", { type: "radio", name: "storage-candidate", value: c.path, checked: input.value === c.path });
+          const label = el("label", { class: "candidate" + (input.value === c.path ? " selected" : ""),
+            "data-testid": "storage-candidate-" + i, "data-path": c.path },
+            radio, el("div", {}, el("code", { text: c.path }), el("div", {}, ...badges),
+              ...c.warnings.map((w) => el("div", { class: "warning", text: w }))));
+          radio.addEventListener("change", () => {
+            input.value = c.path; input.dataset.touched = "1";
+            list.querySelectorAll(".candidate").forEach((n) => n.classList.toggle("selected", n === label));
+          });
+          return label;
+        }));
+      } catch (err) {
+        showMessage(byTestId("storage-message"), "Speicherinfo nicht verfügbar: " + err.message, false);
+      }
+    }
+    document.getElementById("storage-path").addEventListener("input", (ev) => { ev.target.dataset.touched = "1"; });
+    document.getElementById("storage-form").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const message = byTestId("storage-message");
+      const button = byTestId("save-storage");
+      button.disabled = true;
+      showMessage(message, "Speichere …", true);
+      try {
+        const result = await postJson("/api/storage", {
+          frames_dir: document.getElementById("storage-path").value.trim(),
+          move_existing: document.getElementById("storage-move").checked,
+          history_minutes: parseInt(document.getElementById("history-minutes").value, 10),
+          max_storage_mb: parseInt(document.getElementById("max-storage").value, 10),
+        });
+        delete document.getElementById("storage-path").dataset.touched;
+        showMessage(message, "Gespeichert. Speicherort: " + result.current + " (" + result.moved_frames + " Bilder verschoben).", true);
+        await loadStorage();
+        REGIONS.forEach((r) => { reloadPreview(r); loadHistory(r); });
+      } catch (err) {
+        showMessage(message, "Speichern fehlgeschlagen: " + err.message, false);
+      } finally {
+        button.disabled = false;
+      }
+    });
+
+    /* ---------- Logs ---------- */
+    const LEVELS = { DEBUG: 10, INFO: 20, WARNING: 30, ERROR: 40, CRITICAL: 50 };
+    let lastLogId = 0;
+    const logsEl = document.getElementById("logs");
+    function applyLogFilter() {
+      const min = LEVELS[document.getElementById("logs-level").value];
+      logsEl.querySelectorAll(".log-line").forEach((line) => { line.hidden = (LEVELS[line.dataset.level] || 0) < min; });
+    }
+    async function pollLogs() {
+      try {
+        const data = await api("/api/logs?after=" + lastLogId);
+        if (data.entries.length) {
+          const min = LEVELS[document.getElementById("logs-level").value];
+          const nearBottom = logsEl.scrollHeight - logsEl.scrollTop - logsEl.clientHeight < 40;
+          for (const e of data.entries) {
+            const line = el("div", { class: "log-line " + e.level, "data-testid": "log-line", "data-level": e.level },
+              el("span", { class: "ts", text: fmtTime(e.ts, true) + " " }),
+              el("span", { class: "lvl", text: e.level.padEnd(7) + " " }),
+              el("span", { class: "src", text: e.logger.replace(/^ha_satellite\./, "") + ": " }),
+              el("span", { class: "msg", text: e.message }));
+            line.hidden = (LEVELS[e.level] || 0) < min;
+            logsEl.append(line);
+            lastLogId = e.id;
+          }
+          while (logsEl.childElementCount > 1500) logsEl.firstElementChild.remove();
+          if (document.getElementById("logs-autoscroll").checked || nearBottom) logsEl.scrollTop = logsEl.scrollHeight;
+        }
+      } catch (err) { /* nächster Versuch */ }
+      setTimeout(pollLogs, 2000);
+    }
+    document.getElementById("logs-level").addEventListener("change", applyLogFilter);
+    byTestId("logs-clear").addEventListener("click", () => logsEl.replaceChildren());
+
+    /* ---------- Vollbild-Betrachter ---------- */
+    const viewer = document.getElementById("viewer");
+    const viewerImg = document.getElementById("viewer-img");
+    const vs = { open: false, mode: "frames", region: null, index: 0, frames: [], playing: false, timer: null, pushed: false };
+
+    function stopPlaying() {
+      vs.playing = false;
+      clearInterval(vs.timer);
+      vs.timer = null;
+      byTestId("viewer-play").textContent = "▶";
+    }
+    function startPlaying() {
+      if (vs.frames.length < 2) return;
+      vs.playing = true;
+      byTestId("viewer-play").textContent = "❚❚";
+      vs.frames.forEach((f) => { const img = new Image(); img.src = f.url; });
+      if (vs.index === 0) vs.index = vs.frames.length - 1;
+      clearInterval(vs.timer);
+      vs.timer = setInterval(() => {
+        vs.index = vs.index > 0 ? vs.index - 1 : vs.frames.length - 1;
+        renderViewer();
+      }, parseInt(byTestId("viewer-speed").value, 10));
+    }
+    function setHash(hash) {
+      const url = location.pathname + location.search + (hash ? "#" + hash : "");
+      history.replaceState(history.state, "", url);
+    }
+    function stateHash() {
+      if (vs.mode === "live") return "live=" + encodeURIComponent(vs.region);
+      return "view=" + encodeURIComponent(vs.region) + "&i=" + vs.index;
+    }
+
+    function renderViewer() {
+      const live = vs.mode === "live";
+      document.getElementById("viewer-region").textContent = vs.region;
+      document.getElementById("viewer-live-badge").hidden = !live;
+      byTestId("viewer-mode").textContent = live ? "Historie" : "● Live";
+      for (const id of ["viewer-prev", "viewer-next", "viewer-play", "viewer-speed", "viewer-position"]) byTestId(id).hidden = live;
+      const empty = document.getElementById("viewer-empty");
+      if (live) {
+        empty.hidden = true;
+        const src = "/regions/" + encodeURIComponent(vs.region) + "/mjpeg";
+        if (viewerImg.dataset.stream !== src) {
+          viewerImg.dataset.stream = src;
+          viewerImg.src = src + "?t=" + Date.now();
+        }
+        byTestId("viewer-caption").textContent = "Stream (MJPEG, Schleife über die Historie) · " + location.origin + src;
+        return;
+      }
+      delete viewerImg.dataset.stream;
+      const frame = vs.frames[vs.index];
+      empty.hidden = !!frame;
+      if (!frame) {
+        viewerImg.removeAttribute("src");
+        byTestId("viewer-caption").textContent = "";
+        byTestId("viewer-position").textContent = "0 / 0";
+        return;
+      }
+      viewerImg.src = frame.url;
+      viewerImg.alt = vs.region + " " + frame.created_at;
+      byTestId("viewer-caption").textContent = fmtTime(frame.created_at, true) + (vs.index === 0 ? " · neuestes Bild" : "");
+      byTestId("viewer-position").textContent = (vs.frames.length - vs.index) + " / " + vs.frames.length;
+      byTestId("viewer-prev").disabled = vs.index >= vs.frames.length - 1;
+      byTestId("viewer-next").disabled = vs.index <= 0;
+      if (!vs.playing) setHash(stateHash());
+    }
+
+    async function openViewer({ mode, region, index = 0, play = false }, fromHash = false) {
+      stopPlaying();
+      vs.mode = mode; vs.region = region; vs.index = index;
+      if (!vs.open) {
+        vs.open = true;
+        viewer.hidden = false;
+        viewer.classList.remove("controls-hidden");
+        document.body.classList.add("viewer-open");
+        if (!fromHash) {
+          // Eigener History-Eintrag: "Zurück" (z. B. am Handy) schließt den Betrachter.
+          history.pushState({ viewer: true }, "", location.pathname + location.search + "#" + stateHash());
+          vs.pushed = true;
+        }
+      }
+      if (mode === "frames") {
+        vs.frames = framesCache[region] || [];
+        renderViewer();
+        vs.frames = await loadHistory(region);
+        vs.index = Math.min(vs.index, Math.max(vs.frames.length - 1, 0));
+        if (vs.mode !== "frames" || vs.region !== region || !vs.open) return;
+        renderViewer();
+        if (play) startPlaying();
+      } else {
+        renderViewer();
+      }
+      setHash(stateHash());
+    }
+
+    function teardownViewer() {
+      stopPlaying();
+      vs.open = false;
+      viewer.hidden = true;
+      document.body.classList.remove("viewer-open");
+      delete viewerImg.dataset.stream;
+      viewerImg.removeAttribute("src");  // beendet einen laufenden MJPEG-Stream
+      if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+    }
+    function closeViewer() {
+      if (!vs.open) return;
+      const pushed = vs.pushed;
+      vs.pushed = false;
+      teardownViewer();
+      if (pushed && history.state && history.state.viewer) history.back();
+      else setHash("");
+    }
+    function step(delta) {
+      if (vs.mode !== "frames" || !vs.frames.length) return;
+      stopPlaying();
+      vs.index = Math.min(Math.max(vs.index + delta, 0), vs.frames.length - 1);
+      renderViewer();
+    }
+
+    byTestId("viewer-close").addEventListener("click", closeViewer);
+    byTestId("viewer-prev").addEventListener("click", () => step(1));
+    byTestId("viewer-next").addEventListener("click", () => step(-1));
+    byTestId("viewer-play").addEventListener("click", () => (vs.playing ? stopPlaying() : startPlaying()));
+    byTestId("viewer-speed").addEventListener("change", () => { if (vs.playing) startPlaying(); });
+    byTestId("viewer-mode").addEventListener("click", () =>
+      openViewer({ mode: vs.mode === "live" ? "frames" : "live", region: vs.region, index: 0 }));
+    const fsButton = byTestId("viewer-fullscreen");
+    fsButton.hidden = !(viewer.requestFullscreen && document.fullscreenEnabled);
+    fsButton.addEventListener("click", () => {
+      if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+      else viewer.requestFullscreen().catch(() => {});
+    });
+
+    document.addEventListener("keydown", (ev) => {
+      if (!vs.open) return;
+      if (ev.key === "Escape") closeViewer();
+      else if (ev.key === "ArrowLeft") step(1);
+      else if (ev.key === "ArrowRight") step(-1);
+      else if (ev.key === " " && vs.mode === "frames") { ev.preventDefault(); vs.playing ? stopPlaying() : startPlaying(); }
+    });
+
+    // Touch: Wischen links/rechts blättert, Tippen blendet die Bedienelemente aus/ein.
+    let touchStart = null;
+    const stage = document.getElementById("viewer-stage");
+    stage.addEventListener("touchstart", (ev) => {
+      if (ev.touches.length === 1) touchStart = { x: ev.touches[0].clientX, y: ev.touches[0].clientY, t: Date.now() };
+      else touchStart = null;
+    }, { passive: true });
+    stage.addEventListener("touchend", (ev) => {
+      if (!touchStart) return;
+      const t = ev.changedTouches[0];
+      const dx = t.clientX - touchStart.x, dy = t.clientY - touchStart.y;
+      touchStart = null;
+      if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy)) step(dx < 0 ? -1 : 1);
+      else if (Math.abs(dy) > 80 && dy > 0) closeViewer();
+      else if (Math.abs(dx) < 10 && Math.abs(dy) < 10) viewer.classList.toggle("controls-hidden");
+      ev.preventDefault();
+    });
+    stage.addEventListener("click", () => viewer.classList.toggle("controls-hidden"));
+
+    function applyHash() {
+      const params = new URLSearchParams(location.hash.replace(/^#/, ""));
+      const live = params.get("live");
+      const view = params.get("view");
+      if (live && REGIONS.includes(live)) openViewer({ mode: "live", region: live }, true);
+      else if (view && REGIONS.includes(view)) openViewer({ mode: "frames", region: view, index: parseInt(params.get("i") || "0", 10) || 0 }, true);
+      else if (vs.open) { vs.pushed = false; teardownViewer(); }
+    }
+    window.addEventListener("popstate", applyHash);
+
+    /* ---------- Start ---------- */
+    loadSources();
+    loadStorage();
+    REGIONS.forEach(loadHistory);
+    statusLoop();
+    pollLogs();
+    applyHash();
+{% endraw %}
   </script>
 </body>
 </html>

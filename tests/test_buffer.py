@@ -109,3 +109,36 @@ def test_buffer_manager_updates_limits(tmp_path: Path):
 
     manager.get("wien", max_frames=2, max_storage_mb=10)
     assert len(buf) == 2
+
+
+def test_relocate_moves_and_merges_regions(tmp_path):
+    from datetime import datetime, timedelta, timezone
+
+    from ha_satellite.buffer import BufferManager
+
+    t0 = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    old = BufferManager(tmp_path / "old")
+    old.get("wien", 10, 100).add_frame(b"a", t0)
+    old.get("wien", 10, 100).add_frame(b"c", t0 + timedelta(minutes=2))
+    new_base = tmp_path / "new"
+    existing = BufferManager(new_base).get("wien", 10, 100)
+    existing.add_frame(b"b", t0 + timedelta(minutes=1))
+
+    moved = old.relocate(new_base, move_existing=True)
+
+    assert moved == 2
+    assert old.base_dir == new_base
+    assert not (tmp_path / "old" / "wien").exists()
+    buf = old.get("wien", 10, 100)
+    contents = [f.path(buf.region_dir).read_bytes() for f in buf.frames_newest_first()]
+    assert contents == [b"c", b"b", b"a"]
+
+
+def test_relocate_without_move_keeps_old_frames(tmp_path):
+    from ha_satellite.buffer import BufferManager
+
+    manager = BufferManager(tmp_path / "old")
+    manager.get("wien", 10, 100).add_frame(b"a")
+    assert manager.relocate(tmp_path / "new", move_existing=False) == 0
+    assert len(manager.get("wien", 10, 100)) == 0
+    assert any((tmp_path / "old" / "wien").glob("*.png"))

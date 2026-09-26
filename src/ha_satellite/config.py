@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from ha_satellite.geometry import bounding_box
 
@@ -26,8 +26,13 @@ DEFAULT_CONFIG_PATH = "/data/config.yaml"
 ENV_CONSUMER_KEY = "EUMETSAT_CONSUMER_KEY"
 ENV_CONSUMER_SECRET = "EUMETSAT_CONSUMER_SECRET"
 
-# "dummy" ist zusätzlich zulässig (reine Testquelle, siehe sources/__init__.py).
-VALID_SOURCES = ("msg_seviri", "data_tailor", "mtg_fci", "dummy")
+# Implementierungen ("Treiber") in sources/__init__.py. Welche konkreten
+# Quellen zur Verfügung stehen, legt der Quellen-Katalog (sources.catalog)
+# fest - mehrere Katalogeinträge dürfen denselben Treiber nutzen (z. B.
+# msg_seviri für 0°, Rapid Scan und IODC). "dummy" ist eine reine Testquelle.
+VALID_DRIVERS = ("msg_seviri", "data_tailor", "mtg_fci", "dummy")
+# Rückwärtskompatibler Alias.
+VALID_SOURCES = VALID_DRIVERS
 
 # Tagsüber Echtfarben, nachts Infrarot-Wolken. Das naheliegende
 # "natural_color_with_night_ir" lädt zur Laufzeit NASA-Hintergrundkarten
@@ -69,36 +74,146 @@ class RegionConfig(BaseModel):
     width: int = 800
     height: int = 800
     composite: str = DEFAULT_COMPOSITE
+    # Verweist auf die ``id`` eines Eintrags im Quellen-Katalog.
     source: str = "msg_seviri"
     max_frames: int | None = None
-
-    @field_validator("source")
-    @classmethod
-    def _validate_source(cls, value: str) -> str:
-        if value not in VALID_SOURCES:
-            raise ValueError(
-                f"Unbekannte Quelle '{value}'. Erlaubt: {', '.join(VALID_SOURCES)}"
-            )
-        return value
 
     def bounding_box(self):
         return bounding_box(self.lat, self.lon, self.radius_km)
 
-    def effective_max_frames(self, poll_interval_minutes: int) -> int:
+    def effective_max_frames(
+        self, poll_interval_minutes: int, history_minutes: int = DEFAULT_HISTORY_MINUTES
+    ) -> int:
         if self.max_frames is not None:
             return self.max_frames
         interval = max(poll_interval_minutes, 1)
-        return max(DEFAULT_HISTORY_MINUTES // interval, 1)
+        return max(history_minutes // interval, 1)
+
+
+class SourceDefinition(BaseModel):
+    """Eintrag im Quellen-Katalog (in der UI als JSON editierbar)."""
+
+    id: str = Field(min_length=1, pattern=r"^[A-Za-z0-9_.-]+$")
+    driver: str
+    label: str = ""
+    collection: str | None = None
+    enabled: bool = True
+    description: str = ""
+
+    @field_validator("driver")
+    @classmethod
+    def _validate_driver(cls, value: str) -> str:
+        if value not in VALID_DRIVERS:
+            raise ValueError(
+                f"Unbekannter Treiber '{value}'. Erlaubt: {', '.join(VALID_DRIVERS)}"
+            )
+        return value
+
+
+def default_catalog() -> list[SourceDefinition]:
+    return [
+        SourceDefinition(
+            id="msg_seviri",
+            driver="msg_seviri",
+            label="MSG SEVIRI Rapid Scan (Europa, 5 min)",
+            collection=DEFAULT_MSG_COLLECTION,
+            enabled=True,
+        ),
+        SourceDefinition(
+            id="msg_seviri_0deg",
+            driver="msg_seviri",
+            label="MSG SEVIRI 0° (Full Disk, 15 min)",
+            collection="EO:EUM:DAT:MSG:HRSEVIRI",
+            enabled=False,
+        ),
+        SourceDefinition(
+            id="data_tailor",
+            driver="data_tailor",
+            label="MSG SEVIRI via Data Tailor (serverseitiger Zuschnitt)",
+            collection="EO:EUM:DAT:MSG:HRSEVIRI",
+            enabled=False,
+        ),
+        SourceDefinition(
+            id="mtg_fci",
+            driver="mtg_fci",
+            label="MTG FCI Level 1c Normal Resolution (10 min)",
+            collection="EO:EUM:DAT:0662",
+            enabled=False,
+        ),
+        SourceDefinition(
+            id="dummy",
+            driver="dummy",
+            label="Testquelle (Platzhalterbilder)",
+            enabled=False,
+        ),
+    ]
 
 
 class SourcesConfig(BaseModel):
-    active: list[str] = Field(default_factory=lambda: ["msg_seviri"])
+    catalog: list[SourceDefinition] = Field(default_factory=default_catalog)
     poll_interval_minutes: int = Field(default=15, gt=0)
-    msg_collection: str = DEFAULT_MSG_COLLECTION
+    # Abgleich des Katalogs mit dem EUMETSAT Data Store; 0 = aus.
+    auto_sync_hours: int = Field(default=24, ge=0)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _migrate_active_list(cls, data: Any) -> Any:
+        """Alte Konfigurationen hatten ``active: [..]`` und ``msg_collection``
+        statt eines Katalogs."""
+        if isinstance(data, dict) and ("active" in data or "msg_collection" in data):
+            data = dict(data)
+            active = data.pop("active", None)
+            msg_collection = data.pop("msg_collection", None)
+            if "catalog" not in data:
+                catalog = default_catalog()
+                for entry in catalog:
+                    if active is not None:
+                        entry.enabled = entry.id in active
+                    if msg_collection and entry.id == "msg_seviri":
+                        entry.collection = msg_collection
+                data["catalog"] = [entry.model_dump() for entry in catalog]
+        return data
+
+    @model_validator(mode="after")
+    def _unique_ids(self) -> "SourcesConfig":
+        seen: set[str] = set()
+        for entry in self.catalog:
+            if entry.id in seen:
+                raise ValueError(f"Quellen-ID '{entry.id}' ist im Katalog doppelt vergeben")
+            seen.add(entry.id)
+        return self
+
+    def get(self, source_id: str) -> SourceDefinition | None:
+        for entry in self.catalog:
+            if entry.id == source_id:
+                return entry
+        return None
+
+    def is_enabled(self, source_id: str) -> bool:
+        entry = self.get(source_id)
+        return bool(entry and entry.enabled)
+
+    def collection_for(self, source_id: str, default: str = DEFAULT_MSG_COLLECTION) -> str:
+        entry = self.get(source_id)
+        return entry.collection if entry and entry.collection else default
 
 
 class HistoryConfig(BaseModel):
+    history_minutes: int = Field(default=DEFAULT_HISTORY_MINUTES, gt=0)
     max_storage_mb: int = Field(default=500, gt=0)
+
+
+class StorageConfig(BaseModel):
+    # Leer = Standard (<Datenverzeichnis>/frames, also im /data-Volume).
+    frames_dir: str = ""
+
+    @field_validator("frames_dir")
+    @classmethod
+    def _validate_frames_dir(cls, value: str) -> str:
+        value = value.strip()
+        if value and not value.startswith("/"):
+            raise ValueError("Der Speicherort muss ein absoluter Pfad sein (z. B. /mnt/data/ha_satellite)")
+        return value.rstrip("/") or ("/" if value else "")
 
 
 class ServerConfig(BaseModel):
@@ -109,8 +224,25 @@ class AppConfig(BaseModel):
     eumetsat: EumetsatCredentials = Field(default_factory=EumetsatCredentials)
     sources: SourcesConfig = Field(default_factory=SourcesConfig)
     history: HistoryConfig = Field(default_factory=HistoryConfig)
+    storage: StorageConfig = Field(default_factory=StorageConfig)
     server: ServerConfig = Field(default_factory=ServerConfig)
     regions: list[RegionConfig] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _regions_reference_catalog(self) -> "AppConfig":
+        known = [entry.id for entry in self.sources.catalog]
+        for region in self.regions:
+            if region.source not in known:
+                raise ValueError(
+                    f"Region '{region.name}' verweist auf unbekannte Quelle '{region.source}'. "
+                    f"Im Katalog: {', '.join(known) or '-'}"
+                )
+        return self
+
+    def max_frames_for(self, region: RegionConfig) -> int:
+        return region.effective_max_frames(
+            self.sources.poll_interval_minutes, self.history.history_minutes
+        )
 
     def region(self, name: str) -> RegionConfig | None:
         for region in self.regions:

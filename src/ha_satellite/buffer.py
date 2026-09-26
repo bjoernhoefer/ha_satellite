@@ -11,12 +11,16 @@ werden ebenfalls aufgeräumt.
 from __future__ import annotations
 
 import json
+import logging
+import shutil
 import threading
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
 INDEX_FILENAME = "_index.json"
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -93,6 +97,13 @@ class RingBuffer:
                 return frames[index]
             return None
 
+    def by_filename(self, filename: str) -> Frame | None:
+        with self._lock:
+            for frame in self._frames:
+                if frame.filename == filename:
+                    return frame
+            return None
+
     def __len__(self) -> int:
         with self._lock:
             return len(self._frames)
@@ -162,3 +173,46 @@ class BufferManager:
             else:
                 buf.update_limits(max_frames, max_storage_mb)
             return buf
+
+    def relocate(self, new_base_dir: Path, move_existing: bool) -> int:
+        """Wechselt den Speicherort; verschiebt vorhandene Frames auf Wunsch.
+
+        Existiert eine Region am Ziel bereits, werden die Frames zusammengeführt
+        (Index nach Zeitstempel sortiert). Liefert die Zahl verschobener Frames.
+        """
+        new_base_dir = Path(new_base_dir)
+        with self._lock:
+            old_base_dir = self.base_dir
+            moved = 0
+            if move_existing and old_base_dir.exists() and old_base_dir.resolve() != new_base_dir.resolve():
+                for region_dir in sorted(p for p in old_base_dir.iterdir() if p.is_dir()):
+                    moved += _merge_region_dir(region_dir, new_base_dir / region_dir.name)
+            self.base_dir = new_base_dir
+            self._buffers.clear()
+            return moved
+
+
+def _merge_region_dir(source: Path, target: Path) -> int:
+    target.mkdir(parents=True, exist_ok=True)
+
+    def _read(directory: Path) -> list[dict]:
+        try:
+            return json.loads((directory / INDEX_FILENAME).read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return []
+
+    merged = {entry["filename"]: entry for entry in _read(target)}
+    moved = 0
+    for entry in _read(source):
+        src_file = source / entry["filename"]
+        if not src_file.exists():
+            continue
+        if entry["filename"] not in merged:
+            shutil.move(str(src_file), str(target / entry["filename"]))
+            merged[entry["filename"]] = entry
+            moved += 1
+    entries = sorted(merged.values(), key=lambda e: e["created_at"])
+    (target / INDEX_FILENAME).write_text(json.dumps(entries), encoding="utf-8")
+    shutil.rmtree(source, ignore_errors=True)
+    logger.info("%d Frames von %s nach %s verschoben", moved, source, target)
+    return moved
