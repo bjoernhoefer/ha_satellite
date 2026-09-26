@@ -104,7 +104,7 @@ docker compose up -d
 |---|---|
 | `GET /` | Konfigurations-UI |
 | `GET /api/config` | Aktuelle Konfiguration (Secret maskiert) |
-| `POST /api/config` | Konfiguration speichern (Merge auf bestehende Werte) |
+| `POST /api/config` | Konfiguration speichern (Merge auf gespeicherte Werte; leeres oder maskiertes Secret = unverändert) |
 | `GET /api/status` | Letzter/nächster Lauf, Frame-Anzahl, Alter, Fehler je Region |
 | `POST /api/regions/{region}/refresh` | Sofortiger Render-Lauf ("Jetzt aktualisieren") |
 | `GET /healthz` | Liveness |
@@ -117,10 +117,22 @@ docker compose up -d
 ## Tests
 
 ```bash
-pip install -e ".[dev]"
+pip install -e ".[dev,ui]"
+playwright install chromium   # einmalig, für die UI-Klicktests
 pytest -q
 ```
 
 Abgedeckt: Konfigurations-Handling (Laden/Speichern, Env-Override, Maskierung),
-Ringpuffer-Logik (Max-Frames, Speicherlimit, Waisen-Aufräumen) und
-Bounding-Box-Berechnung.
+Ringpuffer-Logik (Max-Frames, Speicherlimit, Waisen-Aufräumen),
+Bounding-Box-Berechnung, die Config-API gegen einen echten uvicorn-Prozess
+(`tests/test_api_config.py`) sowie **Browser-Klicktests der Web-UI**
+(`tests/test_ui.py`, Playwright).
+
+**Regeln für UI-Änderungen:** Die Klicktests sind die Absicherung der
+Grundfunktionen (Zugangsdaten eintragen/speichern, Secret bleibt maskiert
+und bleibt beim Speichern ohne Neueingabe erhalten, Env-Override sperrt die
+Felder, Intervall speichern, "Jetzt aktualisieren" ohne Seitenwechsel).
+Selektoren laufen ausschließlich über `data-testid` - Markup und Styling
+dürfen sich frei ändern, die IDs müssen erhalten bleiben. Ohne installiertes
+Playwright werden die Klicktests lokal übersprungen; in CI erzwingt
+`HA_SATELLITE_REQUIRE_UI_TESTS=1`, dass sie laufen.

@@ -17,7 +17,7 @@ from fastapi.templating import Jinja2Templates
 from PIL import Image
 
 from ha_satellite.buffer import BufferManager
-from ha_satellite.config import AppConfig, ConfigStore
+from ha_satellite.config import AppConfig, ConfigStore, EumetsatCredentials, env_overrides
 from ha_satellite.scheduler import RenderScheduler
 from ha_satellite.status import StatusStore
 
@@ -68,7 +68,12 @@ async def index(request: Request):
     return templates.TemplateResponse(
         request,
         "index.html",
-        {"config": config, "status": status_store.all()},
+        {
+            "config": config,
+            "masked": config.masked(),
+            "env_overrides": env_overrides().keys(),
+            "status": status_store.all(),
+        },
     )
 
 
@@ -91,10 +96,26 @@ def _deep_merge(base: dict, overrides: dict) -> dict:
     return result
 
 
+def _is_masked_echo(value: object, stored_secret: str) -> bool:
+    """Erkennt, ob ein Client das maskierte Secret unverändert zurückschickt."""
+    if not isinstance(value, str) or not value:
+        return False
+    return value == EumetsatCredentials(consumer_secret=stored_secret).masked().consumer_secret
+
+
 @app.post("/api/config")
 async def post_config(payload: dict):
-    current = config_store.get()
-    merged = _deep_merge(current.model_dump(), payload)
+    stored = config_store.stored()
+    credentials = payload.get("eumetsat")
+    if isinstance(credentials, dict):
+        credentials = dict(credentials)
+        secret = credentials.get("consumer_secret")
+        # Leeres oder maskiertes Secret heißt "unverändert lassen" - sonst
+        # würde jedes Speichern ohne Neueingabe das echte Secret zerstören.
+        if secret is None or secret == "" or _is_masked_echo(secret, stored.eumetsat.consumer_secret):
+            credentials.pop("consumer_secret", None)
+        payload = {**payload, "eumetsat": credentials}
+    merged = _deep_merge(stored.model_dump(), payload)
     try:
         new_config = AppConfig(**merged)
     except Exception as exc:

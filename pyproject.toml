@@ -28,6 +28,10 @@ dev = [
     "pytest>=8.0",
     "httpx>=0.27",
 ]
+# Browser-Klicktests der Web-UI; zusätzlich `playwright install chromium`.
+ui = [
+    "pytest-playwright>=0.5",
+]
 
 [tool.setuptools.packages.find]
 where = ["src"]
@@ -37,3 +41,6 @@ ha_satellite = ["templates/*.html"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "ui: Browser-Klicktests der Web-UI (benötigen das Extra [ui] und Chromium)",
+]

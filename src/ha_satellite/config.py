@@ -139,16 +139,30 @@ def default_config() -> AppConfig:
     )
 
 
+def env_overrides() -> dict[str, str]:
+    """Liefert die per Umgebung gesetzten Zugangsdaten.
+
+    Leere Werte zählen nicht als Override: `docker compose` setzt bei
+    ``${VAR:-}`` eine leere Variable, die sonst die in der UI gespeicherten
+    Zugangsdaten überdecken würde.
+    """
+    overrides: dict[str, str] = {}
+    for field, env_name in (
+        ("consumer_key", ENV_CONSUMER_KEY),
+        ("consumer_secret", ENV_CONSUMER_SECRET),
+    ):
+        value = os.environ.get(env_name, "").strip()
+        if value:
+            overrides[field] = value
+    return overrides
+
+
 def _apply_env_overrides(config: AppConfig) -> AppConfig:
-    consumer_key = os.environ.get(ENV_CONSUMER_KEY)
-    consumer_secret = os.environ.get(ENV_CONSUMER_SECRET)
-    if consumer_key is None and consumer_secret is None:
+    overrides = env_overrides()
+    if not overrides:
         return config
     data = config.model_dump()
-    if consumer_key is not None:
-        data["eumetsat"]["consumer_key"] = consumer_key
-    if consumer_secret is not None:
-        data["eumetsat"]["consumer_secret"] = consumer_secret
+    data["eumetsat"].update(overrides)
     return AppConfig(**data)
 
 
@@ -174,12 +188,25 @@ def save_config(config: AppConfig, path: Path | None = None) -> None:
 
 
 class ConfigStore:
-    """Thread-sicherer In-Memory-Zugriff auf die persistierte Konfiguration."""
+    """Thread-sicherer In-Memory-Zugriff auf die persistierte Konfiguration.
+
+    Hält zwei Sichten: ``stored()`` ist exakt das, was in der YAML-Datei
+    steht, ``get()`` ist die effektive Konfiguration inkl. Env-Override.
+    Änderungen müssen immer auf ``stored()`` aufsetzen, sonst würden per
+    Umgebung gesetzte Zugangsdaten in die Datei geschrieben.
+    """
 
     def __init__(self, path: Path | None = None) -> None:
         self._path = path or config_path()
         self._lock = threading.RLock()
-        self._config = load_config(self._path)
+        self._stored = self._load_stored()
+        self._config = _apply_env_overrides(self._stored)
+
+    def _load_stored(self) -> AppConfig:
+        if self._path.exists():
+            raw: dict[str, Any] = yaml.safe_load(self._path.read_text(encoding="utf-8")) or {}
+            return AppConfig(**raw)
+        return default_config()
 
     @property
     def path(self) -> Path:
@@ -189,13 +216,19 @@ class ConfigStore:
         with self._lock:
             return self._config
 
+    def stored(self) -> AppConfig:
+        with self._lock:
+            return self._stored
+
     def update(self, new_config: AppConfig) -> AppConfig:
         with self._lock:
             save_config(new_config, self._path)
+            self._stored = new_config
             self._config = _apply_env_overrides(new_config)
             return self._config
 
     def reload(self) -> AppConfig:
         with self._lock:
-            self._config = load_config(self._path)
+            self._stored = self._load_stored()
+            self._config = _apply_env_overrides(self._stored)
             return self._config
