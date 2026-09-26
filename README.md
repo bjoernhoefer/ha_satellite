@@ -79,7 +79,8 @@ WireGuard) stehen in [docs/homeassistant.md](docs/homeassistant.md).
 
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
-pip install -e ".[dev]"
+pip install -e ".[dev,ui]"
+playwright install chromium   # für die UI-Klicktests
 pytest -q
 uvicorn ha_satellite.main:app --reload --port 6060
 ```

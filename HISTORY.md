@@ -80,3 +80,28 @@ gemounteten Volumes an und wechselt danach mit `setpriv --reuid=mambauser
 `uvicorn` gestartet wird (verifiziert per `docker top`: Hauptprozess läuft
 als UID 57439, nicht als root). `gosu`/`su-exec` sind im micromamba-Image
 nicht vorinstalliert, `setpriv` (util-linux) dagegen schon.
+
+## Zugangsdaten ließen sich nicht speichern (Rollout-Befund)
+
+Beim ersten Rollout auf `nzbpi` war die Web-UI rein lesend - es gab weder
+Formular noch Speichern-Button. Dahinter steckten zwei weitere Fehler, die
+auch das Setzen per API unbrauchbar gemacht hätten:
+
+- **Leere Env-Variablen als Override:** `docker-compose.yml` reicht
+  `EUMETSAT_CONSUMER_KEY=${EUMETSAT_CONSUMER_KEY:-}` durch, im Container ist
+  die Variable also *gesetzt, aber leer*. Der Code prüfte nur auf `None` und
+  überschrieb damit jede gespeicherte Eingabe mit `""`. Leere Werte zählen
+  jetzt nicht mehr als Override (`config.env_overrides()`).
+- **Env-Werte landeten in `config.yaml`:** `POST /api/config` mergte auf die
+  *effektive* Konfiguration (inkl. Env-Override) und schrieb das Ergebnis
+  zurück. `ConfigStore` hält deshalb jetzt getrennt `stored()` (Dateiinhalt)
+  und `get()` (effektiv); Änderungen setzen immer auf `stored()` auf.
+- **Maskiertes Secret als Echo:** Schickt ein Client das maskierte Secret
+  (oder ein leeres Feld) zurück, bleibt das gespeicherte Secret erhalten.
+
+Seitdem sichern Browser-Klicktests (`tests/test_ui.py`, Playwright) die
+Grundfunktionen der UI ab. Selektoren laufen ausschließlich über
+`data-testid`, damit Layout-Änderungen die Tests nicht brechen - beim
+Umbau der UI müssen diese IDs erhalten bleiben. In CI erzwingt
+`HA_SATELLITE_REQUIRE_UI_TESTS=1`, dass die Klicktests laufen statt still
+übersprungen zu werden.

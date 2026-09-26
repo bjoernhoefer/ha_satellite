@@ -9,11 +9,15 @@
     section { border: 1px solid #ddd; border-radius: 8px; padding: 1rem 1.5rem; margin-bottom: 1.5rem; }
     label { display: block; margin-top: 0.5rem; font-weight: bold; }
     input, select { width: 100%; padding: 0.3rem; margin-top: 0.2rem; box-sizing: border-box; }
+    input:disabled { background: #f3f3f3; }
     table { width: 100%; border-collapse: collapse; }
     th, td { text-align: left; padding: 0.4rem; border-bottom: 1px solid #eee; }
     img.preview { max-width: 220px; border: 1px solid #ccc; }
-    button { padding: 0.5rem 1rem; cursor: pointer; }
+    button { padding: 0.5rem 1rem; cursor: pointer; margin-top: 0.8rem; }
     .muted { color: #777; font-size: 0.9rem; }
+    .message { margin-top: 0.8rem; min-height: 1.2em; }
+    .message.ok { color: #1a7f37; }
+    .message.error { color: #c62828; }
   </style>
 </head>
 <body>
@@ -21,12 +25,30 @@
 
   <section>
     <h2>EUMETSAT-Zugangsdaten</h2>
-    <p class="muted">Können zusätzlich per Umgebungsvariable (EUMETSAT_CONSUMER_KEY /
-      EUMETSAT_CONSUMER_SECRET) überschrieben werden.</p>
-    <label>Consumer Key</label>
-    <input type="text" value="{{ config.eumetsat.consumer_key }}" readonly>
-    <label>Consumer Secret (maskiert)</label>
-    <input type="text" value="{{ config.eumetsat.masked().consumer_secret }}" readonly>
+    <p class="muted">Consumer Key und Secret gibt es unter
+      <a href="https://api.eumetsat.int/api-key/" target="_blank" rel="noopener">api.eumetsat.int/api-key</a>.</p>
+    {% if env_overrides %}
+    <p class="muted" data-testid="env-override-notice">Per Umgebungsvariable gesetzt und daher hier
+      nicht änderbar: {{ env_overrides | join(", ") }}</p>
+    {% endif %}
+    <form id="credentials-form" data-testid="credentials-form">
+      <label for="consumer-key">Consumer Key</label>
+      <input id="consumer-key" name="consumer_key" type="text" autocomplete="off"
+             data-testid="consumer-key"
+             value="{{ masked.eumetsat.consumer_key }}"
+             {% if "consumer_key" in env_overrides %}disabled{% endif %}>
+
+      <label for="consumer-secret">Consumer Secret</label>
+      <input id="consumer-secret" name="consumer_secret" type="password" autocomplete="new-password"
+             data-testid="consumer-secret"
+             placeholder="{% if masked.eumetsat.consumer_secret %}gespeichert ({{ masked.eumetsat.consumer_secret }}) – leer lassen, um es beizubehalten{% else %}noch nicht gesetzt{% endif %}"
+             {% if "consumer_secret" in env_overrides %}disabled{% endif %}>
+      <p class="muted">Gespeichertes Secret:
+        <span data-testid="secret-masked">{{ masked.eumetsat.consumer_secret or "–" }}</span></p>
+
+      <button type="submit" data-testid="save-credentials">Zugangsdaten speichern</button>
+      <div class="message" data-testid="credentials-message" role="status"></div>
+    </form>
   </section>
 
   <section>
@@ -34,7 +56,7 @@
     <table>
       <tr><th>Name</th><th>Lat</th><th>Lon</th><th>Umkreis (km)</th><th>Komposit</th><th>Quelle</th><th>Vorschau</th></tr>
       {% for region in config.regions %}
-      <tr>
+      <tr data-testid="region-{{ region.name }}">
         <td>{{ region.name }}</td>
         <td>{{ region.lat }}</td>
         <td>{{ region.lon }}</td>
@@ -42,10 +64,11 @@
         <td>{{ region.composite }}</td>
         <td>{{ region.source }}</td>
         <td>
-          <img class="preview" src="/regions/{{ region.name }}/latest.png" alt="{{ region.name }}">
-          <form method="post" action="/api/regions/{{ region.name }}/refresh">
-            <button type="submit">Jetzt aktualisieren</button>
-          </form>
+          <img class="preview" src="/regions/{{ region.name }}/latest.png" alt="{{ region.name }}"
+               data-testid="preview-{{ region.name }}">
+          <button type="button" class="refresh" data-region="{{ region.name }}"
+                  data-testid="refresh-{{ region.name }}">Jetzt aktualisieren</button>
+          <div class="message" data-testid="refresh-message-{{ region.name }}" role="status"></div>
         </td>
       </tr>
       {% endfor %}
@@ -55,7 +78,13 @@
   <section>
     <h2>Quellen &amp; Abrufintervall</h2>
     <p>Aktive Quellen: {{ config.sources.active | join(", ") }}</p>
-    <p>Abrufintervall: {{ config.sources.poll_interval_minutes }} Minuten</p>
+    <form id="sources-form" data-testid="sources-form">
+      <label for="poll-interval">Abrufintervall (Minuten)</label>
+      <input id="poll-interval" name="poll_interval_minutes" type="number" min="1" step="1" required
+             data-testid="poll-interval" value="{{ config.sources.poll_interval_minutes }}">
+      <button type="submit" data-testid="save-sources">Intervall speichern</button>
+      <div class="message" data-testid="sources-message" role="status"></div>
+    </form>
   </section>
 
   <section>
@@ -63,7 +92,7 @@
     <table>
       <tr><th>Region</th><th>Letzter Lauf</th><th>Nächster Lauf</th><th>Frames</th><th>Letzter Fehler</th></tr>
       {% for name, s in status.items() %}
-      <tr>
+      <tr data-testid="status-{{ name }}">
         <td>{{ name }}</td>
         <td>{{ s.last_run_at or "–" }}</td>
         <td>{{ s.next_run_at or "–" }}</td>
@@ -73,5 +102,76 @@
       {% endfor %}
     </table>
   </section>
+
+  <script>
+    function showMessage(el, text, ok) {
+      el.textContent = text;
+      el.className = "message " + (ok ? "ok" : "error");
+    }
+
+    async function postConfig(payload) {
+      const response = await fetch("/api/config", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(body.detail || ("HTTP " + response.status));
+      }
+      return body;
+    }
+
+    document.getElementById("credentials-form").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const message = document.querySelector('[data-testid="credentials-message"]');
+      const keyInput = document.getElementById("consumer-key");
+      const secretInput = document.getElementById("consumer-secret");
+      const eumetsat = {};
+      if (!keyInput.disabled) eumetsat.consumer_key = keyInput.value.trim();
+      if (!secretInput.disabled && secretInput.value) eumetsat.consumer_secret = secretInput.value;
+      try {
+        const saved = await postConfig({ eumetsat });
+        secretInput.value = "";
+        const masked = saved.eumetsat.consumer_secret;
+        document.querySelector('[data-testid="secret-masked"]').textContent = masked || "–";
+        secretInput.placeholder = masked
+          ? "gespeichert (" + masked + ") – leer lassen, um es beizubehalten"
+          : "noch nicht gesetzt";
+        showMessage(message, "Zugangsdaten gespeichert.", true);
+      } catch (err) {
+        showMessage(message, "Speichern fehlgeschlagen: " + err.message, false);
+      }
+    });
+
+    document.getElementById("sources-form").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const message = document.querySelector('[data-testid="sources-message"]');
+      const value = parseInt(document.getElementById("poll-interval").value, 10);
+      try {
+        await postConfig({ sources: { poll_interval_minutes: value } });
+        showMessage(message, "Abrufintervall gespeichert.", true);
+      } catch (err) {
+        showMessage(message, "Speichern fehlgeschlagen: " + err.message, false);
+      }
+    });
+
+    document.querySelectorAll("button.refresh").forEach((button) => {
+      button.addEventListener("click", async () => {
+        const region = button.dataset.region;
+        const message = document.querySelector('[data-testid="refresh-message-' + region + '"]');
+        button.disabled = true;
+        try {
+          const response = await fetch("/api/regions/" + encodeURIComponent(region) + "/refresh", { method: "POST" });
+          if (!response.ok) throw new Error("HTTP " + response.status);
+          showMessage(message, "Aktualisierung angestoßen.", true);
+        } catch (err) {
+          showMessage(message, "Fehlgeschlagen: " + err.message, false);
+        } finally {
+          button.disabled = false;
+        }
+      });
+    });
+  </script>
 </body>
 </html>
