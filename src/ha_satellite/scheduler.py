@@ -4,7 +4,9 @@ Nutzt APScheduler mit einem eigenen Thread-Pool, sodass der FastAPI-
 Webserver (asyncio) niemals auf Download oder Rendering wartet. Ein
 globaler Lock stellt sicher, dass immer nur ein Render-Vorgang
 gleichzeitig läuft ("Ein Render-Vorgang zur Zeit") - wichtig, da sich
-der Pi 5 die Ressourcen mit Grafana teilt.
+der Pi 5 die Ressourcen mit Grafana teilt. Gleichzeitig fällige Regionen
+warten aufeinander (statt übersprungen zu werden) und nutzen dabei
+dasselbe, nur einmal heruntergeladene Produkt.
 
 Fehler (fehlende Slots, API-Timeouts, ungültige Credentials) werden
 geloggt und im StatusStore vermerkt, führen aber nicht zum Absturz;
@@ -21,12 +23,22 @@ from apscheduler.schedulers.background import BackgroundScheduler
 
 from ha_satellite.buffer import BufferManager
 from ha_satellite.config import AppConfig, ConfigStore
-from ha_satellite.sources import RenderError, get_source
+from ha_satellite.sources import NoNewData, RenderError, get_source
 from ha_satellite.status import StatusStore
 
 logger = logging.getLogger(__name__)
 
 JOB_ID_PREFIX = "render-"
+# Download (~100 MB) + Rendering einer Region bleibt deutlich darunter.
+LOCK_TIMEOUT_SECONDS = 15 * 60
+
+
+def _parse_timestamp(value: str) -> datetime | None:
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
 
 
 class RenderScheduler:
@@ -93,15 +105,21 @@ class RenderScheduler:
             minutes=config.sources.poll_interval_minutes
         )
 
-        if not self._render_lock.acquire(blocking=False):
-            logger.info("Render-Vorgang bereits aktiv, überspringe %s in diesem Zyklus", region_name)
+        if not self._render_lock.acquire(timeout=LOCK_TIMEOUT_SECONDS):
+            logger.warning("Render-Lock nicht erhalten, überspringe %s in diesem Zyklus", region_name)
             return
         try:
             source = get_source(region.source)
-            png_bytes = source.render(region, config.eumetsat)
             max_frames = region.effective_max_frames(config.sources.poll_interval_minutes)
             buffer = self._buffers.get(region.name, max_frames, config.history.max_storage_mb)
-            buffer.add_frame(png_bytes)
+            latest = buffer.latest()
+            last_sensing = _parse_timestamp(latest.created_at) if latest else None
+            try:
+                frame = source.render(region, config, last_sensing)
+            except NoNewData as info:
+                logger.info("Keine neue Aufnahme für %s: %s", region_name, info)
+            else:
+                buffer.add_frame(frame.png, timestamp=frame.sensing_time)
             self._status.record_success(region.name, len(buffer), next_run_at)
         except RenderError as exc:
             logger.error("Rendering für %s fehlgeschlagen: %s", region_name, exc)

@@ -29,6 +29,14 @@ ENV_CONSUMER_SECRET = "EUMETSAT_CONSUMER_SECRET"
 # "dummy" ist zusätzlich zulässig (reine Testquelle, siehe sources/__init__.py).
 VALID_SOURCES = ("msg_seviri", "data_tailor", "mtg_fci", "dummy")
 
+# Tagsüber Echtfarben, nachts Infrarot-Wolken. Das naheliegende
+# "natural_color_with_night_ir" lädt zur Laufzeit NASA-Hintergrundkarten
+# nach (Hash-Fehler, siehe HISTORY.md) - diese Variante kommt ohne aus.
+DEFAULT_COMPOSITE = "natural_color_raw_with_night_ir"
+
+# MSG SEVIRI Rapid Scan (Europa, alle 5 Minuten, Meteosat-11).
+DEFAULT_MSG_COLLECTION = "EO:EUM:DAT:MSG:MSG15-RSS"
+
 # Standard-Frames im Ringpuffer: entspricht (per Vorgabe) 60 Minuten Historie.
 DEFAULT_HISTORY_MINUTES = 60
 
@@ -60,7 +68,7 @@ class RegionConfig(BaseModel):
     radius_km: float = Field(gt=0)
     width: int = 800
     height: int = 800
-    composite: str = "natural_color"
+    composite: str = DEFAULT_COMPOSITE
     source: str = "msg_seviri"
     max_frames: int | None = None
 
@@ -86,6 +94,7 @@ class RegionConfig(BaseModel):
 class SourcesConfig(BaseModel):
     active: list[str] = Field(default_factory=lambda: ["msg_seviri"])
     poll_interval_minutes: int = Field(default=15, gt=0)
+    msg_collection: str = DEFAULT_MSG_COLLECTION
 
 
 class HistoryConfig(BaseModel):
@@ -124,7 +133,7 @@ def default_config() -> AppConfig:
                 lat=48.2082,
                 lon=16.3738,
                 radius_km=300,
-                composite="natural_color",
+                composite=DEFAULT_COMPOSITE,
                 source="msg_seviri",
             ),
             RegionConfig(
@@ -132,7 +141,7 @@ def default_config() -> AppConfig:
                 lat=39.6953,
                 lon=3.0176,
                 radius_km=300,
-                composite="natural_color",
+                composite=DEFAULT_COMPOSITE,
                 source="msg_seviri",
             ),
         ]

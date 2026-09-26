@@ -18,6 +18,22 @@ from pathlib import Path
 
 import httpx
 import pytest
+import yaml
+
+from ha_satellite.config import default_config
+
+
+def _dummy_config() -> dict:
+    """Vorgabe-Regionen, aber mit der Testquelle statt echter EUMETSAT-Daten.
+
+    So rendert der Server auch ohne Zugangsdaten sofort Frames, und kein
+    Test löst versehentlich Downloads aus dem Data Store aus.
+    """
+    config = default_config().model_dump()
+    config["sources"]["active"] = ["dummy"]
+    for region in config["regions"]:
+        region["source"] = "dummy"
+    return config
 
 
 @dataclass
@@ -59,6 +75,9 @@ def start_server(tmp_path: Path) -> Iterator[Callable[..., LiveServer]]:
     def _start(env: dict[str, str] | None = None) -> LiveServer:
         data_dir = tmp_path / f"data{len(processes)}"
         data_dir.mkdir()
+        (data_dir / "config.yaml").write_text(
+            yaml.safe_dump(_dummy_config(), sort_keys=False), encoding="utf-8"
+        )
         port = _free_port()
         server_env = {
             key: value
