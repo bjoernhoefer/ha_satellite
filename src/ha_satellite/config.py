@@ -34,6 +34,14 @@ VALID_DRIVERS = ("msg_seviri", "data_tailor", "mtg_fci", "dummy")
 # Rückwärtskompatibler Alias.
 VALID_SOURCES = VALID_DRIVERS
 
+# Tagsüber Echtfarben, nachts Infrarot-Wolken. Das naheliegende
+# "natural_color_with_night_ir" lädt zur Laufzeit NASA-Hintergrundkarten
+# nach (Hash-Fehler, siehe HISTORY.md) - diese Variante kommt ohne aus.
+DEFAULT_COMPOSITE = "natural_color_raw_with_night_ir"
+
+# MSG SEVIRI Rapid Scan (Europa, alle 5 Minuten, Meteosat-11).
+DEFAULT_MSG_COLLECTION = "EO:EUM:DAT:MSG:MSG15-RSS"
+
 # Standard-Frames im Ringpuffer: entspricht (per Vorgabe) 60 Minuten Historie.
 DEFAULT_HISTORY_MINUTES = 60
 
@@ -65,7 +73,7 @@ class RegionConfig(BaseModel):
     radius_km: float = Field(gt=0)
     width: int = 800
     height: int = 800
-    composite: str = "natural_color"
+    composite: str = DEFAULT_COMPOSITE
     # Verweist auf die ``id`` eines Eintrags im Quellen-Katalog.
     source: str = "msg_seviri"
     max_frames: int | None = None
@@ -107,15 +115,15 @@ def default_catalog() -> list[SourceDefinition]:
         SourceDefinition(
             id="msg_seviri",
             driver="msg_seviri",
-            label="MSG SEVIRI 0° (Full Disk, 15 min)",
-            collection="EO:EUM:DAT:MSG:HRSEVIRI",
+            label="MSG SEVIRI Rapid Scan (Europa, 5 min)",
+            collection=DEFAULT_MSG_COLLECTION,
             enabled=True,
         ),
         SourceDefinition(
-            id="msg_seviri_rss",
+            id="msg_seviri_0deg",
             driver="msg_seviri",
-            label="MSG SEVIRI Rapid Scan (Europa, 5 min)",
-            collection="EO:EUM:DAT:MSG:MSG15-RSS",
+            label="MSG SEVIRI 0° (Full Disk, 15 min)",
+            collection="EO:EUM:DAT:MSG:HRSEVIRI",
             enabled=False,
         ),
         SourceDefinition(
@@ -150,14 +158,19 @@ class SourcesConfig(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def _migrate_active_list(cls, data: Any) -> Any:
-        """Alte Konfigurationen hatten ``active: [..]`` statt eines Katalogs."""
-        if isinstance(data, dict) and "active" in data:
+        """Alte Konfigurationen hatten ``active: [..]`` und ``msg_collection``
+        statt eines Katalogs."""
+        if isinstance(data, dict) and ("active" in data or "msg_collection" in data):
             data = dict(data)
-            active = data.pop("active") or []
+            active = data.pop("active", None)
+            msg_collection = data.pop("msg_collection", None)
             if "catalog" not in data:
                 catalog = default_catalog()
                 for entry in catalog:
-                    entry.enabled = entry.id in active
+                    if active is not None:
+                        entry.enabled = entry.id in active
+                    if msg_collection and entry.id == "msg_seviri":
+                        entry.collection = msg_collection
                 data["catalog"] = [entry.model_dump() for entry in catalog]
         return data
 
@@ -179,6 +192,10 @@ class SourcesConfig(BaseModel):
     def is_enabled(self, source_id: str) -> bool:
         entry = self.get(source_id)
         return bool(entry and entry.enabled)
+
+    def collection_for(self, source_id: str, default: str = DEFAULT_MSG_COLLECTION) -> str:
+        entry = self.get(source_id)
+        return entry.collection if entry and entry.collection else default
 
 
 class HistoryConfig(BaseModel):
@@ -248,7 +265,7 @@ def default_config() -> AppConfig:
                 lat=48.2082,
                 lon=16.3738,
                 radius_km=300,
-                composite="natural_color",
+                composite=DEFAULT_COMPOSITE,
                 source="msg_seviri",
             ),
             RegionConfig(
@@ -256,7 +273,7 @@ def default_config() -> AppConfig:
                 lat=39.6953,
                 lon=3.0176,
                 radius_km=300,
-                composite="natural_color",
+                composite=DEFAULT_COMPOSITE,
                 source="msg_seviri",
             ),
         ]

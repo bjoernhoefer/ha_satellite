@@ -21,6 +21,13 @@ dependencies = [
     "imageio>=2.34",
     "imageio-ffmpeg>=0.5",
     "numpy>=1.26",
+    # Phase 2: EUMETSAT-Download + Satpy-Rendering. Im Docker-Image kommen
+    # diese Pakete vorgebaut aus conda-forge (siehe docker/Dockerfile).
+    "eumdac>=3.0",
+    "satpy>=0.60",
+    "pyresample>=1.34",
+    "pyproj>=3.6",
+    "dask[array]>=2024.1",
 ]
 
 [project.optional-dependencies]

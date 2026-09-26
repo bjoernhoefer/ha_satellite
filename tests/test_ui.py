@@ -342,7 +342,8 @@ def test_sources_json_editor_is_collapsed_and_editable(ui, live_server):
     expect(ui.get_by_test_id("sources-json-message")).to_contain_text("Ungültiges JSON")
 
     catalog = _stored_catalog_or_default(ui)
-    catalog.append({"id": "iodc", "driver": "msg_seviri", "label": "MSG Indischer Ozean",
+    # Treiber dummy: die Region soll danach keinen echten Download auslösen.
+    catalog.append({"id": "iodc", "driver": "dummy", "label": "MSG Indischer Ozean",
                     "collection": "EO:EUM:DAT:MSG:HRSEVIRI-IODC", "enabled": True})
     editor.fill(json.dumps(catalog, indent=2))
     ui.get_by_test_id("sources-json-save").click()
@@ -350,8 +351,8 @@ def test_sources_json_editor_is_collapsed_and_editable(ui, live_server):
     expect(ui.get_by_test_id("source-row-iodc")).to_be_visible()
     assert "iodc" in [e["id"] for e in _stored(live_server)["sources"]["catalog"]]
 
-    # Serverseitige Validierung: Region verweist noch auf msg_seviri.
-    editor.fill(json.dumps([e for e in catalog if e["id"] != "msg_seviri"]))
+    # Serverseitige Validierung: Regionen verweisen noch auf dummy.
+    editor.fill(json.dumps([e for e in catalog if e["id"] != "dummy"]))
     ui.get_by_test_id("sources-json-save").click()
     expect(ui.get_by_test_id("sources-json-message")).to_contain_text("Speichern fehlgeschlagen")
 
@@ -368,14 +369,14 @@ def _stored_catalog_or_default(page) -> list:
 
 def test_toggle_source_and_region_warning(ui, live_server):
     expect(ui.get_by_test_id("region-warning-wien")).to_be_hidden()
-    ui.get_by_test_id("source-enabled-msg_seviri").uncheck()
-    expect(ui.get_by_test_id("sources-table-message")).to_have_text("Quelle msg_seviri deaktiviert.")
+    ui.get_by_test_id("source-enabled-dummy").uncheck()
+    expect(ui.get_by_test_id("sources-table-message")).to_have_text("Quelle dummy deaktiviert.")
     expect(ui.get_by_test_id("region-warning-wien")).to_be_visible()
     catalog = {e["id"]: e for e in _stored(live_server)["sources"]["catalog"]}
-    assert catalog["msg_seviri"]["enabled"] is False
+    assert catalog["dummy"]["enabled"] is False
 
-    ui.get_by_test_id("source-enabled-msg_seviri").check()
-    expect(ui.get_by_test_id("sources-table-message")).to_have_text("Quelle msg_seviri aktiviert.")
+    ui.get_by_test_id("source-enabled-dummy").check()
+    expect(ui.get_by_test_id("sources-table-message")).to_have_text("Quelle dummy aktiviert.")
     expect(ui.get_by_test_id("region-warning-wien")).to_be_hidden()
 
 

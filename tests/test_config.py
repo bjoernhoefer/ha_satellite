@@ -57,6 +57,15 @@ def test_custom_catalog_entry_can_be_used_by_region():
     )
     assert config.sources.get("iodc").driver == "msg_seviri"
     assert config.sources.is_enabled("iodc")
+    assert config.sources.collection_for("iodc") == "EO:EUM:DAT:MSG:HRSEVIRI-IODC"
+
+
+def test_default_msg_seviri_uses_rapid_scan_and_legacy_collection_is_migrated():
+    assert SourcesConfig().collection_for("msg_seviri") == "EO:EUM:DAT:MSG:MSG15-RSS"
+    legacy = SourcesConfig(**{"active": ["msg_seviri"], "msg_collection": "EO:EUM:DAT:MSG:HRSEVIRI"})
+    assert legacy.collection_for("msg_seviri") == "EO:EUM:DAT:MSG:HRSEVIRI"
+    assert legacy.is_enabled("msg_seviri")
+    assert "msg_collection" not in legacy.model_dump()
 
 
 def test_legacy_active_list_is_migrated_to_catalog():

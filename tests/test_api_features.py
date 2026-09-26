@@ -20,10 +20,10 @@ def test_catalog_can_be_replaced_and_is_validated(live_server):
     assert "iodc" in [e["id"] for e in _stored(live_server)["sources"]["catalog"]]
 
     # Quelle entfernen, die noch von einer Region genutzt wird -> 400.
-    without_msg = [e for e in catalog if e["id"] != "msg_seviri"]
-    response = httpx.post(f"{live_server.url}/api/config", json={"sources": {"catalog": without_msg}})
+    without_dummy = [e for e in catalog if e["id"] != "dummy"]
+    response = httpx.post(f"{live_server.url}/api/config", json={"sources": {"catalog": without_dummy}})
     assert response.status_code == 400
-    assert "msg_seviri" in response.json()["detail"]
+    assert "dummy" in response.json()["detail"]
 
     response = httpx.post(
         f"{live_server.url}/api/config",

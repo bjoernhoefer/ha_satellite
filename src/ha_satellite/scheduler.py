@@ -4,7 +4,9 @@ Nutzt APScheduler mit einem eigenen Thread-Pool, sodass der FastAPI-
 Webserver (asyncio) niemals auf Download oder Rendering wartet. Ein
 globaler Lock stellt sicher, dass immer nur ein Render-Vorgang
 gleichzeitig läuft ("Ein Render-Vorgang zur Zeit") - wichtig, da sich
-der Pi 5 die Ressourcen mit Grafana teilt.
+der Pi 5 die Ressourcen mit Grafana teilt. Gleichzeitig fällige Regionen
+warten aufeinander (statt übersprungen zu werden) und nutzen dabei
+dasselbe, nur einmal heruntergeladene Produkt.
 
 Fehler (fehlende Slots, API-Timeouts, ungültige Credentials) werden
 geloggt und im StatusStore vermerkt, führen aber nicht zum Absturz;
@@ -24,7 +26,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 
 from ha_satellite.buffer import BufferManager
 from ha_satellite.config import AppConfig, ConfigStore
-from ha_satellite.sources import RenderError, get_source
+from ha_satellite.sources import NoNewData, RenderError, get_source
 from ha_satellite.status import StatusStore
 
 if TYPE_CHECKING:
@@ -33,10 +35,17 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 JOB_ID_PREFIX = "render-"
-# Versatz der Regionen untereinander: sonst starten alle Jobs gleichzeitig,
-# und wegen des globalen Render-Locks würden alle bis auf einen übersprungen.
-REGION_STAGGER_SECONDS = 60
 SYNC_JOB_ID = "source-sync"
+# Download (~100 MB) + Rendering einer Region bleibt deutlich darunter.
+LOCK_TIMEOUT_SECONDS = 15 * 60
+
+
+def _parse_timestamp(value: str) -> datetime | None:
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
 
 
 class RenderScheduler:
@@ -83,7 +92,6 @@ class RenderScheduler:
         interval = config.sources.poll_interval_minutes
         self._schedule_sync(config.sources.auto_sync_hours)
         now = datetime.now(timezone.utc)
-        offset = 0
         for region in config.regions:
             if not config.sources.is_enabled(region.source):
                 logger.info(
@@ -98,11 +106,10 @@ class RenderScheduler:
                 minutes=interval,
                 args=[region.name],
                 id=job_id,
-                next_run_time=now + timedelta(seconds=offset * REGION_STAGGER_SECONDS),
+                next_run_time=now,
                 max_instances=1,
                 coalesce=True,
             )
-            offset += 1
         logger.info("Scheduler neu aufgesetzt: Abrufintervall %d min", interval)
 
     def _schedule_sync(self, hours: int) -> None:
@@ -143,8 +150,8 @@ class RenderScheduler:
             minutes=config.sources.poll_interval_minutes
         )
 
-        if not self._render_lock.acquire(blocking=False):
-            logger.info("Render-Vorgang bereits aktiv, überspringe %s in diesem Zyklus", region_name)
+        if not self._render_lock.acquire(timeout=LOCK_TIMEOUT_SECONDS):
+            logger.warning("Render-Lock nicht erhalten, überspringe %s in diesem Zyklus", region_name)
             return
         try:
             definition = config.sources.get(region.source)
@@ -156,17 +163,23 @@ class RenderScheduler:
                 region.name, definition.id, definition.driver, region.composite,
             )
             source = get_source(definition.driver)
-            png_bytes = source.render(region, config.eumetsat)
             buffer = self._buffers.get(
                 region.name, config.max_frames_for(region), config.history.max_storage_mb
             )
-            frame = buffer.add_frame(png_bytes)
+            latest = buffer.latest()
+            last_sensing = _parse_timestamp(latest.created_at) if latest else None
+            try:
+                rendered = source.render(region, config, last_sensing)
+            except NoNewData as info:
+                logger.info("Keine neue Aufnahme für %s: %s", region_name, info)
+            else:
+                frame = buffer.add_frame(rendered.png, timestamp=rendered.sensing_time)
+                logger.info(
+                    "Render %s fertig in %.1f s: %s (%d KB), %d Frames im Puffer",
+                    region.name, time.monotonic() - started, frame.filename,
+                    len(rendered.png) // 1024, len(buffer),
+                )
             self._status.record_success(region.name, len(buffer), next_run_at)
-            logger.info(
-                "Render %s fertig in %.1f s: %s (%d KB), %d Frames im Puffer",
-                region.name, time.monotonic() - started, frame.filename,
-                len(png_bytes) // 1024, len(buffer),
-            )
         except RenderError as exc:
             logger.error("Rendering für %s fehlgeschlagen: %s", region_name, exc)
             self._status.record_error(region.name, str(exc), next_run_at)

@@ -4,10 +4,9 @@ Containerisierter Dienst, der EUMETSAT-Satellitenbilder herunterlädt, zu
 Bildausschnitten rendert und sie **Home Assistant** als Kamera-Entitäten
 bereitstellt (Standbild, Historie, MJPEG-Loop, GIF/MP4-Animation).
 
-> **Status:** Grundgerüst (Phase 1). Konfiguration, Web-Server, API,
-> Ringpuffer und alle Endpunkte sind lauffähig; die Bilder sind aktuell
-> generierte **Platzhalter** ("Dummy-Frames") mit Zeitstempel, Region und
-> Bounding-Box. Die echte EUMETSAT/Satpy-Rendering-Kette folgt in Phase 2
+> **Status:** Phase 2. Die Quelle `msg_seviri` liefert echte Bilder aus
+> dem MSG-SEVIRI-Rapid-Scan (alle 5 Minuten, Europa), gerendert mit Satpy;
+> `data_tailor` und `mtg_fci` liefern noch Platzhalterbilder
 > (siehe [HISTORY.md](HISTORY.md) und [AGENTS.md](AGENTS.md)).
 
 ## Schnellstart
@@ -54,13 +53,17 @@ gesetzt werden, damit Compose nicht lokal zu bauen versucht.
 
 - **Quellen-Katalog**: welche Quellen zur Verfügung stehen, ist in der UI
   einstellbar (Tabelle mit Aktiv-Schalter + einklappbarer JSON-Editor).
-  Treiber: `msg_seviri` (Full Disk + lokales Satpy-Rendering, Default),
-  `data_tailor` (serverseitiger Zuschnitt bei EUMETSAT), `mtg_fci` (höher
-  aufgelöste Chunks). Ein automatischer Abgleich mit dem EUMETSAT Data Store
-  prüft Verfügbarkeit/Aktualität und schlägt neue Collections vor.
+  Treiber: `msg_seviri` (Rapid Scan Europa aus dem EUMETSAT Data Store +
+  lokales Satpy-Rendering, Default; ein Download pro Aufnahme für alle
+  Regionen, ~100 MB, d. h. bei 15 min Intervall ~9 GB/Tag, bei 5 min
+  ~28 GB/Tag), `data_tailor` (serverseitiger Zuschnitt bei EUMETSAT),
+  `mtg_fci` (höher aufgelöste Chunks). Ein automatischer Abgleich mit dem
+  EUMETSAT Data Store prüft Verfügbarkeit/Aktualität und schlägt neue
+  Collections vor.
 - **Regionen**: Name, Mittelpunkt (Lat/Lon), Umkreis in km (daraus wird die
   Bounding-Box berechnet), Ausgabegröße, Komposit, Quelle. Vorkonfiguriert:
-  `wien` und `mallorca`.
+  `wien` und `mallorca` mit dem Komposit `natural_color_raw_with_night_ir`
+  (tagsüber Echtfarben, nachts IR-Wolken; weitere siehe AGENTS.md).
 - **Historie**: Rollierender Ringpuffer pro Region unter
   `<Speicherort>/{region}/`, Dauer in der UI einstellbar (Default 60
   Minuten), zusätzlich Speicher-Limit (MB) als Notbremse. Alte Frames und

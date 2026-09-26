@@ -34,6 +34,8 @@ src/ha_satellite/
   scheduler.py     APScheduler-Jobs (nicht-blockierend), Single-Render-Lock,
                    Quellen-Abgleich-Job
   sources/         Treiber: msg_seviri, data_tailor, mtg_fci (+ dummy)
+    eumetsat.py      Data-Store-Suche + Download (eumdac), Produkt-Cache /data/cache
+    satpy_render.py  Satpy-Rendering im Kindprozess (Crop-Fenster, Resampling, PNG)
   source_sync.py   Abgleich des Katalogs mit dem EUMETSAT Data Store (öffentliche API)
   storage.py       Speicherort-Kandidaten, Schreibtest, System-Disk-/Container-Warnung
   logbuffer.py     In-Memory-Log (für die UI) + rotierende Logdatei
@@ -41,7 +43,8 @@ src/ha_satellite/
   templates/       Jinja2-Template der Web-UI (inkl. Vollbild-Betrachter)
 ```
 
-Zustand liegt unter `/data` (Konfiguration, `source_sync.json`, `logs/`)
+Zustand liegt unter `/data` (Konfiguration, `source_sync.json`, `logs/`,
+Produkt-Cache `cache/`)
 und am konfigurierten Bilder-Speicherort (Default `/data/frames`, in der UI
 änderbar, z. B. `/mnt/data/ha_satellite`). Der Container selbst ist
 zustandslos.
@@ -54,8 +57,11 @@ Mehrere Einträge dürfen denselben Treiber nutzen (z. B. `msg_seviri` für
 0°, Rapid Scan, IODC). Regionen verweisen über `source` auf eine `id`; nur
 Regionen mit aktivierter Quelle werden automatisch abgerufen. In der UI ist
 der Katalog als Tabelle (Aktiv-Schalter) und als einklappbares JSON
-editierbar. Alte Konfigurationen mit `sources.active: [...]` werden beim
-Laden automatisch migriert.
+editierbar. Die `collection` eines `msg_seviri`-Eintrags bestimmt, welche
+Data-Store-Collection geladen wird (Default-Eintrag `msg_seviri` = Rapid
+Scan `EO:EUM:DAT:MSG:MSG15-RSS`). Alte Konfigurationen mit
+`sources.active: [...]` bzw. `sources.msg_collection` werden beim Laden
+automatisch migriert.
 
 Der **Quellen-Abgleich** (`source_sync.py`, Button „Jetzt abgleichen“ bzw.
 automatisch alle `sources.auto_sync_hours` Stunden, 0 = aus) fragt die
@@ -67,16 +73,33 @@ von einem Treiber unterstützte Collections („entdeckt“, per Klick
 
 ### Phasenmodell
 
-- **Phase 1 (dieser Stand):** Grundgerüst — Konfiguration, Web-Server, API,
+- **Phase 1 (abgeschlossen):** Grundgerüst — Konfiguration, Web-Server, API,
   Ringpuffer, Scheduler, alle Endpunkte funktionieren End-to-End, liefern
   aber generierte Platzhalterbilder ("Dummy-Frames"). So lässt sich der
   ARM64-Build und die gesamte Infrastruktur früh verifizieren, bevor die
   deutlich komplexere Satpy/eumdac-Kette dazukommt.
-- **Phase 2 (folgt):** Echte Implementierung von `MsgSeviriSource`,
-  `DataTailorSource`, `MtgFciSource` in `src/ha_satellite/sources/` (Download
-  via `eumdac`, Rendering via Satpy). Die Schnittstelle (`Source.render()`)
-  ändert sich dabei nicht — nur der Rumpf der jeweiligen `render()`-Methode
-  wird ausgetauscht.
+- **Phase 2 (dieser Stand):** `msg_seviri` liefert echte Bilder: neuestes
+  Produkt der Collection `sources.msg_collection` (Default
+  `EO:EUM:DAT:MSG:MSG15-RSS`, Rapid Scan Europa, alle 5 min) wird per
+  `eumdac` geladen (nur die `.nat`-Datei, ~100 MB), **einmal pro Produkt**
+  in `/data/cache/` abgelegt und von allen Regionen genutzt. Gerendert wird
+  mit Satpy (`seviri_l1b_native`) in einem **Kindprozess** (Speicher wird
+  danach vollständig freigegeben; ein OOM trifft nicht den Webserver).
+  Frame-Zeitstempel = Aufnahmeende. `data_tailor`/`mtg_fci` liefern noch
+  Dummy-Frames (Folgeschritt, FCI-Produkte sind ~1 GB/Slot → Data Tailor).
+- `Source.render(region, config, last_sensing) -> RenderedFrame`: ist die
+  neueste Aufnahme nicht jünger als `last_sensing` (neuester Frame im
+  Puffer), wird `NoNewData` ausgelöst — kein Fehler, kein doppelter Frame.
+
+### Komposite (msg_seviri)
+
+Default `natural_color_raw_with_night_ir` (tagsüber Echtfarben, nachts
+IR-Wolken). Weitere funktionierende Satpy-Komposite: `natural_color`
+(nachts schwarz), `convection`, `airmass`, `cloudtop`,
+`colorized_ir_clouds`. **Nicht** verwenden: `natural_color_with_night_ir`
+(lädt zur Laufzeit NASA-BlackMarble nach, scheitert am Hash). Unbekannte
+Namen führen zu einem Fehler im Status, nicht zum Absturz. Richtwerte auf
+dem Pi 5: ~6 s und ~570 MB Spitzen-RSS pro Region und Lauf.
 
 ## ARM64-Build-Entscheidung
 
@@ -85,10 +108,13 @@ Der Pi 5 ist ARM64. Satpys Abhängigkeiten `pyresample`, `pykdtree` und
 Erweiterungen, PROJ-C-Library) und benötigen zusätzliche System-Header.
 `mambaorg/micromamba` mit dem `conda-forge`-Kanal bietet fertige
 `linux-aarch64`-Builds für genau diese Pakete. Deshalb basiert das
-`docker/Dockerfile` bereits jetzt auf micromamba, obwohl Phase 1 nur reine
-Python-Pakete benötigt — so ist der Wechsel des Basis-Images beim Umstieg
-auf Satpy in Phase 2 nicht mehr nötig, und der ARM64-Build ist von Anfang an
-verifiziert. Alternativen (u. a. `python:3.12-slim` + `apt`-Header + pip,
+`docker/Dockerfile` auf micromamba. **Stand Phase 2:** conda-forge führt
+keine aktuelle `trollimage`-Version für linux-aarch64 (Satpy ließ sich
+nicht lösen), während PyPI inzwischen manylinux-aarch64-Wheels für
+`trollimage`, `pyresample`, `pykdtree`, `pyproj` und `numpy` hat. conda
+liefert daher nur Python, die Satpy-Kette kommt per `pip install
+--only-binary=…` (kein Sdist-Build; fehlt ein Wheel, bricht der Build ab).
+Build auf dem Pi 5: ~3 min, Image ~1,1 GB. Alternativen (u. a. `python:3.12-slim` + `apt`-Header + pip,
 oder vortrainierte Wheels von piwheels) wurden verworfen, da sie entweder
 sehr lange Build-Zeiten auf dem Pi 5 selbst (kein Cross-Compile im CI)
 oder zusätzliche Wartungslast durch manuelles Wheel-Pinning bedeutet hätten.
@@ -123,8 +149,8 @@ docker compose up -d
 ## Betriebsregeln
 
 - **Ein Render-Vorgang zur Zeit**, systemweit (nicht nur pro Region) — via
-  `threading.Lock` in `RenderScheduler`. Kollidierende Läufe werden
-  übersprungen und beim nächsten Intervall erneut versucht.
+  `threading.Lock` in `RenderScheduler`. Gleichzeitig fällige Läufe warten
+  auf den Lock (max. 15 min) und nutzen dasselbe, einmal geladene Produkt.
 - Download/Rendering laufen über APScheduler in einem eigenen Thread-Pool
   und blockieren den asyncio-Webserver nicht.
 - Fehler (fehlende Slots, Timeouts, ungültige Credentials) werden geloggt
@@ -136,8 +162,6 @@ docker compose up -d
   ohne Index-Eintrag ("Waisen") gelöscht.
 - Konfigurationsänderungen über `POST /api/config` lösen sofort ein
   Neuaufsetzen der Scheduler-Jobs aus (`scheduler.reload()`).
-- Die Region-Jobs starten um je 60 s versetzt, damit sie nicht dauerhaft am
-  globalen Render-Lock kollidieren.
 - Ein Speicherort-Wechsel hält den Render-Lock (`scheduler.exclusive()`),
   prüft den Zielpfad per Schreibtest und führt beim Verschieben die
   Ringpuffer-Indizes zusammen.
@@ -182,6 +206,10 @@ pip install -e ".[dev,ui]"
 playwright install chromium   # einmalig, für die UI-Klicktests
 pytest -q
 ```
+
+`eumdac` und der Satpy-Kindprozess sind in `tests/test_sources.py` gemockt;
+die Test-Server aus `tests/conftest.py` starten mit Regionen auf der
+`dummy`-Quelle, sodass kein Test den echten Data Store anspricht.
 
 Abgedeckt: Konfigurations-Handling (Laden/Speichern, Env-Override, Maskierung,
 Quellen-Katalog, Migration), Ringpuffer-Logik (Max-Frames, Speicherlimit,
