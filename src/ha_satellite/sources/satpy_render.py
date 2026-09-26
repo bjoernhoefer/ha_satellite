@@ -26,6 +26,10 @@ SATPY_CONFIG_DIR = Path(__file__).resolve().parent.parent / "satpy_config"
 # auch an den Kanten der Zielregion Nachbarn findet.
 WINDOW_MARGIN_PX = 16
 RENDER_TIMEOUT_SECONDS = 300
+# netCDF4/HDF5 aus den pip-Wheels ist nicht thread-sicher: mit dask-Threads
+# stürzte fci_l1c_nc auf dem Pi in ~50 % der Läufe mit SIGSEGV ab,
+# synchron nie - bei gleicher Laufzeit (~7,5 s).
+SINGLE_THREADED_READERS = frozenset({"fci_l1c_nc"})
 
 
 class SatpyRenderError(Exception):
@@ -114,8 +118,11 @@ def render_png(request: RenderRequest) -> tuple[bytes, datetime]:
     warnings.filterwarnings("ignore")
     import dask
 
-    # Zwei Threads: genug für den Pi 5, ohne Grafana auszubremsen.
-    dask.config.set(scheduler="threads", num_workers=2)
+    if request.reader in SINGLE_THREADED_READERS:
+        dask.config.set(scheduler="synchronous")
+    else:
+        # Zwei Threads: genug für den Pi 5, ohne Grafana auszubremsen.
+        dask.config.set(scheduler="threads", num_workers=2)
     import satpy
     from satpy import Scene
 

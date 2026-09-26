@@ -12,7 +12,8 @@ aber keine bessere Qualität als die Quelle.
 - Satpy füllt fehlende Chunks selbst auf (lazy); Wien aus nur 36–37 gerendert
   ist pixelgleich zum Render aus allen 9 Chunks → die berechnete Chunk-Zuordnung
   stimmt.
-- Speicher: alle 9 Chunks ~600–640 MB Spitze (einmal beendet, trotz
+- Speicher: alle 9 Chunks ~600–640 MB Spitze (einmal beendet - vermutlich
+  der SIGSEGV unten, nicht Speicher; trotz
   `num_workers=1` bzw. kleineren dask-Chunks kaum besser); nur Regions-Chunks
   ~410–480 MB → Rendern immer nur mit den Chunks der Region.
 - Komposite: `natural_color` 8 s, `cloudtop` 11 s, eigenes
@@ -23,13 +24,18 @@ aber keine bessere Qualität als die Quelle.
   Dienst) wurde beendet („Exit-Code None“) - im Betrieb verhindert das der
   globale Lock, der auch für das Rendern bei Bedarf gilt.
 
-**Rollout-Befund:** Der erste FCI-Render für Mallorca starb nach ~9 s
-ohne Ergebnis („Exit-Code None“), obwohl der Host 6 GB frei hatte und
-kein OOM-Kill im Kernel-Log stand; der manuelle Neuversuch lief sofort
-durch. Der Exit-Code wurde gelesen, bevor der Prozess eingesammelt war.
-Jetzt: Signal/Exit-Code wird korrekt gemeldet (`SIGKILL` → Hinweis auf
-Speicher), und ein ohne Ergebnis gestorbener Kindprozess wird **einmal**
-neu gestartet (nicht bei Zeitüberschreitung).
+**Rollout-Befund:** FCI-Renders starben nichtdeterministisch ohne Ergebnis
+(„Exit-Code None“), obwohl der Host 6 GB frei hatte und kein OOM-Kill im
+Kernel-Log stand. Mit korrekt gelesenem Exit-Code: **SIGSEGV**. Ursache:
+netCDF4/HDF5 aus den pip-Wheels ist nicht thread-sicher, `fci_l1c_nc` liest
+mit mehreren dask-Threads parallel. Messung auf dem Pi (je 12 Renders):
+`threads`/2 Worker → 6× SIGSEGV; `synchronous` → 0 Abstürze, gleiche
+Laufzeit (~7,5 s). **Lösung:** FCI rendert mit dem synchronen dask-Scheduler
+(`SINGLE_THREADED_READERS`). Die „OOM“-Fälle aus dem Spike (9 Chunks,
+Parallel-Render) waren sehr wahrscheinlich derselbe Absturz. Zusätzlich
+wird Signal/Exit-Code jetzt korrekt gemeldet (erst nach `join()`), und ein
+ohne Ergebnis gestorbener Kindprozess wird einmal neu gestartet (nicht bei
+Zeitüberschreitung).
 
 **Entscheidungen:** Archiv am Bilder-Speicherort unter `_archive/` (große
 Platte), beim Speicherort-Wechsel als Ganzes mit umgezogen, nicht als Region
