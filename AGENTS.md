@@ -141,7 +141,9 @@ neuester Slot; ~8–13 GB bei 15/10 min Intervall). Beides in der UI unter
   unter `renders/` gecacht und verschwindet mit ihm. In der UI: Button
   „🛰 FCI-Archiv“ je Region (Betrachter mit Bildtyp-Auswahl, kein Zeitraffer,
   da jedes Bild ~10–20 s Rendern kostet).
-- Reader `fci_l1c_nc` braucht `netCDF4` (Wheel für aarch64 vorhanden).
+- Reader `fci_l1c_nc` braucht `netCDF4` (Wheel für aarch64 vorhanden) und
+  läuft mit dem **synchronen** dask-Scheduler: HDF5 aus dem Wheel ist nicht
+  thread-sicher, mit Threads gab es SIGSEGV in ~50 % der Läufe.
 - Komposite (UI-Liste je Treiber, `config.FCI_COMPOSITES`): Default
   `natural_color_with_night_cloudtop` (eigene Definition in
   `satpy_config/composites/visir.yaml`, ~11 s / ~410 MB), `natural_color`,
