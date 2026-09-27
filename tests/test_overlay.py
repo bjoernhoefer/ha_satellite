@@ -35,16 +35,18 @@ def test_austrian_states_near_wien():
     assert border_segments(39.6, 2.9, 100, 800, 800, kind="state_lines") == []
 
 
-def test_draw_borders_draws_thin_translucent_lines():
-    background = (40, 60, 90)
+def test_draw_borders_draws_thin_dark_lines():
+    background = (120, 200, 80)
     image = Image.new("RGB", (800, 800), background)
     draw_borders(image, *WIEN)
-    colors = {color for _, color in image.getcolors(maxcolors=100000)}
-    assert len(colors) >= 3  # Hintergrund, Staats- und Bundesländergrenzen
-    # Transparent: kein volles Gelb, kein schwarzer Rand mehr.
-    assert (255, 215, 0) not in colors
-    assert (0, 0, 0) not in colors
     assert image.mode == "RGB"
+    pixels = list(image.getdata())
+    changed = [p for p in pixels if p != background]
+    # Schwarze Haarlinien: nur abgedunkelt, nie heller oder farbig.
+    assert changed and all(p[0] <= 120 and p[1] <= 200 and p[2] <= 80 for p in changed)
+    assert any(sum(p) < 100 for p in changed)
+    # Dünn: grob eine Pixelbreite entlang der Linien, kein breiter Rand.
+    assert len(changed) < 0.05 * len(pixels)
 
 
 def test_region_draws_borders_by_default():

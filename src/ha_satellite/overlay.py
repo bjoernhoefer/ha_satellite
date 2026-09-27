@@ -17,9 +17,13 @@ from functools import lru_cache
 from pathlib import Path
 
 BORDERS_FILE = Path(__file__).resolve().parent / "overlay_data" / "borders_10m.json.gz"
-# 1 px, leicht transparent: Staatsgrenzen gelb, Bundesländer blasser.
-BORDER_COLOR = (255, 215, 0, 200)
-STATE_COLOR = (255, 235, 150, 110)
+# Geglättete Haarlinien: in SUPERSAMPLE-facher Größe gezeichnet und
+# verkleinert. Breite in Zielpixeln = Linienbreite / SUPERSAMPLE.
+SUPERSAMPLE = 4
+BORDER_COLOR = (0, 0, 0, 255)
+BORDER_WIDTH = 4  # ~1 px
+STATE_COLOR = (0, 0, 0, 170)
+STATE_WIDTH = 3  # ~0,75 px
 # Punkte weiter als dieses Vielfache des Radius vom Mittelpunkt werden
 # verworfen (Linie wird dort aufgetrennt) - hält die Pixelwerte klein.
 _CLIP_FACTOR = 1.5
@@ -90,20 +94,24 @@ def border_segments(
 
 
 def draw_borders(image, lat: float, lon: float, radius_km: float):
-    """Zeichnet Bundesländer- und Staatsgrenzen (je 1 px) in ein RGB-PIL-Bild."""
+    """Zeichnet Bundesländer- und Staatsgrenzen als geglättete Haarlinien."""
     from PIL import Image, ImageDraw
 
+    width, height = image.size
     layers = [
-        (border_segments(lat, lon, radius_km, image.width, image.height, "state_lines"), STATE_COLOR),
-        (border_segments(lat, lon, radius_km, image.width, image.height, "lines"), BORDER_COLOR),
+        (border_segments(lat, lon, radius_km, width, height, "state_lines"), STATE_COLOR, STATE_WIDTH),
+        (border_segments(lat, lon, radius_km, width, height, "lines"), BORDER_COLOR, BORDER_WIDTH),
     ]
-    if not any(segments for segments, _ in layers):
+    if not any(segments for segments, _, _ in layers):
         return image
-    overlay = Image.new("RGBA", image.size, (0, 0, 0, 0))
+    scale = SUPERSAMPLE
+    overlay = Image.new("RGBA", (width * scale, height * scale), (0, 0, 0, 0))
     draw = ImageDraw.Draw(overlay)
-    for segments, color in layers:
+    for segments, color, line_width in layers:
         for segment in segments:
-            draw.line(segment, fill=color, width=1)
+            draw.line([(x * scale, y * scale) for x, y in segment], fill=color,
+                      width=line_width, joint="curve")
+    overlay = overlay.resize((width, height), Image.Resampling.BOX)
     image.paste(Image.alpha_composite(image.convert("RGBA"), overlay).convert("RGB"))
     return image
 
