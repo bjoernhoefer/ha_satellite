@@ -168,7 +168,7 @@
         <label class="inline">
           <input type="checkbox" class="region-borders" data-region="{{ region.name }}"
                  data-testid="region-borders-{{ region.name }}" {% if region.borders %}checked{% endif %}>
-          Landesgrenzen einzeichnen
+          Landesgrenzen einzeichnen (inkl. österr. Bundesländer)
         </label>
         <div class="warning" data-testid="region-warning-{{ region.name }}"
              {% if config.sources.is_enabled(region.source) %}hidden{% endif %}>

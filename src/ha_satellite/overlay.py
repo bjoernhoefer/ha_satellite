@@ -1,6 +1,8 @@
-"""Landesgrenzen als Overlay über ein gerendertes Regionsbild.
+"""Landes- und Bundesländergrenzen als Overlay über ein gerendertes Regionsbild.
 
-Die Grenzlinien stammen aus Natural Earth 1:10m (gemeinfrei, erzeugt mit
+Staatsgrenzen weltweit, Bundesländergrenzen nur für Österreich
+(``STATE_COUNTRIES`` in ``scripts/build_borders.py``). Die Grenzlinien
+stammen aus Natural Earth 1:10m (gemeinfrei, erzeugt mit
 ``scripts/build_borders.py``) und liegen gepackt im Paket. Projiziert wird
 in dieselbe Lambert-Azimutal-Projektion wie die Zielregion
 (``satpy_render.target_area``), dadurch passen Linien und Bild exakt
@@ -15,31 +17,49 @@ from functools import lru_cache
 from pathlib import Path
 
 BORDERS_FILE = Path(__file__).resolve().parent / "overlay_data" / "borders_10m.json.gz"
-BORDER_COLOR = (255, 215, 0)
-SHADOW_COLOR = (0, 0, 0)
+# Geglättete Haarlinien: in SUPERSAMPLE-facher Größe gezeichnet und
+# verkleinert. Breite in Zielpixeln = Linienbreite / SUPERSAMPLE.
+SUPERSAMPLE = 4
+BORDER_COLOR = (0, 0, 0, 255)
+BORDER_WIDTH = 4  # ~1 px
+STATE_COLOR = (0, 0, 0, 170)
+STATE_WIDTH = 3  # ~0,75 px
 # Punkte weiter als dieses Vielfache des Radius vom Mittelpunkt werden
 # verworfen (Linie wird dort aufgetrennt) - hält die Pixelwerte klein.
 _CLIP_FACTOR = 1.5
 
 
 @lru_cache(maxsize=1)
-def _border_lines():
+def _border_data() -> dict:
+    return json.loads(gzip.decompress(BORDERS_FILE.read_bytes()))
+
+
+@lru_cache(maxsize=2)
+def _border_lines(kind: str = "lines"):
     import numpy as np
 
-    data = json.loads(gzip.decompress(BORDERS_FILE.read_bytes()))
-    lines = [np.asarray(line, dtype=float) for line in data["lines"]]
+    lines = [np.asarray(line, dtype=float) for line in _border_data().get(kind, [])]
+    if not lines:
+        return [], np.empty((0, 4))
     boxes = np.array([(l[:, 0].min(), l[:, 1].min(), l[:, 0].max(), l[:, 1].max()) for l in lines])
     return lines, boxes
 
 
-def border_segments(lat: float, lon: float, radius_km: float, width: int, height: int):
-    """Grenzlinien als Pixel-Polylinien [(x, y), ...] im Zielbild."""
+def border_segments(
+    lat: float, lon: float, radius_km: float, width: int, height: int, kind: str = "lines"
+):
+    """Grenzlinien als Pixel-Polylinien [(x, y), ...] im Zielbild.
+
+    ``kind``: ``"lines"`` = Staatsgrenzen, ``"state_lines"`` = Bundesländer.
+    """
     import numpy as np
     from pyproj import Transformer
 
     from ha_satellite.geometry import bounding_box
 
-    lines, boxes = _border_lines()
+    lines, boxes = _border_lines(kind)
+    if not lines:
+        return []
     box = bounding_box(lat, min(max(lon, -180.0), 180.0), radius_km * _CLIP_FACTOR)
     hit = (
         (boxes[:, 2] >= box.lon_min) & (boxes[:, 0] <= box.lon_max)
@@ -74,18 +94,25 @@ def border_segments(lat: float, lon: float, radius_km: float, width: int, height
 
 
 def draw_borders(image, lat: float, lon: float, radius_km: float):
-    """Zeichnet die Landesgrenzen (gelb mit dunklem Rand) in ein PIL-Bild."""
-    from PIL import ImageDraw
+    """Zeichnet Bundesländer- und Staatsgrenzen als geglättete Haarlinien."""
+    from PIL import Image, ImageDraw
 
-    segments = border_segments(lat, lon, radius_km, image.width, image.height)
-    if not segments:
+    width, height = image.size
+    layers = [
+        (border_segments(lat, lon, radius_km, width, height, "state_lines"), STATE_COLOR, STATE_WIDTH),
+        (border_segments(lat, lon, radius_km, width, height, "lines"), BORDER_COLOR, BORDER_WIDTH),
+    ]
+    if not any(segments for segments, _, _ in layers):
         return image
-    line_width = max(1, round(min(image.width, image.height) / 700))
-    draw = ImageDraw.Draw(image)
-    for segment in segments:
-        draw.line(segment, fill=SHADOW_COLOR, width=line_width + 2, joint="curve")
-    for segment in segments:
-        draw.line(segment, fill=BORDER_COLOR, width=line_width, joint="curve")
+    scale = SUPERSAMPLE
+    overlay = Image.new("RGBA", (width * scale, height * scale), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(overlay)
+    for segments, color, line_width in layers:
+        for segment in segments:
+            draw.line([(x * scale, y * scale) for x, y in segment], fill=color,
+                      width=line_width, joint="curve")
+    overlay = overlay.resize((width, height), Image.Resampling.BOX)
+    image.paste(Image.alpha_composite(image.convert("RGBA"), overlay).convert("RGB"))
     return image
 
 

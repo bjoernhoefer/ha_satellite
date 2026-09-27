@@ -27,10 +27,26 @@ def test_island_without_land_borders_stays_empty():
     assert border_segments(39.6, 2.9, 100, 800, 800) == []  # Mallorca
 
 
-def test_draw_borders_changes_pixels():
-    image = Image.new("RGB", (400, 400), (40, 60, 90))
+def test_austrian_states_near_wien():
+    points = [p for s in border_segments(*WIEN, 800, 800, kind="state_lines") for p in s]
+    # Wien ist ein eigenes Bundesland: Grenze zu Niederösterreich rund um die Bildmitte.
+    assert any(abs(x - 400) < 15 and abs(y - 400) < 15 for x, y in points)
+    # Nur Österreich: in Mallorca keine Verwaltungsgrenzen.
+    assert border_segments(39.6, 2.9, 100, 800, 800, kind="state_lines") == []
+
+
+def test_draw_borders_draws_thin_dark_lines():
+    background = (120, 200, 80)
+    image = Image.new("RGB", (800, 800), background)
     draw_borders(image, *WIEN)
-    assert (255, 215, 0) in {color for _, color in image.getcolors(maxcolors=10000)}
+    assert image.mode == "RGB"
+    pixels = list(image.getdata())
+    changed = [p for p in pixels if p != background]
+    # Schwarze Haarlinien: nur abgedunkelt, nie heller oder farbig.
+    assert changed and all(p[0] <= 120 and p[1] <= 200 and p[2] <= 80 for p in changed)
+    assert any(sum(p) < 100 for p in changed)
+    # Dünn: grob eine Pixelbreite entlang der Linien, kein breiter Rand.
+    assert len(changed) < 0.05 * len(pixels)
 
 
 def test_region_draws_borders_by_default():

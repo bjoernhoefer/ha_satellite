@@ -10,6 +10,12 @@ mit pyproj in die LAEA der Region projiziert und per PIL gezeichnet.
 Punkte außerhalb von 1,5 × Radius werden verworfen (Linie aufgetrennt),
 damit keine riesigen Pixelwerte entstehen.
 
+Nachbesserung nach Rollout: 1-px-Gelb mit 3-px-Schwarzrand wirkte (im
+Browser vergrößert) zu dick, Gelb auf grüner Landschaft zu kontrastarm →
+schwarze Haarlinien, 4-fach überabgetastet gezeichnet und verkleinert
+(geglättet, ~1 px); dazu die österreichischen Bundesländer (Natural Earth
+admin_1, nur AUT) blasser.
+
 ## MTG FCI mit Rohdaten-Archiv (Europa-Chunks)
 
 **Ziel:** schärfere Bilder als SEVIRI (FCI: 1 km sichtbar, 2 km IR) ohne
