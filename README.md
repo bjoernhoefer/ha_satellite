@@ -86,7 +86,7 @@ gesetzt werden, damit Compose nicht lokal zu bauen versucht.
 - **Web-UI** unter `/` (auch fürs Handy): Vorschaubilder und Historie
   anklickbar → Vollbild-Betrachter (Blättern per Pfeiltasten/Wischen,
   Zeitraffer), Live-Stream im Browser, Quellen, Speicherort, Zugangsdaten
-  (Secret maskiert), Abrufintervall, Status und **Live-Logs** ganz unten.
+  (Secret maskiert), Takt je Quelle, Status und **Live-Logs** ganz unten.
 
 ## Home Assistant einbinden
 

@@ -3,11 +3,9 @@
 from __future__ import annotations
 
 import asyncio
-import io
 import logging
 import os
 import re
-import tempfile
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -22,9 +20,8 @@ from fastapi.responses import (
     StreamingResponse,
 )
 from fastapi.templating import Jinja2Templates
-from PIL import Image
 
-from ha_satellite import logbuffer, storage
+from ha_satellite import logbuffer, media, storage
 from ha_satellite.buffer import BufferManager
 from ha_satellite.config import (
     COMPOSITES,
@@ -399,6 +396,7 @@ async def get_sources():
         "catalog": [entry.model_dump() for entry in config.sources.catalog],
         "auto_sync_hours": config.sources.auto_sync_hours,
         "sync": source_sync.state(),
+        "downloads": scheduler.download_status(),
     }
 
 
@@ -485,18 +483,9 @@ async def history_frame(region_name: str, filename: str, w: int | None = None):
     headers = {"Cache-Control": "public, max-age=31536000, immutable"}
     if w:
         width = max(32, min(w, 1600))
-        data = await run_in_threadpool(_thumbnail, path.read_bytes(), width)
+        data = await run_in_threadpool(media.jpeg, buffer, frame, width)
         return Response(content=data, media_type="image/jpeg", headers=headers)
     return Response(content=path.read_bytes(), media_type="image/png", headers=headers)
-
-
-def _thumbnail(png_bytes: bytes, width: int) -> bytes:
-    with Image.open(io.BytesIO(png_bytes)) as img:
-        img = img.convert("RGB")
-        img.thumbnail((width, width * 4))
-        out = io.BytesIO()
-        img.save(out, format="JPEG", quality=80)
-        return out.getvalue()
 
 
 @app.get("/regions/{region_name}/latest.png")
@@ -521,70 +510,28 @@ async def frame_png(region_name: str, index: int):
     return Response(content=frame.path(buffer.region_dir).read_bytes(), media_type="image/png")
 
 
-def _load_images(buffer) -> list[Image.Image]:
-    frames = list(reversed(buffer.frames_newest_first()))  # älteste zuerst
-    images = []
-    for frame in frames:
-        with Image.open(frame.path(buffer.region_dir)) as img:
-            images.append(img.convert("RGB"))
-    return images
-
-
 @app.get("/regions/{region_name}/animation.gif")
 async def animation_gif(region_name: str):
     buffer = _buffer_for(region_name)
-    images = _load_images(buffer)
-    if not images:
-        raise HTTPException(status_code=404, detail="Noch keine Frames vorhanden")
     fps = config_store.get().server.mjpeg_fps
-    duration_ms = max(int(1000 / fps), 50)
-    out = io.BytesIO()
-    images[0].save(
-        out,
-        format="GIF",
-        save_all=True,
-        append_images=images[1:],
-        duration=duration_ms,
-        loop=0,
-    )
-    return Response(content=out.getvalue(), media_type="image/gif")
+    payload = await run_in_threadpool(media.animation, buffer, "gif", fps)
+    if payload is None:
+        raise HTTPException(status_code=404, detail="Noch keine Frames vorhanden")
+    return Response(content=payload, media_type="image/gif")
 
 
 @app.get("/regions/{region_name}/animation.mp4")
 async def animation_mp4(region_name: str):
     buffer = _buffer_for(region_name)
-    images = _load_images(buffer)
-    if not images:
-        raise HTTPException(status_code=404, detail="Noch keine Frames vorhanden")
+    fps = config_store.get().server.mjpeg_fps
     try:
-        import imageio.v2 as imageio
+        payload = await run_in_threadpool(media.animation, buffer, "mp4", fps)
     except ImportError as exc:  # pragma: no cover - abhängig von optionaler Dependency
         raise HTTPException(
             status_code=501, detail="MP4-Export benötigt das Paket imageio-ffmpeg"
         ) from exc
-
-    import numpy as np
-
-    fps = config_store.get().server.mjpeg_fps
-    # Das FFMPEG-Plugin von imageio schreibt nur in echte Dateien, nicht in
-    # BytesIO - daher der Umweg über eine temporäre Datei.
-    def _encode() -> bytes:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            target = Path(tmpdir) / "animation.mp4"
-            with imageio.get_writer(
-                target,
-                format="FFMPEG",
-                mode="I",
-                fps=fps,
-                codec="libx264",
-                pixelformat="yuv420p",
-                macro_block_size=None,
-            ) as writer:
-                for image in images:
-                    writer.append_data(np.asarray(image.convert("RGB")))
-            return target.read_bytes()
-
-    payload = await run_in_threadpool(_encode)
+    if payload is None:
+        raise HTTPException(status_code=404, detail="Noch keine Frames vorhanden")
     return Response(content=payload, media_type="video/mp4")
 
 
@@ -608,12 +555,9 @@ async def mjpeg(region_name: str):
                 continue
             for frame in reversed(frames):  # älteste zuerst abspielen, dann loopen
                 try:
-                    frame_bytes = await run_in_threadpool(
-                        frame.path(buffer.region_dir).read_bytes
-                    )
+                    jpeg_bytes = await run_in_threadpool(media.jpeg, buffer, frame)
                 except FileNotFoundError:
                     continue
-                jpeg_bytes = await run_in_threadpool(_png_to_jpeg, frame_bytes)
                 yield (
                     b"--frame\r\n"
                     b"Content-Type: image/jpeg\r\n"
@@ -624,9 +568,3 @@ async def mjpeg(region_name: str):
 
     return StreamingResponse(_generate(), media_type="multipart/x-mixed-replace; boundary=frame")
 
-
-def _png_to_jpeg(png_bytes: bytes) -> bytes:
-    with Image.open(io.BytesIO(png_bytes)) as img:
-        out = io.BytesIO()
-        img.convert("RGB").save(out, format="JPEG")
-        return out.getvalue()

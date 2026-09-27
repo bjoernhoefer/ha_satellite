@@ -46,6 +46,13 @@ class ProductCache:
     def __init__(self, cache_dir: Path) -> None:
         self._cache_dir = Path(cache_dir)
         self._lock = threading.Lock()
+        # Zuletzt bereitgestelltes Produkt je Collection (Rendern ohne Netz).
+        self._current: dict[str, Product] = {}
+
+    def cached(self, collection_id: str) -> Product | None:
+        """Zuletzt heruntergeladenes Produkt, ohne den Data Store zu fragen."""
+        product = self._current.get(collection_id)
+        return product if product is not None and product.path.exists() else None
 
     def latest(
         self,
@@ -85,6 +92,7 @@ class ProductCache:
             target = target_dir / f"{product_id}{entry_suffix}"
             product = Product(product_id, _as_utc(newest.sensing_end), target)
             if target.exists():
+                self._current[collection_id] = product
                 return product
 
             entry = next((e for e in newest.entries if e.endswith(entry_suffix)), None)
@@ -103,10 +111,14 @@ class ProductCache:
                 partial.unlink(missing_ok=True)
                 raise DataStoreError(f"Download von {product_id} fehlgeschlagen: {exc}") from exc
 
-            # Nur das neueste Produkt behalten.
+            # Nur das neueste und das vorherige Produkt behalten: ein gerade
+            # laufender Render-Vorgang kann das vorherige noch lesen.
+            previous = self._current.get(collection_id)
+            keep = {target, previous.path if previous else None}
             for old in target_dir.iterdir():
-                if old != target:
+                if old not in keep:
                     old.unlink(missing_ok=True)
+            self._current[collection_id] = product
             return product
 
 

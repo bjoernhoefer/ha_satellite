@@ -19,6 +19,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 INDEX_FILENAME = "_index.json"
+# Abgeleitete Medien (Vorschaubilder, Animationen), siehe media.py.
+CACHE_DIRNAME = "_cache"
 
 logger = logging.getLogger(__name__)
 
@@ -167,6 +169,14 @@ class RingBuffer:
         for path in self.region_dir.iterdir():
             if path.is_file() and path.name not in known:
                 path.unlink(missing_ok=True)
+        # Vorschaubilder gelöschter Frames ("<stem>-w240.jpg"); Animationen
+        # verwaltet media.py selbst.
+        cache = self.region_dir / CACHE_DIRNAME
+        if cache.is_dir():
+            stems = {Path(f.filename).stem for f in self._frames}
+            for path in cache.iterdir():
+                if path.suffix == ".jpg" and path.stem.rsplit("-", 1)[0] not in stems:
+                    path.unlink(missing_ok=True)
 
     def _total_size(self) -> int:
         total = 0

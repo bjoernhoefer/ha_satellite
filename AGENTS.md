@@ -32,8 +32,10 @@ src/ha_satellite/
   overlay.py       Landesgrenzen-Overlay (Natural Earth 1:10m, overlay_data/)
   buffer.py        Ringpuffer (Frames pro Region, Aufräumen, Speicherlimit, Umzug)
   status.py        Status-Speicher (letzter/nächster Lauf, Fehler, Frame-Anzahl)
-  scheduler.py     APScheduler-Jobs (nicht-blockierend), Single-Render-Lock,
+  scheduler.py     APScheduler-Jobs (nicht-blockierend): Download je Quelle im
+                   Aufnahmetakt, Rendern nach neuer Aufnahme, Single-Render-Lock,
                    Quellen-Abgleich-Job
+  media.py         Gecachte Vorschaubilder/JPEGs und Animationen (GIF/MP4)
   sources/         Treiber: msg_seviri, data_tailor, mtg_fci (+ dummy)
     eumetsat.py      Data-Store-Suche + Download (eumdac), Produkt-Cache /data/cache
     fci_archive.py   MTG-FCI-Rohdaten-Archiv: Chunk-Geometrie, Download je Slot, Aufräumen
@@ -58,7 +60,8 @@ nicht mit `_` beginnen (reserviert für interne Verzeichnisse).
 
 `sources.catalog` in `config.yaml` legt fest, welche Quellen zur Verfügung
 stehen (`id`, `driver`, `label`, `collection`, `enabled`, `description`).
-Mehrere Einträge dürfen denselben Treiber nutzen (z. B. `msg_seviri` für
+Optional `cycle_minutes` (Aufnahmetakt, siehe
+„Download im Aufnahmetakt“). Mehrere Einträge dürfen denselben Treiber nutzen (z. B. `msg_seviri` für
 0°, Rapid Scan, IODC). Regionen verweisen über `source` auf eine `id`; nur
 Regionen mit aktivierter Quelle werden automatisch abgerufen. In der UI ist
 der Katalog als Tabelle (Aktiv-Schalter) und als einklappbares JSON
@@ -142,11 +145,11 @@ Chunks `archive.chunk_min`..`archive.chunk_max` (Default 32–40 = Europa,
 Zeile im 2-km-Grid; gegen pyproj getestet). Ablage:
 `<Speicherort>/_archive/<Collection>/<Slot>/` (`.part` + Rename, `meta.json`
 zuletzt), Aufbewahrung `archive.retention_hours` (Default 12 h, 0 = nur
-neuester Slot; ~8–13 GB bei 15/10 min Intervall). Beides in der UI unter
+neuester Slot; ~13 GB bei 10 min Takt). Beides in der UI unter
 „Speicherort & Historie“.
 
 - Heruntergeladen wird, sobald ein `mtg_fci`-Katalogeintrag **aktiv** ist
-  (eigener Scheduler-Job `archive-<id>`, ohne Render-Lock - nur I/O),
+  (eigener Download-Job `download-<id>` im 10-min-Takt, ohne Render-Lock - nur I/O),
   unabhängig davon, ob eine Region die Quelle nutzt.
 - Gerendert (planmäßig oder bei Bedarf) werden nur die Chunks der Region:
   hält den Kindprozess bei ~410–480 MB. Mit allen 9 Chunks lag die Spitze
@@ -213,6 +216,36 @@ docker compose up -d
 - Memory-Limit im Compose (`deploy.resources.limits.memory: 768M`), da sich
   der Pi 5 die Ressourcen mit `grafana` teilt.
 
+### Download im Aufnahmetakt
+
+Jede Quelle hat einen Takt (`SourcesConfig.cycle_for`): `cycle_minutes`
+des Katalogeintrags, sonst bekannter Wert der Collection
+(`config.COLLECTION_CYCLES`: Rapid Scan 5, 0°/IODC 15, FCI 10 min) bzw. des
+Treibers, sonst `sources.poll_interval_minutes`. Er bestimmt auch die
+Frame-Anzahl im Ringpuffer (Historie / Takt).
+
+- Je aktiver Quelle mit Download-Treiber (`msg_seviri` nur, wenn eine Region
+  sie nutzt; `mtg_fci` immer, fürs Archiv) läuft ein Takt-Job
+  `download-<id>` (alle 20 s, fragt nur bei Fälligkeit). Fällig: Aufnahmeende
+  + Takt + beobachtete Lieferverzögerung; noch nicht da → jede Minute, mehr
+  als einen Takt überfällig → im Takt, Fehler → nach ≤ 5 min.
+- Downloads halten den Render-Lock nicht. Eine **neue** Aufnahme stößt das
+  Rendern aller Regionen der Quelle an; gerendert wird aus dem lokal
+  liegenden Produkt (kein zweiter Data-Store-Zugriff).
+- Platzhalterquellen (`dummy`, `data_tailor`) rendern im festen Intervall.
+- Takt, letzte Aufnahme, nächster Download und Fehler je Quelle:
+  `GET /api/sources` (`downloads`), in der UI in der Quellen-Tabelle.
+
+### Medien-Cache
+
+Vorschaubilder (`?w=240`), JPEGs für den MJPEG-Stream und GIF/MP4 liegen
+unter `<Speicherort>/<Region>/_cache/` (`media.py`) und werden nach jedem
+neuen Frame im Job `media-<region>` vorab erzeugt (außerhalb des
+Render-Locks). Animationen tragen einen Hash über Frame-Liste und Bildrate
+im Namen, Vorschaubilder entfernter Frames räumt der Ringpuffer auf.
+Das GIF wird nur bis 60 Frames vorab erzeugt (PIL hält alle Frames im
+Speicher), darüber nur auf Anfrage; MP4 liest die Frames einzeln.
+
 ## Betriebsregeln
 
 - **Ein Render-Vorgang zur Zeit**, systemweit (nicht nur pro Region) — via
@@ -230,7 +263,7 @@ docker compose up -d
 - Konfigurationsänderungen über `POST /api/config` lösen sofort ein
   Neuaufsetzen der Scheduler-Jobs aus (`scheduler.reload()`). Nur neue oder
   geänderte Regionen (z. B. andere Quelle/Komposit) rendern dabei sofort,
-  unveränderte behalten ihren Takt.
+  unveränderte warten auf die nächste Aufnahme bzw. behalten ihr Intervall.
 - Jeder Frame merkt sich im Index Quelle (`source`) und Komposit. „Keine
   neue Aufnahme“ (`NoNewData`) gilt nur, wenn der neueste Frame dieselbe
   Herkunft hat - nach einem Wechsel wird sofort gerendert, auch wenn die
@@ -259,7 +292,7 @@ docker compose up -d
 | `GET /api/status` | Letzter/nächster Lauf, Frame-Anzahl, Alter, Fehler je Region |
 | `POST /api/regions/{region}/refresh` | Sofortiger Render-Lauf ("Jetzt aktualisieren") |
 | `GET /api/regions/{region}/frames` | Historie: Frames im Puffer (neuester zuerst) mit stabiler URL |
-| `GET /api/sources` | Quellen-Katalog + Ergebnis des letzten Abgleichs |
+| `GET /api/sources` | Quellen-Katalog, Ergebnis des letzten Abgleichs, Takt/Download-Status je Quelle (`downloads`) |
 | `POST /api/sources/sync` | Abgleich mit dem EUMETSAT Data Store jetzt ausführen |
 | `POST /api/sources/adopt` | Entdeckte Collection (`{"collection": ...}`) in den Katalog übernehmen |
 | `GET /api/storage` | Aktueller Speicherort, Belegung, Kandidaten mit freiem Platz/Warnungen |
@@ -272,8 +305,8 @@ docker compose up -d
 | `GET /healthz` | Liveness |
 | `GET /regions/{region}/latest.png` | Neuestes Einzelbild |
 | `GET /regions/{region}/frames/{i}.png` | Frame `i` aus dem Puffer (`0` = neuester) |
-| `GET /regions/{region}/history/{datei}` | Frame per Dateiname (`?w=240` = JPEG-Vorschaubild) |
-| `GET /regions/{region}/animation.gif` | Animation der Historie (GIF) |
+| `GET /regions/{region}/history/{datei}` | Frame per Dateiname (`?w=240` = JPEG-Vorschaubild, gecacht) |
+| `GET /regions/{region}/animation.gif` | Animation der Historie (GIF, gecacht) |
 | `GET /regions/{region}/animation.mp4` | dito als MP4 (benötigt `imageio-ffmpeg`) |
 | `GET /regions/{region}/mjpeg` | MJPEG-Stream, loopt die Frames (Home-Assistant-Kamera) |
 
@@ -310,6 +343,7 @@ editierbar, Validierung), Quellen aktivieren, Abgleich + Übernehmen,
 Speicherort wechseln inkl. Verschieben, kein horizontales Scrollen am Handy,
 Bildtyp/Quelle je Region wechseln (rendert ohne weiteren Klick neu),
 Landesgrenzen je Region ein-/ausschalten (Desktop + Handy),
+Takt je Quelle anzeigen und per JSON ändern (Desktop + Handy),
 Platzhalter-Quellen gekennzeichnet, API-Links folgen dem gewählten Standort
 und sind anklickbar.
 Selektoren laufen ausschließlich über `data-testid` - Markup und Styling

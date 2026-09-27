@@ -58,9 +58,9 @@ Für eine kombinierte Ansicht beider Standorte eignet sich eine
 
 ## Beispiel-Automation: Warnung bei veraltetem Bild
 
-Warnt, wenn das neueste Bild älter ist als das Doppelte des konfigurierten
-Abrufintervalls (Standard-Intervall 15 Minuten → Schwelle 30 Minuten;
-anpassen, falls `sources.poll_interval_minutes` geändert wird).
+Warnt, wenn das neueste Bild deutlich älter ist als der Aufnahmetakt der
+Quelle (Rapid Scan 5 min, MTG FCI 10 min, 0° 15 min; plus einige Minuten
+Lieferverzögerung). Die Schwelle von 30 Minuten passt für alle Quellen.
 
 ```yaml
 automation:

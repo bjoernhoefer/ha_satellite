@@ -98,6 +98,19 @@ FCI_CHUNK_COUNT = 40
 # MSG SEVIRI Rapid Scan (Europa, alle 5 Minuten, Meteosat-11).
 DEFAULT_MSG_COLLECTION = "EO:EUM:DAT:MSG:MSG15-RSS"
 
+# Aufnahmetakt (Minuten) bekannter Collections: so oft erscheint ein neues
+# Produkt, in diesem Takt wird heruntergeladen. Eigener Wert je
+# Katalogeintrag über ``cycle_minutes``.
+COLLECTION_CYCLES: dict[str, int] = {
+    DEFAULT_MSG_COLLECTION: 5,
+    "EO:EUM:DAT:MSG:HRSEVIRI": 15,
+    "EO:EUM:DAT:MSG:HRSEVIRI-IODC": 15,
+    DEFAULT_FCI_COLLECTION: 10,
+}
+DRIVER_CYCLES: dict[str, int] = {"msg_seviri": 15, "mtg_fci": 10}
+# Treiber, die Produkte selbst herunterladen (eigener Download-Job je Quelle).
+DOWNLOAD_DRIVERS = ("msg_seviri", "mtg_fci")
+
 # Standard-Frames im Ringpuffer: entspricht (per Vorgabe) 60 Minuten Historie.
 DEFAULT_HISTORY_MINUTES = 60
 
@@ -166,6 +179,16 @@ class SourceDefinition(BaseModel):
     collection: str | None = None
     enabled: bool = True
     description: str = ""
+    # Aufnahmetakt in Minuten; leer = bekannter Takt der Collection bzw. des
+    # Treibers (siehe COLLECTION_CYCLES), sonst das allgemeine Abrufintervall.
+    cycle_minutes: int | None = Field(default=None, gt=0)
+
+    def known_cycle(self) -> int | None:
+        if self.cycle_minutes:
+            return self.cycle_minutes
+        if self.collection and self.collection in COLLECTION_CYCLES:
+            return COLLECTION_CYCLES[self.collection]
+        return DRIVER_CYCLES.get(self.driver)
 
     @field_validator("driver")
     @classmethod
@@ -264,6 +287,11 @@ class SourcesConfig(BaseModel):
         entry = self.get(source_id)
         return entry.collection if entry and entry.collection else default
 
+    def cycle_for(self, source_id: str) -> int:
+        """Takt (Minuten), in dem die Quelle neue Aufnahmen liefert."""
+        entry = self.get(source_id)
+        return (entry.known_cycle() if entry else None) or self.poll_interval_minutes
+
 
 class HistoryConfig(BaseModel):
     history_minutes: int = Field(default=DEFAULT_HISTORY_MINUTES, gt=0)
@@ -327,7 +355,7 @@ class AppConfig(BaseModel):
 
     def max_frames_for(self, region: RegionConfig) -> int:
         return region.effective_max_frames(
-            self.sources.poll_interval_minutes, self.history.history_minutes
+            self.sources.cycle_for(region.source), self.history.history_minutes
         )
 
     def region(self, name: str) -> RegionConfig | None:
