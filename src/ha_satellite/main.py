@@ -466,6 +466,7 @@ async def list_frames(region_name: str):
                 "composite": frame.composite,
                 "borders": frame.borders,
                 "url": f"/regions/{region_name}/history/{frame.filename}",
+                "jpeg_url": f"/regions/{region_name}/history/{Path(frame.filename).stem}.jpg",
             }
             for i, frame in enumerate(buffer.frames_newest_first())
         ],
@@ -474,15 +475,23 @@ async def list_frames(region_name: str):
 
 @app.get("/regions/{region_name}/history/{filename}")
 async def history_frame(region_name: str, filename: str, w: int | None = None):
-    """Frame per (stabilem) Dateinamen; ``?w=240`` liefert ein JPEG-Vorschaubild."""
+    """Frame per (stabilem) Dateinamen.
+
+    ``<name>.png`` liefert das Original, ``<name>.jpg`` das gecachte JPEG in
+    voller Größe (deutlich kleiner, schneller im Betrachter); ``?w=240``
+    ein JPEG-Vorschaubild.
+    """
     buffer = _buffer_for(region_name)
+    as_jpeg = filename.endswith(".jpg")
+    if as_jpeg:
+        filename = filename[: -len(".jpg")] + ".png"
     frame = buffer.by_filename(filename)
     path = frame.path(buffer.region_dir) if frame else None
     if path is None or not path.exists():
         raise HTTPException(status_code=404, detail="Frame nicht (mehr) vorhanden")
     headers = {"Cache-Control": "public, max-age=31536000, immutable"}
-    if w:
-        width = max(32, min(w, 1600))
+    if w or as_jpeg:
+        width = max(32, min(w, 1600)) if w else None
         data = await run_in_threadpool(media.jpeg, buffer, frame, width)
         return Response(content=data, media_type="image/jpeg", headers=headers)
     return Response(content=path.read_bytes(), media_type="image/png", headers=headers)
@@ -499,6 +508,20 @@ async def latest_png(region_name: str):
         media_type="image/png",
         headers={"Cache-Control": "no-cache"},
     )
+
+
+@app.get("/regions/{region_name}/latest.jpg")
+async def latest_jpg(region_name: str):
+    """Neuestes Einzelbild als gecachtes JPEG (schneller als das PNG)."""
+    buffer = _buffer_for(region_name)
+    frame = buffer.latest()
+    if frame is None:
+        raise HTTPException(status_code=404, detail="Noch keine Frames vorhanden")
+    try:
+        data = await run_in_threadpool(media.jpeg, buffer, frame)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Frame nicht (mehr) vorhanden") from exc
+    return Response(content=data, media_type="image/jpeg", headers={"Cache-Control": "no-cache"})
 
 
 @app.get("/regions/{region_name}/frames/{index}.png")

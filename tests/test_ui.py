@@ -214,7 +214,7 @@ def test_history_thumbnail_opens_that_frame(ui, live_server):
     expect(ui.get_by_test_id("viewer")).to_be_visible()
     expect(ui.get_by_test_id("viewer-position")).to_have_text(f"{len(frames) - 2} / {len(frames)}")
     src = ui.get_by_test_id("viewer-image").get_attribute("src")
-    assert src.endswith(frames[2]["filename"])
+    assert src == frames[2]["jpeg_url"]  # Default: gecachtes JPEG
     ui.get_by_test_id("viewer-close").click()
     expect(ui.get_by_test_id("viewer")).to_be_hidden()
 
@@ -238,7 +238,7 @@ def test_viewer_frame_dropdown_selects_frame(ui, live_server):
 
     select.select_option("2")
     expect(ui.get_by_test_id("viewer-position")).to_have_text(f"{total - 2} / {total}")
-    assert ui.get_by_test_id("viewer-image").get_attribute("src").endswith(frames[2]["filename"])
+    assert ui.get_by_test_id("viewer-image").get_attribute("src") == frames[2]["jpeg_url"]
     assert "i=2" in ui.url
 
     # Blättern hält die Auswahlliste synchron.
@@ -334,6 +334,82 @@ def test_live_stream_in_browser(ui, live_server):
     assert ui.get_by_test_id("viewer-image").get_attribute("src") is None
 
 
+def test_viewer_format_switches_between_jpeg_and_png(ui, live_server):
+    live_server.ensure_frames("wien", 2)
+    ui.reload()
+    ui.get_by_test_id("preview-wien").click()
+    image = ui.get_by_test_id("viewer-image")
+    fmt = ui.get_by_test_id("viewer-format")
+    expect(fmt).to_be_visible()
+    expect(fmt).to_have_value("jpg")
+    expect(image).to_have_attribute("src", re.compile(r"/history/[^/]+\.jpg$"))
+    _image_loaded(ui, "viewer-image")
+    expect(ui.get_by_test_id("viewer-caption")).to_contain_text("JPEG")
+
+    fmt.select_option("png")
+    expect(image).to_have_attribute("src", re.compile(r"/history/[^/]+\.png$"))
+    _image_loaded(ui, "viewer-image")
+    _viewport_filled(ui)
+    expect(ui.get_by_test_id("viewer-caption")).to_contain_text("PNG")
+    assert "f=png" in ui.url
+    ui.get_by_test_id("viewer-prev").click()  # Blättern behält das Format
+    expect(image).to_have_attribute("src", re.compile(r"\.png$"))
+
+    # Die Wahl bleibt nach dem Neuladen erhalten.
+    ui.keyboard.press("Escape")
+    ui.reload()
+    ui.get_by_test_id("preview-wien").click()
+    expect(fmt).to_have_value("png")
+    fmt.select_option("jpg")
+    expect(image).to_have_attribute("src", re.compile(r"\.jpg$"))
+    assert "f=" not in ui.url
+
+    # Archiv (FCI-Rohdaten): nur PNG, keine Formatauswahl.
+    ui.keyboard.press("Escape")
+    ui.get_by_test_id("archive-wien").click()
+    expect(fmt).to_be_hidden()
+
+
+def test_live_format_mp4_and_gif(ui, live_server):
+    live_server.ensure_frames("wien", 2)
+    ui.reload()
+    ui.get_by_test_id("live-wien").click()
+    fmt = ui.get_by_test_id("viewer-format")
+    expect(fmt).to_have_value("mjpeg")
+    expect(fmt.locator("option")).to_have_count(3)
+
+    fmt.select_option("gif")
+    expect(ui.get_by_test_id("viewer-image")).to_have_attribute("src", re.compile(r"/regions/wien/animation\.gif"))
+    _image_loaded(ui, "viewer-image")
+    expect(ui.get_by_test_id("viewer-caption")).to_contain_text("GIF")
+    assert "f=gif" in ui.url
+
+    fmt.select_option("mp4")
+    video = ui.get_by_test_id("viewer-video")
+    expect(video).to_be_visible()
+    expect(ui.get_by_test_id("viewer-image")).to_be_hidden()
+    expect(video).to_have_attribute("src", re.compile(r"/regions/wien/animation\.mp4"))
+    ui.wait_for_function(
+        "() => document.querySelector('[data-testid=\"viewer-video\"]').readyState >= 1", timeout=30000
+    )
+    _viewport_filled(ui, "viewer-video")
+    ui.get_by_test_id("viewer-zoom-in").click()
+    assert "scale(1.5)" in video.evaluate("v => v.style.transform")
+    ui.get_by_test_id("viewer-zoom-reset").click()
+
+    # Zurück zur Historie: Video gestoppt, Bild wieder sichtbar.
+    ui.get_by_test_id("viewer-mode").click()
+    expect(video).to_be_hidden()
+    expect(ui.get_by_test_id("viewer-image")).to_have_attribute("src", re.compile(r"/history/"))
+    assert video.get_attribute("src") is None
+    ui.get_by_test_id("viewer-mode").click()  # Live merkt sich MP4
+    expect(fmt).to_have_value("mp4")
+    fmt.select_option("mjpeg")
+    expect(ui.get_by_test_id("viewer-image")).to_have_attribute("src", re.compile(r"/regions/wien/mjpeg"))
+    ui.get_by_test_id("viewer-close").click()
+    assert video.get_attribute("src") is None
+
+
 def test_live_deep_link_opens_stream(page, live_server):
     live_server.ensure_frames("mallorca", 1)
     page.goto(live_server.url + "/live/mallorca")
@@ -392,6 +468,14 @@ def test_mobile_viewer_fills_screen_and_back_closes(mobile_page, live_server):
     page.get_by_test_id("viewer-zoom-reset").tap()
     expect(page.get_by_test_id("viewer-zoom-reset")).to_have_text("100 %")
     assert page.evaluate("document.documentElement.scrollWidth") <= 390
+
+    # Formatwahl am Handy erreichbar; PNG lädt und füllt den Bildschirm.
+    expect(page.get_by_test_id("viewer-format")).to_be_in_viewport()
+    page.get_by_test_id("viewer-format").select_option("png")
+    expect(page.get_by_test_id("viewer-image")).to_have_attribute("src", re.compile(r"\.png$"))
+    _image_loaded(page, "viewer-image")
+    _viewport_filled(page)
+    page.get_by_test_id("viewer-format").select_option("jpg")
 
     # Zurück-Taste des Handys schließt den Betrachter, bleibt aber auf der Seite.
     page.go_back()
