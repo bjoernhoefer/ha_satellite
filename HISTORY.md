@@ -1,5 +1,31 @@
 # HISTORY.md — Chronik und Fallstricke
 
+## Download im Aufnahmetakt, Rendern danach, Medien-Cache
+
+**Befund:** Ein globales Abrufintervall (15 min) für alle Quellen verlor bei
+Rapid Scan (5 min) zwei von drei Aufnahmen, bei FCI (10 min) jede dritte.
+SEVIRI lud zudem erst im Render-Lauf (unter dem Render-Lock).
+
+**Lösung:** Jede Quelle hat einen Takt (`cycle_minutes`, sonst bekannter
+Wert der Collection bzw. des Treibers, sonst `poll_interval_minutes`). Je
+Quelle mit Download-Treiber läuft ein Takt-Job (alle 20 s, ohne Netz, bis
+er fällig ist). Fällig ist er zu *Aufnahmeende + Takt +
+Lieferverzögerung*; die Verzögerung ist das Minimum der zuletzt beobachteten
+(Zeit der Suche - Aufnahmeende) und nähert sich so dem echten Wert. Ist das
+Produkt noch nicht da, wird jede Minute gefragt, stockt der Strom länger
+als einen Takt, nur noch im Takt; Fehler: nach spätestens 5 min erneut.
+Eine neue Aufnahme stößt das Rendern der Regionen der Quelle an; der Render
+nutzt das lokal liegende Produkt (SEVIRI-Cache hält das neueste und das
+vorherige, damit ein laufender Render nicht die Datei verliert; FCI den
+neuesten Archiv-Slot). SEVIRI lädt nur, wenn eine Region die Quelle nutzt,
+FCI immer (Archiv). Platzhalterquellen rendern weiter im Intervall.
+
+**Medien-Cache:** Vorschaubilder (`?w=`), JPEG für den MJPEG-Stream und
+GIF/MP4 wurden bei jeder Anfrage neu gerechnet. Jetzt liegen sie unter
+`<Region>/_cache/` und werden nach jedem neuen Frame in einem eigenen Job
+vorab erzeugt. Zuerst lief das direkt im Render-Job: jeder Lauf dauerte
+dadurch länger, Läufe stauten sich (Klicktest zum Kompositwechsel rot).
+
 ## Landesgrenzen im Bild
 
 **Ziel:** Orientierung in Binnenregionen (Wien) - bei Mallorca zeigt die

@@ -1,0 +1,117 @@
+"""Tests für den Cache abgeleiteter Medien (Vorschaubilder, Animationen)."""
+
+from __future__ import annotations
+
+import io
+from datetime import datetime, timedelta, timezone
+
+from PIL import Image
+
+from ha_satellite import media
+from ha_satellite.buffer import RingBuffer
+from ha_satellite.scheduler import RenderScheduler
+
+T0 = datetime(2026, 9, 27, 12, 0, tzinfo=timezone.utc)
+
+
+def _png(color: tuple[int, int, int]) -> bytes:
+    out = io.BytesIO()
+    Image.new("RGB", (64, 48), color).save(out, format="PNG")
+    return out.getvalue()
+
+
+def _buffer(tmp_path, frames: int = 3, max_frames: int = 3) -> RingBuffer:
+    buffer = RingBuffer(tmp_path / "wien", max_frames=max_frames)
+    for i in range(frames):
+        buffer.add_frame(_png((40 * i, 0, 0)), timestamp=T0 + timedelta(minutes=5 * i))
+    return buffer
+
+
+def test_jpeg_is_cached_and_removed_with_its_frame(tmp_path, monkeypatch):
+    buffer = _buffer(tmp_path)
+    oldest = buffer.get(2)
+    thumb = media.jpeg(buffer, oldest, 32)
+    assert Image.open(io.BytesIO(thumb)).size == (32, 24)
+    path = media.jpeg_path(buffer, oldest, 32)
+    assert path.exists()
+
+    # Zweiter Aufruf liest nur die Datei.
+    monkeypatch.setattr(media, "_to_jpeg", lambda *a: (_ for _ in ()).throw(AssertionError))
+    assert media.jpeg(buffer, oldest, 32) == thumb
+
+    # Frame fällt aus dem Ringpuffer -> Vorschaubild wird mit aufgeräumt.
+    buffer.add_frame(_png((0, 0, 200)), timestamp=T0 + timedelta(minutes=30))
+    assert buffer.by_filename(oldest.filename) is None
+    assert not path.exists()
+
+
+def test_animation_is_cached_until_frames_change(tmp_path, monkeypatch):
+    buffer = _buffer(tmp_path)
+    calls = []
+    original = media.ENCODERS["gif"]
+
+    def counting(images, fps):
+        images = list(images)
+        calls.append(len(images))
+        return original(images, fps)
+
+    monkeypatch.setitem(media.ENCODERS, "gif", counting)
+    first = media.animation(buffer, "gif", 2.0)
+    assert first.startswith(b"GIF")
+    assert media.animation(buffer, "gif", 2.0) == first
+    assert calls == [3]
+
+    buffer.add_frame(_png((0, 200, 0)), timestamp=T0 + timedelta(minutes=30))
+    media.animation(buffer, "gif", 2.0)
+    assert calls == [3, 3]
+    # Nur die aktuelle Animation bleibt liegen.
+    assert len(list(media.cache_dir(buffer).glob("animation-*.gif"))) == 1
+
+    # Andere Bildrate -> neue Animation.
+    media.animation(buffer, "gif", 4.0)
+    assert calls == [3, 3, 3]
+
+
+def test_prewarm_skips_gif_for_long_history(tmp_path, monkeypatch):
+    monkeypatch.setattr(media, "GIF_PREWARM_MAX_FRAMES", 2)
+    buffer = _buffer(tmp_path)
+    media.prewarm(buffer, 2.0)
+    assert not list(media.cache_dir(buffer).glob("animation-*.gif"))
+    assert list(media.cache_dir(buffer).glob("animation-*.mp4"))
+
+
+def test_animation_without_frames_is_none(tmp_path):
+    assert media.animation(RingBuffer(tmp_path / "leer"), "gif", 2.0) is None
+
+
+def test_prewarm_creates_thumbnail_jpeg_and_animations(tmp_path):
+    buffer = _buffer(tmp_path)
+    media.prewarm(buffer, 2.0)
+    latest = buffer.latest()
+    assert media.jpeg_path(buffer, latest, media.THUMB_WIDTH).exists()
+    assert media.jpeg_path(buffer, latest).exists()
+    assert list(media.cache_dir(buffer).glob("animation-*.gif"))
+    assert list(media.cache_dir(buffer).glob("animation-*.mp4"))
+
+
+def test_scheduler_prewarms_after_new_frame(tmp_path, monkeypatch):
+    from ha_satellite.buffer import BufferManager
+    from ha_satellite.config import ConfigStore
+    from ha_satellite.sources import RenderedFrame
+    from ha_satellite.status import StatusStore
+
+    class PngSource:
+        def render(self, region, config, last_sensing=None):
+            return RenderedFrame(_png((10, 20, 30)), T0)
+
+    store = ConfigStore(tmp_path / "config.yaml")
+    buffers = BufferManager(tmp_path / "frames")
+    scheduler = RenderScheduler(store, buffers, StatusStore())
+    monkeypatch.setattr("ha_satellite.scheduler.get_source", lambda name: PngSource())
+    scheduler._run_region("wien")
+    job = scheduler._scheduler.get_job("media-wien")
+    assert job is not None  # eigener Job, blockiert den Render-Lauf nicht
+    job.func(*job.args)
+    buffer = buffers.get("wien", 12, 500)
+    assert media.jpeg_path(buffer, buffer.latest(), media.THUMB_WIDTH).exists()
+    assert list(media.cache_dir(buffer).glob("animation-*.gif"))

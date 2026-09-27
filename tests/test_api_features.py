@@ -88,6 +88,33 @@ def test_history_endpoints(live_server):
         assert httpx.get(f"{live_server.url}/regions/wien/history/{bad}").status_code == 404
 
 
+def test_animations_and_thumbnails_are_cached(live_server):
+    live_server.ensure_frames("wien", 2)
+    first = httpx.get(f"{live_server.url}/regions/wien/animation.gif", timeout=30)
+    assert first.status_code == 200 and first.content.startswith(b"GIF")
+    assert httpx.get(f"{live_server.url}/regions/wien/animation.gif").content == first.content
+    mp4 = httpx.get(f"{live_server.url}/regions/wien/animation.mp4", timeout=60)
+    assert mp4.status_code == 200 and mp4.headers["content-type"] == "video/mp4"
+    region_dirs = [
+        p for root in (live_server.data_dir, live_server.storage_root) for p in root.rglob("wien/_cache")
+    ]
+    assert region_dirs
+    names = {p.name for p in region_dirs[0].iterdir()}
+    assert any(n.startswith("animation-") and n.endswith(".gif") for n in names)
+    assert any(n.endswith("-w240.jpg") for n in names)  # vom Scheduler vorab erzeugt
+
+
+def test_sources_report_cycle_and_download_state(live_server):
+    downloads = httpx.get(f"{live_server.url}/api/sources").json()["downloads"]
+    assert downloads["msg_seviri"]["cycle_minutes"] == 5
+    assert downloads["msg_seviri_0deg"]["cycle_minutes"] == 15
+    assert downloads["mtg_fci"]["cycle_minutes"] == 10
+    assert downloads["mtg_fci"]["downloads"] is True
+    # Testserver: nur die Platzhalterquelle ist aktiv -> kein Download-Job.
+    assert downloads["dummy"]["downloads"] is False
+    assert not any(d["active"] for d in downloads.values())
+
+
 def test_storage_relocation_moves_frames(live_server):
     live_server.ensure_frames("wien", 2)
     before = live_server.frames("wien")

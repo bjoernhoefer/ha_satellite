@@ -461,6 +461,39 @@ def _stored_catalog_or_default(page) -> list:
     return page.evaluate("fetch('/api/sources').then(r => r.json()).then(d => d.catalog)")
 
 
+def test_sources_show_cycle_and_custom_cycle_via_json(ui, live_server):
+    expect(ui.get_by_test_id("source-cycle-msg_seviri")).to_contain_text("Takt 5 min (automatisch)")
+    expect(ui.get_by_test_id("source-cycle-msg_seviri_0deg")).to_contain_text("Takt 15 min")
+    expect(ui.get_by_test_id("source-cycle-mtg_fci")).to_contain_text("Takt 10 min")
+    expect(ui.get_by_test_id("source-cycle-dummy")).to_contain_text("ohne Download")
+
+    catalog = _stored_catalog_or_default(ui)
+    for entry in catalog:
+        if entry["id"] == "mtg_fci":
+            entry["cycle_minutes"] = 20
+    ui.get_by_test_id("sources-json-details").locator("summary").click()
+    ui.get_by_test_id("sources-json").fill(json.dumps(catalog))
+    ui.get_by_test_id("sources-json-save").click()
+    expect(ui.get_by_test_id("sources-json-message")).to_have_text("Quellen-Katalog gespeichert.")
+    expect(ui.get_by_test_id("source-cycle-mtg_fci")).to_contain_text("Takt 20 min")
+    expect(ui.get_by_test_id("source-cycle-mtg_fci")).not_to_contain_text("automatisch")
+    stored = {e["id"]: e for e in _stored(live_server)["sources"]["catalog"]}
+    assert stored["mtg_fci"]["cycle_minutes"] == 20
+
+    # Quellen ohne festen Takt folgen dem allgemeinen Abrufintervall.
+    ui.get_by_test_id("poll-interval").fill("7")
+    ui.get_by_test_id("save-sources").click()
+    expect(ui.get_by_test_id("source-cycle-dummy")).to_contain_text("Takt 7 min")
+
+
+def test_sources_cycle_on_mobile(mobile_page, live_server):
+    mobile_page.goto(live_server.url + "/#sec-sources")
+    expect(mobile_page.get_by_test_id("source-cycle-msg_seviri")).to_be_visible()
+    expect(mobile_page.get_by_test_id("source-cycle-msg_seviri")).to_contain_text("Takt 5 min")
+    width = mobile_page.evaluate("() => document.documentElement.scrollWidth")
+    assert width <= 390
+
+
 def test_toggle_source_and_region_warning(ui, live_server):
     expect(ui.get_by_test_id("region-warning-wien")).to_be_hidden()
     ui.get_by_test_id("source-enabled-dummy").uncheck()

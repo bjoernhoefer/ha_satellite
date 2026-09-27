@@ -22,6 +22,7 @@ from PIL import Image, ImageDraw
 from ha_satellite.config import AppConfig, RegionConfig
 
 if TYPE_CHECKING:
+    from ha_satellite.config import SourceDefinition
     from ha_satellite.sources.eumetsat import ProductCache
 
 logger = logging.getLogger(__name__)
@@ -50,6 +51,17 @@ class Source(ABC):
     """Basisklasse für austauschbare Bildquellen."""
 
     name: str = "base"
+    # Eigener Download-Schritt (fetch) im Takt der Quelle?
+    downloads: bool = False
+    # Auch herunterladen, wenn keine Region die Quelle nutzt (Rohdaten-Archiv).
+    archive_always: bool = False
+
+    def fetch(self, entry: "SourceDefinition", config: AppConfig) -> datetime:
+        """Neuestes Produkt lokal bereitstellen (idempotent, ohne Rendern).
+
+        Liefert das Aufnahmeende des neuesten lokal vorhandenen Produkts.
+        """
+        raise NotImplementedError
 
     @abstractmethod
     def render(
@@ -122,21 +134,30 @@ class MsgSeviriSource(Source):
     name = "msg_seviri"
     reader = "seviri_l1b_native"
     entry_suffix = ".nat"
+    downloads = True
+
+    def _download(self, collection: str, config: AppConfig):
+        from ha_satellite.sources.eumetsat import DataStoreError
+
+        try:
+            return _product_cache().latest(collection, config.eumetsat, self.entry_suffix)
+        except DataStoreError as exc:
+            raise RenderError(str(exc)) from exc
+
+    def fetch(self, entry, config) -> datetime:
+        return self._download(entry.collection or "", config).sensing_end
 
     def render(self, region, config, last_sensing=None) -> RenderedFrame:
-        from ha_satellite.sources.eumetsat import DataStoreError
         from ha_satellite.sources.satpy_render import (
             RenderRequest,
             SatpyRenderError,
             render_in_subprocess,
         )
 
-        try:
-            product = _product_cache().latest(
-                config.sources.collection_for(region.source), config.eumetsat, self.entry_suffix
-            )
-        except DataStoreError as exc:
-            raise RenderError(str(exc)) from exc
+        collection = config.sources.collection_for(region.source)
+        # Normalerweise hat der Download-Job das Produkt gerade geladen;
+        # nur ohne lokales Produkt (z. B. direkt nach dem Start) selbst laden.
+        product = _product_cache().cached(collection) or self._download(collection, config)
         if last_sensing is not None and product.sensing_end <= last_sensing:
             raise NoNewData(f"{product.product_id} bereits gerendert")
 
@@ -261,13 +282,25 @@ class MtgFciSource(Source):
     """
 
     name = "mtg_fci"
+    downloads = True
+    archive_always = True
+
+    def fetch(self, entry, config) -> datetime:
+        return sync_fci_archive(config, entry.collection or "").sensing_end
 
     def render(self, region, config, last_sensing=None) -> RenderedFrame:
         from ha_satellite.config import DEFAULT_FCI_COLLECTION
+        from ha_satellite.sources.fci_archive import chunks_for_region, get_archive
 
-        slot = sync_fci_archive(
-            config, config.sources.collection_for(region.source, DEFAULT_FCI_COLLECTION)
-        )
+        collection = config.sources.collection_for(region.source, DEFAULT_FCI_COLLECTION)
+        # Neuester archivierter Slot mit allen Chunks der Region (vom
+        # Download-Job geladen); fehlt er, selbst laden.
+        needed = chunks_for_region(region)
+        slot = next(
+            (s for s in get_archive(archive_root(config)).slots(collection)[:1]
+             if needed and needed <= set(s.chunk_files())),
+            None,
+        ) or sync_fci_archive(config, collection)
         if last_sensing is not None and slot.sensing_end <= last_sensing:
             raise NoNewData(f"{slot.product_id} bereits gerendert")
         return render_fci_slot(slot, region, region.composite)

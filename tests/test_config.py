@@ -92,7 +92,29 @@ def test_effective_max_frames_defaults_to_60_minutes():
 def test_history_minutes_controls_max_frames():
     config = default_config()
     config.history.history_minutes = 24 * 60
-    assert config.max_frames_for(config.regions[0]) == 96
+    # Rapid Scan liefert alle 5 Minuten -> 288 Frames für 24 Stunden.
+    assert config.max_frames_for(config.regions[0]) == 288
+
+
+def test_cycle_per_source_from_collection_driver_or_override():
+    config = default_config()
+    sources = config.sources
+    assert sources.cycle_for("msg_seviri") == 5  # Rapid Scan
+    assert sources.cycle_for("msg_seviri_0deg") == 15
+    assert sources.cycle_for("mtg_fci") == 10
+    # Ohne bekannten Takt: allgemeines Abrufintervall.
+    sources.poll_interval_minutes = 7
+    assert sources.cycle_for("dummy") == 7
+    assert sources.cycle_for("gibt-es-nicht") == 7
+    # Unbekannte Collection: Takt des Treibers; eigener Wert hat Vorrang.
+    fci = sources.get("mtg_fci")
+    fci.collection = "EO:EUM:DAT:0999"
+    assert sources.cycle_for("mtg_fci") == 10
+    fci.cycle_minutes = 20
+    assert sources.cycle_for("mtg_fci") == 20
+    config.regions[0].source = "mtg_fci"
+    config.history.history_minutes = 60
+    assert config.max_frames_for(config.regions[0]) == 3
 
 
 def test_effective_max_frames_can_be_overridden():

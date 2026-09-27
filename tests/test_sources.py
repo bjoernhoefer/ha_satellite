@@ -102,7 +102,14 @@ def test_product_cache_downloads_once_and_keeps_only_latest(tmp_path, monkeypatc
     products.insert(0, newer)
     latest = cache.latest("EO:EUM:DAT:MSG:MSG15-RSS", CREDS, ".nat")
     assert latest.product_id == "MSG4-B"
-    assert [p.name for p in latest.path.parent.iterdir()] == [latest.path.name]
+    assert cache.cached("EO:EUM:DAT:MSG:MSG15-RSS") == latest
+    # Vorheriges Produkt bleibt für einen evtl. laufenden Render-Vorgang.
+    assert sorted(p.name for p in latest.path.parent.iterdir()) == ["MSG4-A.nat", "MSG4-B.nat"]
+
+    products.insert(0, FakeProduct("MSG4-C", SENSING + timedelta(minutes=10), b"third"))
+    third = cache.latest("EO:EUM:DAT:MSG:MSG15-RSS", CREDS, ".nat")
+    assert sorted(p.name for p in third.path.parent.iterdir()) == ["MSG4-B.nat", "MSG4-C.nat"]
+    assert cache.cached("andere-collection") is None
 
 
 def test_product_cache_requires_credentials(tmp_path):
@@ -140,11 +147,17 @@ class StubCache:
     def __init__(self, product: Product | None = None, error: Exception | None = None):
         self.product = product
         self.error = error
+        self.latest_calls = 0
+        self.local: Product | None = None
 
     def latest(self, collection_id, credentials, suffix):
+        self.latest_calls += 1
         if self.error:
             raise self.error
         return self.product
+
+    def cached(self, collection_id):
+        return self.local
 
 
 @pytest.fixture
@@ -187,6 +200,29 @@ def test_msg_seviri_maps_errors_to_render_error(tmp_path, monkeypatch, config):
     )
     with pytest.raises(RenderError, match="kaputt"):
         MsgSeviriSource().render(config.regions[0], config, None)
+
+
+def test_msg_seviri_renders_downloaded_product_without_network(tmp_path, monkeypatch, config):
+    local = Product("MSG4-L", SENSING, tmp_path / "l.nat")
+    stub = StubCache(error=DataStoreError("darf nicht gefragt werden"))
+    stub.local = local
+    monkeypatch.setattr(sources, "_product_cache", lambda: stub)
+    seen = {}
+
+    def fake_render(request):
+        seen["files"] = request.filenames
+        return b"PNG", SENSING
+
+    monkeypatch.setattr("ha_satellite.sources.satpy_render.render_in_subprocess", fake_render)
+    MsgSeviriSource().render(config.regions[0], config, None)
+    assert seen["files"] == (str(local.path),)
+    assert stub.latest_calls == 0
+
+    # fetch() lädt dagegen immer über den Data Store.
+    stub.error, stub.product = None, Product("MSG4-N", SENSING + timedelta(minutes=5), tmp_path / "n")
+    entry = config.sources.get("msg_seviri")
+    assert MsgSeviriSource().fetch(entry, config) == SENSING + timedelta(minutes=5)
+    assert stub.latest_calls == 1
 
 
 # -- Scheduler -------------------------------------------------------------------
@@ -463,12 +499,54 @@ def test_switching_source_or_composite_renders_even_older_product(tmp_path, monk
     assert buffer().latest().filename == newest
 
 
-def test_reload_keeps_schedule_of_unchanged_regions(tmp_path):
+def _job_ids(scheduler) -> list[str]:
+    return [job.id for job in scheduler._scheduler.get_jobs()]
+
+
+def test_reload_sets_up_download_jobs_and_renders_changed_regions(tmp_path):
     store = ConfigStore(tmp_path / "config.yaml")
     scheduler = RenderScheduler(store, BufferManager(tmp_path / "frames"), StatusStore())
     scheduler._scheduler.start(paused=True)
     try:
         scheduler.reload()
+        ids = _job_ids(scheduler)
+        # Rapid Scan wird von Regionen genutzt -> eigener Download-Job; die
+        # Regionen rendern erst nach dem Download (kein Intervall-Job).
+        assert "download-msg_seviri" in ids
+        assert "download-msg_seviri_0deg" not in ids  # deaktiviert
+        assert not [i for i in ids if i.startswith("render-")]
+
+        _switch(store, composite="natural_color_hrv")
+        scheduler.reload()
+        renders = [i for i in _job_ids(scheduler) if i.startswith("render-now-")]
+        assert len(renders) == 1 and "-wien-" in renders[0]
+
+        # FCI lädt ins Archiv, auch ohne Region; 0° ohne Region nicht.
+        config = store.get()
+        for entry in config.sources.catalog:
+            entry.enabled = entry.id in ("msg_seviri", "msg_seviri_0deg", "mtg_fci")
+        store.update(config)
+        scheduler.reload()
+        ids = _job_ids(scheduler)
+        assert "download-mtg_fci" in ids
+        assert "download-msg_seviri_0deg" not in ids
+    finally:
+        scheduler._scheduler.shutdown(wait=False)
+
+
+def test_reload_keeps_interval_of_unchanged_placeholder_regions(tmp_path):
+    store = ConfigStore(tmp_path / "config.yaml")
+    config = store.get()
+    for entry in config.sources.catalog:
+        entry.enabled = entry.id == "dummy"
+    for region in config.regions:
+        region.source = "dummy"
+    store.update(config)
+    scheduler = RenderScheduler(store, BufferManager(tmp_path / "frames"), StatusStore())
+    scheduler._scheduler.start(paused=True)
+    try:
+        scheduler.reload()
+        assert not [i for i in _job_ids(scheduler) if i.startswith("download-")]
         later = datetime.now(timezone.utc) + timedelta(minutes=10)
         for name in ("wien", "mallorca"):
             scheduler._scheduler.get_job(f"render-{name}").modify(next_run_time=later)
@@ -482,6 +560,79 @@ def test_reload_keeps_schedule_of_unchanged_regions(tmp_path):
         assert mallorca == later  # unverändert -> Takt bleibt
     finally:
         scheduler._scheduler.shutdown(wait=False)
+
+
+class FetchSource:
+    """Download-Treiber mit steuerbarer neuester Aufnahme."""
+
+    def __init__(self, sensing: datetime):
+        self.sensing = sensing
+        self.error: Exception | None = None
+        self.fetches = 0
+
+    def fetch(self, entry, config):
+        self.fetches += 1
+        if self.error:
+            raise self.error
+        return self.sensing
+
+
+def _close(actual: datetime, expected: datetime, tolerance: float = 5.0) -> bool:
+    return abs((actual - expected).total_seconds()) < tolerance
+
+
+def test_download_follows_cycle_and_triggers_renders_only_for_new_data(tmp_path, monkeypatch):
+    store = ConfigStore(tmp_path / "config.yaml")  # Regionen auf Rapid Scan (5 min)
+    scheduler = RenderScheduler(store, BufferManager(tmp_path / "frames"), StatusStore())
+    now = datetime.now(timezone.utc)
+    source = FetchSource(now - timedelta(minutes=3))  # 3 min Lieferverzögerung
+    monkeypatch.setattr("ha_satellite.scheduler.get_source", lambda name: source)
+    queued: list[str] = []
+    monkeypatch.setattr(scheduler, "_queue_render", queued.append)
+
+    assert scheduler.download("msg_seviri") is True
+    assert sorted(queued) == ["mallorca", "wien"]
+    state = scheduler._downloads["msg_seviri"]
+    # Nächster Download: Aufnahmeende + Takt + Verzögerung = jetzt + 5 min.
+    assert _close(state.due, source.sensing + timedelta(minutes=8))
+    status = scheduler.download_status()["msg_seviri"]
+    assert status["cycle_minutes"] == 5 and status["active"] is True
+    assert status["latency_seconds"] == pytest.approx(180, abs=5)
+
+    # Vor dem Termin: der Takt-Job fragt den Data Store nicht.
+    scheduler._tick_download("msg_seviri")
+    assert source.fetches == 1
+
+    # Gleiche Aufnahme -> keine Renders.
+    queued.clear()
+    assert scheduler.download("msg_seviri") is False
+    assert queued == []
+
+    # Erwartete Aufnahme überfällig (noch nicht da): jede Minute erneut fragen.
+    state.last_sensing -= timedelta(minutes=6)
+    source.sensing = state.last_sensing
+    scheduler.download("msg_seviri")
+    assert _close(state.due, datetime.now(timezone.utc) + timedelta(minutes=1))
+    # Mehr als einen Takt überfällig (Datenstrom stockt): nur noch im Takt.
+    state.last_sensing -= timedelta(minutes=10)
+    source.sensing = state.last_sensing
+    scheduler.download("msg_seviri")
+    assert _close(state.due, datetime.now(timezone.utc) + timedelta(minutes=5))
+
+    # Neue Aufnahme: Regionen werden gerendert.
+    source.sensing = now
+    assert scheduler.download("msg_seviri") is True
+    assert sorted(queued) == ["mallorca", "wien"]
+
+    # Fehler: kein Absturz, erneuter Versuch spätestens nach 5 min.
+    source.error = RenderError("401 Unauthorized")
+    assert scheduler.download("msg_seviri") is False
+    assert state.last_error == "401 Unauthorized"
+    assert _close(state.due, datetime.now(timezone.utc) + timedelta(minutes=5))
+    assert scheduler.download_status()["msg_seviri"]["last_error"] == "401 Unauthorized"
+
+    # Deaktivierte Quelle: kein Download.
+    assert scheduler.download("msg_seviri_0deg") is False
 
 
 def test_render_subprocess_retries_once_after_crash(monkeypatch):

@@ -184,7 +184,9 @@
   <section id="sec-sources">
     <h2>Quellen &amp; Abrufintervall</h2>
     <p class="muted">Nur aktivierte Quellen werden automatisch abgerufen. Welche Quelle eine Region nutzt,
-      wird oben bei der Region gewählt.</p>
+      wird oben bei der Region gewählt. Heruntergeladen wird im Aufnahmetakt der Quelle (Rapid Scan 5 min,
+      MTG FCI 10 min, 0° 15 min), sobald die neue Aufnahme verfügbar ist; danach werden die Regionen der
+      Quelle gerendert. Eigener Takt je Quelle über <code>cycle_minutes</code> im JSON.</p>
     <div class="table-wrap">
       <table data-testid="sources-table">
         <thead><tr><th>Aktiv</th><th>Quelle</th><th class="hide-mobile">Treiber</th><th>EUMETSAT-Abgleich</th></tr></thead>
@@ -196,7 +198,7 @@
     <form id="sources-form" data-testid="sources-form">
       <div class="grid2">
         <div>
-          <label for="poll-interval">Abrufintervall (Minuten)</label>
+          <label for="poll-interval">Abrufintervall für Quellen ohne eigenen Takt (Minuten)</label>
           <input id="poll-interval" name="poll_interval_minutes" type="number" min="1" step="1" required
                  data-testid="poll-interval" value="{{ config.sources.poll_interval_minutes }}">
         </div>
@@ -222,7 +224,7 @@
       <summary style="cursor:pointer;font-weight:600">Quellen-Katalog als JSON bearbeiten</summary>
       <p class="muted">Felder: <code>id</code> (eindeutig, wird von Regionen referenziert), <code>driver</code>
         ({{ drivers | join(", ") }}), <code>label</code>, <code>collection</code> (EUMETSAT-Collection-ID),
-        <code>enabled</code>, <code>description</code>.</p>
+        <code>enabled</code>, <code>description</code>, <code>cycle_minutes</code> (Aufnahmetakt, leer = automatisch).</p>
       <textarea id="sources-json" data-testid="sources-json" spellcheck="false" autocomplete="off"></textarea>
       <div class="row">
         <button type="button" class="primary" data-testid="sources-json-save">JSON speichern</button>
@@ -478,7 +480,21 @@
     });
 
     /* ---------- Quellen ---------- */
-    let sourcesState = { catalog: [], sync: {} };
+    let sourcesState = { catalog: [], sync: {}, downloads: {} };
+
+    function cycleInfo(entry) {
+      const info = (sourcesState.downloads || {})[entry.id];
+      if (!info) return "";
+      const parts = ["Takt " + info.cycle_minutes + " min" + (info.cycle_auto ? " (automatisch)" : "")];
+      if (info.downloads) {
+        if (info.last_sensing) parts.push("letzte Aufnahme " + fmtTime(info.last_sensing, true));
+        if (info.next_check_at) parts.push("nächster Download " + fmtTime(info.next_check_at, true));
+        if (!info.active && entry.enabled) parts.push("kein Download (keine Region nutzt die Quelle)");
+      } else {
+        parts.push("ohne Download");
+      }
+      return parts.join(" · ");
+    }
     let jsonDirty = false;
 
     function renderSources() {
@@ -501,7 +517,11 @@
         tbody.append(el("tr", { "data-testid": "source-row-" + entry.id },
           el("td", {}, checkbox),
           el("td", {}, el("div", { text: entry.label || entry.id }),
-            el("div", { class: "muted" }, el("code", { text: entry.id }), entry.collection ? " · " + entry.collection : "")),
+            el("div", { class: "muted" }, el("code", { text: entry.id }), entry.collection ? " · " + entry.collection : ""),
+            el("div", { class: "muted", "data-testid": "source-cycle-" + entry.id, text: cycleInfo(entry) }),
+            ((sourcesState.downloads || {})[entry.id] || {}).last_error
+              ? el("div", { class: "badge err", "data-testid": "source-download-error-" + entry.id,
+                  text: "Download: " + sourcesState.downloads[entry.id].last_error }) : ""),
           el("td", { class: "hide-mobile" }, el("code", { text: entry.driver }),
             PLACEHOLDER_DRIVERS.includes(entry.driver) ? el("span", { class: "badge warn", text: "Platzhalter" }) : ""),
           el("td", { "data-testid": "source-sync-status-" + entry.id }, syncCell)));
@@ -559,6 +579,7 @@
         sourcesState.catalog = saved.sources.catalog;
         jsonDirty = false;
         renderSources();
+        loadSources();  // Takt/Download-Status nach der Änderung
         showMessage(message, okText, true);
         return true;
       } catch (err) {
@@ -630,6 +651,7 @@
         await postConfig({ sources: { poll_interval_minutes: poll, auto_sync_hours: autoSync } });
         showMessage(message, "Einstellungen gespeichert.", true);
         refreshStatus();
+        loadSources();
       } catch (err) {
         showMessage(message, "Speichern fehlgeschlagen: " + err.message, false);
       }
