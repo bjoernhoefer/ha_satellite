@@ -219,6 +219,85 @@ def test_history_thumbnail_opens_that_frame(ui, live_server):
     expect(ui.get_by_test_id("viewer")).to_be_hidden()
 
 
+def _zoom(page) -> float:
+    return float(page.get_by_test_id("viewer").get_attribute("data-zoom") or 1)
+
+
+def test_viewer_frame_dropdown_selects_frame(ui, live_server):
+    live_server.ensure_frames("wien", 3)
+    ui.reload()
+    ui.get_by_test_id("preview-wien").click()
+    expect(ui.get_by_test_id("viewer")).to_be_visible()
+    frames = live_server.frames("wien")
+    total = len(frames)
+    select = ui.get_by_test_id("viewer-frame")
+    expect(select).to_be_visible()
+    expect(select.locator("option")).to_have_count(total)
+    expect(select).to_have_value("0")
+    expect(select.locator("option").first).to_contain_text("neuestes")
+
+    select.select_option("2")
+    expect(ui.get_by_test_id("viewer-position")).to_have_text(f"{total - 2} / {total}")
+    assert ui.get_by_test_id("viewer-image").get_attribute("src").endswith(frames[2]["filename"])
+    assert "i=2" in ui.url
+
+    # Blättern hält die Auswahlliste synchron.
+    ui.get_by_test_id("viewer-next").click()
+    expect(select).to_have_value("1")
+
+    ui.get_by_test_id("viewer-mode").click()  # Live: keine Frame-Auswahl
+    expect(select).to_be_hidden()
+
+
+def test_viewer_zoom_buttons_keys_and_pan(ui, live_server):
+    live_server.ensure_frames("wien", 2)
+    ui.reload()
+    ui.get_by_test_id("preview-wien").click()
+    expect(ui.get_by_test_id("viewer")).to_be_visible()
+    _image_loaded(ui, "viewer-image")
+    expect(ui.get_by_test_id("viewer-zoom-reset")).to_have_text("100 %")
+    expect(ui.get_by_test_id("viewer-zoom-out")).to_be_disabled()
+
+    ui.get_by_test_id("viewer-zoom-in").click()
+    expect(ui.get_by_test_id("viewer-zoom-reset")).to_have_text("150 %")
+    ui.get_by_test_id("viewer-zoom-in").click()
+    ui.get_by_test_id("viewer-zoom-in").click()
+    expect(ui.get_by_test_id("viewer-zoom-reset")).to_have_text("300 %")
+    box = ui.get_by_test_id("viewer-image").bounding_box()
+    assert box["width"] > ui.viewport_size["width"] * 2.5
+
+    # Ziehen mit der Maus verschiebt das gezoomte Bild, ohne die Leisten auszublenden.
+    before = ui.get_by_test_id("viewer-image").evaluate("i => i.style.transform")
+    vw, vh = ui.viewport_size["width"], ui.viewport_size["height"]
+    ui.mouse.move(vw / 2, vh / 2)
+    ui.mouse.down()
+    ui.mouse.move(vw / 2 + 120, vh / 2 + 80, steps=5)
+    ui.mouse.up()
+    after = ui.get_by_test_id("viewer-image").evaluate("i => i.style.transform")
+    assert after != before
+    expect(ui.get_by_test_id("viewer")).not_to_have_class(re.compile("controls-hidden"))
+
+    # Zoom bleibt beim Blättern erhalten.
+    ui.get_by_test_id("viewer-prev").click()
+    assert _zoom(ui) == 3
+
+    ui.keyboard.press("-")
+    expect(ui.get_by_test_id("viewer-zoom-reset")).to_have_text("200 %")
+    ui.keyboard.press("0")
+    expect(ui.get_by_test_id("viewer-zoom-reset")).to_have_text("100 %")
+    _viewport_filled(ui)
+    ui.keyboard.press("+")
+    assert _zoom(ui) == 1.5
+    ui.get_by_test_id("viewer-zoom-reset").click()
+    assert _zoom(ui) == 1
+
+    # Schließen setzt den Zoom zurück.
+    ui.get_by_test_id("viewer-zoom-in").click()
+    ui.keyboard.press("Escape")
+    ui.get_by_test_id("preview-wien").click()
+    expect(ui.get_by_test_id("viewer-zoom-reset")).to_have_text("100 %")
+
+
 def test_timelapse_plays_through_history(ui, live_server):
     live_server.ensure_frames("wien", 3)
     ui.reload()
@@ -302,6 +381,17 @@ def test_mobile_viewer_fills_screen_and_back_closes(mobile_page, live_server):
 
     page.get_by_test_id("viewer-prev").tap()
     expect(page.get_by_test_id("viewer-position")).to_contain_text("/")
+
+    # Frame-Auswahl und Zoom sind am Handy erreichbar und bedienbar.
+    for testid in ("viewer-frame", "viewer-zoom-in", "viewer-zoom-out", "viewer-zoom-reset"):
+        expect(page.get_by_test_id(testid)).to_be_in_viewport()
+    page.get_by_test_id("viewer-frame").select_option("0")
+    expect(page.get_by_test_id("viewer-caption")).to_contain_text("neuestes Bild")
+    page.get_by_test_id("viewer-zoom-in").tap()
+    expect(page.get_by_test_id("viewer-zoom-reset")).to_have_text("150 %")
+    page.get_by_test_id("viewer-zoom-reset").tap()
+    expect(page.get_by_test_id("viewer-zoom-reset")).to_have_text("100 %")
+    assert page.evaluate("document.documentElement.scrollWidth") <= 390
 
     # Zurück-Taste des Handys schließt den Betrachter, bleibt aber auf der Seite.
     page.go_back()
