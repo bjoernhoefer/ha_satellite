@@ -84,7 +84,16 @@ def test_history_endpoints(live_server):
     assert thumb.headers["content-type"] == "image/jpeg"
     assert len(thumb.content) < len(full.content)
 
-    for bad in ("../config.yaml", "_index.json", "nope.png"):
+    # JPEG in voller Größe (Betrachter-Default), gecacht.
+    assert frames[1]["jpeg_url"] == frames[1]["url"][: -len(".png")] + ".jpg"
+    jpeg = httpx.get(live_server.url + frames[1]["jpeg_url"])
+    assert jpeg.status_code == 200 and jpeg.headers["content-type"] == "image/jpeg"
+    assert jpeg.content.startswith(b"\xff\xd8")
+    latest = httpx.get(f"{live_server.url}/regions/wien/latest.jpg")
+    assert latest.status_code == 200 and latest.headers["content-type"] == "image/jpeg"
+    assert httpx.get(f"{live_server.url}/regions/nope/latest.jpg").status_code == 404
+
+    for bad in ("../config.yaml", "_index.json", "nope.png", "nope.jpg", "_index.jpg"):
         assert httpx.get(f"{live_server.url}/regions/wien/history/{bad}").status_code == 404
 
 

@@ -246,6 +246,12 @@ im Namen, Vorschaubilder entfernter Frames räumt der Ringpuffer auf.
 Das GIF wird nur bis 60 Frames vorab erzeugt (PIL hält alle Frames im
 Speicher), darüber nur auf Anfrage; MP4 liest die Frames einzeln.
 
+Die UI nutzt diese Formate: Vorschau je Region = `latest.jpg`, der
+Betrachter hat eine Formatauswahl (`viewer-format`, im Browser per
+`localStorage` gemerkt, im Hash als `f=`): Historie JPEG (Default,
+schnell) oder PNG (Original); Live MJPEG-Stream, MP4-Video (`<video>`,
+zoombar) oder GIF. Das FCI-Archiv bleibt PNG.
+
 ## Betriebsregeln
 
 - **Ein Render-Vorgang zur Zeit**, systemweit (nicht nur pro Region) — via
@@ -304,8 +310,9 @@ Speicher), darüber nur auf Anfrage; MP4 liest die Frames einzeln.
 | `GET /live/{region}` | Merkbare Adresse: öffnet den Live-Stream im Browser |
 | `GET /healthz` | Liveness |
 | `GET /regions/{region}/latest.png` | Neuestes Einzelbild |
+| `GET /regions/{region}/latest.jpg` | Neuestes Einzelbild als gecachtes JPEG (Vorschau in der UI) |
 | `GET /regions/{region}/frames/{i}.png` | Frame `i` aus dem Puffer (`0` = neuester) |
-| `GET /regions/{region}/history/{datei}` | Frame per Dateiname (`?w=240` = JPEG-Vorschaubild, gecacht) |
+| `GET /regions/{region}/history/{datei}` | Frame per Dateiname (`<name>.png` Original, `<name>.jpg` gecachtes JPEG in voller Größe, `?w=240` = JPEG-Vorschaubild) |
 | `GET /regions/{region}/animation.gif` | Animation der Historie (GIF, gecacht) |
 | `GET /regions/{region}/animation.mp4` | dito als MP4 (benötigt `imageio-ffmpeg`) |
 | `GET /regions/{region}/mjpeg` | MJPEG-Stream, loopt die Frames (Home-Assistant-Kamera) |
@@ -337,6 +344,7 @@ ohne Seitenwechsel, Vorschau anklicken → Vollbild-Betrachter füllt den
 Viewport (Desktop **und** Handy-Viewport 390×844 mit Touch, Zurück-Taste
 schließt), Historie blättern/Zeitraffer, Bild per Auswahlliste wählen,
 Zoom im Betrachter (+/−/Reset, Tasten, Ziehen, Desktop + Handy),
+Formatwahl im Betrachter (JPEG/PNG, Live MJPEG/MP4/GIF, Desktop + Handy),
 Live-Stream im Browser inkl.
 Deep-Link `/live/{region}`, Logs ganz unten, Quellen-JSON (eingeklappt,
 editierbar, Validierung), Quellen aktivieren, Abgleich + Übernehmen,

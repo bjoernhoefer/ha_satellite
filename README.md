@@ -80,7 +80,7 @@ gesetzt werden, damit Compose nicht lokal zu bauen versucht.
   Bilder und Warnung bei System-Disk oder nicht persistentem Pfad.
 - **Web-API** (siehe [AGENTS.md](AGENTS.md) für Details):
   `GET/POST /api/config`, `GET /api/status`, `GET /healthz`,
-  `GET /regions/{region}/latest.png`, `GET /regions/{region}/frames/{i}.png`,
+  `GET /regions/{region}/latest.png` (bzw. `latest.jpg`), `GET /regions/{region}/frames/{i}.png`,
   `GET /regions/{region}/animation.gif`, `GET /regions/{region}/animation.mp4`,
   `GET /regions/{region}/mjpeg`.
 - **Web-UI** unter `/` (auch fürs Handy): Vorschaubilder und Historie

@@ -82,7 +82,8 @@
     .viewer[hidden] { display: none; }
     .viewer-stage { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; }
     .viewer-stage { overflow: hidden; }
-    .viewer-stage img { width: 100%; height: 100%; object-fit: contain; display: block; transform-origin: center center; will-change: transform; }
+    .viewer-stage [hidden] { display: none; }
+    .viewer-stage img, .viewer-stage video { width: 100%; height: 100%; object-fit: contain; display: block; transform-origin: center center; will-change: transform; }
     .viewer.zoomed .viewer-stage { cursor: grab; }
     .viewer.zoomed.panning .viewer-stage { cursor: grabbing; }
     .viewer-zoom { display: flex; gap: 0.25rem; align-items: center; }
@@ -128,7 +129,7 @@
         <h3>{{ region.name }}</h3>
         <div class="muted">{{ region.lat }}, {{ region.lon }} · {{ region.radius_km }} km · {{ region.width }}×{{ region.height }} px</div>
         <div class="preview-wrap" data-preview-wrap="{{ region.name }}">
-          <img class="preview" src="/regions/{{ region.name }}/latest.png" alt="{{ region.name }} – neuestes Bild"
+          <img class="preview" src="/regions/{{ region.name }}/latest.jpg" alt="{{ region.name }} – neuestes Bild"
                role="button" tabindex="0" title="Groß anzeigen"
                data-region="{{ region.name }}" data-testid="preview-{{ region.name }}">
           <div class="placeholder">Noch kein Bild vorhanden</div>
@@ -373,6 +374,7 @@
   <div class="viewer" id="viewer" data-testid="viewer" hidden>
     <div class="viewer-stage" id="viewer-stage">
       <img id="viewer-img" data-testid="viewer-image" alt="" draggable="false">
+      <video id="viewer-video" data-testid="viewer-video" muted loop autoplay playsinline hidden></video>
       <div class="viewer-empty" id="viewer-empty" hidden>Keine Bilder vorhanden</div>
       <div class="viewer-loading" id="viewer-loading" data-testid="viewer-loading" hidden>Wird aus den Rohdaten gerendert (ca. 10 s) …</div>
     </div>
@@ -402,6 +404,7 @@
         <option value="{{ name }}">{{ label }}</option>
         {% endfor %}
       </select>
+      <select id="viewer-format" data-testid="viewer-format" title="Format"></select>
       <button type="button" id="viewer-mode" data-testid="viewer-mode">● Live</button>
     </div>
   </div>
@@ -712,7 +715,7 @@
 
     function reloadPreview(region) {
       const img = byTestId("preview-" + region);
-      img.src = "/regions/" + encodeURIComponent(region) + "/latest.png?t=" + Date.now();
+      img.src = "/regions/" + encodeURIComponent(region) + "/latest.jpg?t=" + Date.now();
     }
     document.querySelectorAll("img.preview").forEach((img) => {
       const wrap = img.closest(".preview-wrap");
@@ -914,6 +917,50 @@
     const viewerComposite = byTestId("viewer-composite");
     const frameSelect = byTestId("viewer-frame");
     const stage = document.getElementById("viewer-stage");
+    const viewerVideo = document.getElementById("viewer-video");
+    const formatSelect = byTestId("viewer-format");
+
+    /* Format je Modus: Historie als JPEG (schnell, Default) oder PNG (Original),
+       Live als MJPEG-Stream oder als vorab erzeugte Animation (MP4/GIF). */
+    const FORMATS = {
+      frames: [["jpg", "JPEG · schnell"], ["png", "PNG · Original"]],
+      live: [["mjpeg", "MJPEG-Stream"], ["mp4", "MP4-Video"], ["gif", "GIF-Animation"]],
+    };
+    const FORMAT_KEY = "ha_satellite.viewer.format.";
+    const validFormat = (mode, value) => (FORMATS[mode] || []).some(([key]) => key === value);
+    function loadFormat(mode) {
+      let value = null;
+      try { value = localStorage.getItem(FORMAT_KEY + mode); } catch (err) { /* privater Modus */ }
+      return validFormat(mode, value) ? value : FORMATS[mode][0][0];
+    }
+    const formatPref = { frames: loadFormat("frames"), live: loadFormat("live") };
+    function setFormat(mode, value) {
+      if (!validFormat(mode, value)) return;
+      formatPref[mode] = value;
+      try { localStorage.setItem(FORMAT_KEY + mode, value); } catch (err) { /* privater Modus */ }
+    }
+    function frameUrl(frame) {
+      return vs.mode === "frames" && formatPref.frames === "jpg" && frame.jpeg_url ? frame.jpeg_url : frame.url;
+    }
+    function syncFormatSelect() {
+      const options = FORMATS[vs.mode];
+      formatSelect.hidden = !options;
+      if (!options) return;
+      if (formatSelect.dataset.mode !== vs.mode) {
+        formatSelect.dataset.mode = vs.mode;
+        formatSelect.replaceChildren(...options.map(([value, text]) => el("option", { value, text })));
+      }
+      formatSelect.value = formatPref[vs.mode];
+    }
+    function stopVideo() {
+      if (!viewerVideo.hasAttribute("src") && viewerVideo.hidden) return;
+      viewerVideo.pause();
+      viewerVideo.removeAttribute("src");
+      delete viewerVideo.dataset.src;
+      viewerVideo.load();
+      viewerVideo.hidden = true;
+    }
+    const activeMedia = () => (viewerVideo.hidden ? viewerImg : viewerVideo);
 
     /* Zoom & Verschieben (CSS-Transform auf dem Bild, bleibt beim Blättern erhalten) */
     const ZOOM_STEPS = [1, 1.5, 2, 3, 4, 6, 8];
@@ -921,10 +968,12 @@
     const zoom = { z: 1, x: 0, y: 0 };
     function clampPan() {
       const w = stage.clientWidth, h = stage.clientHeight;
+      const media = activeMedia();
+      const nw = media.naturalWidth || media.videoWidth, nh = media.naturalHeight || media.videoHeight;
       let cw = w, ch = h;
-      if (viewerImg.naturalWidth && viewerImg.naturalHeight) {
-        const r = Math.min(w / viewerImg.naturalWidth, h / viewerImg.naturalHeight);
-        cw = viewerImg.naturalWidth * r; ch = viewerImg.naturalHeight * r;
+      if (nw && nh) {
+        const r = Math.min(w / nw, h / nh);
+        cw = nw * r; ch = nh * r;
       }
       const mx = Math.max(0, (cw * zoom.z - w) / 2), my = Math.max(0, (ch * zoom.z - h) / 2);
       zoom.x = Math.min(mx, Math.max(-mx, zoom.x));
@@ -932,7 +981,9 @@
     }
     function applyZoom() {
       clampPan();
-      viewerImg.style.transform = zoom.z === 1 ? "" : "translate(" + zoom.x + "px, " + zoom.y + "px) scale(" + zoom.z + ")";
+      const media = activeMedia();
+      (media === viewerImg ? viewerVideo : viewerImg).style.transform = "";
+      media.style.transform = zoom.z === 1 ? "" : "translate(" + zoom.x + "px, " + zoom.y + "px) scale(" + zoom.z + ")";
       viewer.classList.toggle("zoomed", zoom.z > 1);
       byTestId("viewer-zoom-reset").textContent = Math.round(zoom.z * 100) + " %";
       byTestId("viewer-zoom-out").disabled = zoom.z <= 1;
@@ -969,7 +1020,7 @@
       if (vs.frames.length < 2) return;
       vs.playing = true;
       byTestId("viewer-play").textContent = "❚❚";
-      vs.frames.forEach((f) => { const img = new Image(); img.src = f.url; });
+      vs.frames.forEach((f) => { const img = new Image(); img.src = frameUrl(f); });
       if (vs.index === 0) vs.index = vs.frames.length - 1;
       clearInterval(vs.timer);
       vs.timer = setInterval(() => {
@@ -982,10 +1033,12 @@
       history.replaceState(history.state, "", url);
     }
     function stateHash() {
-      if (vs.mode === "live") return "live=" + encodeURIComponent(vs.region);
+      if (vs.mode === "live") return "live=" + encodeURIComponent(vs.region)
+        + (formatPref.live !== FORMATS.live[0][0] ? "&f=" + formatPref.live : "");
       if (vs.mode === "archive") return "archive=" + encodeURIComponent(vs.region) + "&i=" + vs.index
         + (vs.composite ? "&c=" + encodeURIComponent(vs.composite) : "");
-      return "view=" + encodeURIComponent(vs.region) + "&i=" + vs.index;
+      return "view=" + encodeURIComponent(vs.region) + "&i=" + vs.index
+        + (formatPref.frames !== FORMATS.frames[0][0] ? "&f=" + formatPref.frames : "");
     }
 
     function syncFrameSelect() {
@@ -1014,6 +1067,7 @@
       // Archiv-Bilder werden bei Bedarf gerendert (~10 s) - kein Zeitraffer.
       for (const id of ["viewer-play", "viewer-speed"]) byTestId(id).hidden = live || archive;
       viewerComposite.hidden = !archive;
+      syncFormatSelect();
       const empty = document.getElementById("viewer-empty");
       empty.textContent = archive
         ? "Keine FCI-Rohdaten im Archiv – MTG-FCI-Quelle unter „Quellen“ aktivieren."
@@ -1021,14 +1075,36 @@
       if (live) {
         viewerLoading.hidden = true;
         empty.hidden = true;
-        const src = "/regions/" + encodeURIComponent(vs.region) + "/mjpeg";
-        if (viewerImg.dataset.stream !== src) {
-          viewerImg.dataset.stream = src;
-          viewerImg.src = src + "?t=" + Date.now();
+        const base = "/regions/" + encodeURIComponent(vs.region);
+        const fmt = formatPref.live;
+        const src = base + (fmt === "mp4" ? "/animation.mp4" : fmt === "gif" ? "/animation.gif" : "/mjpeg");
+        if (fmt === "mp4") {
+          delete viewerImg.dataset.stream;
+          viewerImg.removeAttribute("src");  // beendet einen laufenden MJPEG-Stream
+          viewerImg.hidden = true;
+          viewerVideo.hidden = false;
+          if (viewerVideo.dataset.src !== src) {
+            viewerVideo.dataset.src = src;
+            viewerVideo.src = src + "?t=" + Date.now();
+            viewerVideo.play().catch(() => {});
+          }
+        } else {
+          stopVideo();
+          viewerImg.hidden = false;
+          if (viewerImg.dataset.stream !== src) {
+            viewerImg.dataset.stream = src;
+            viewerImg.src = src + "?t=" + Date.now();
+          }
         }
-        byTestId("viewer-caption").textContent = "Stream (MJPEG, Schleife über die Historie) · " + location.origin + src;
+        const label = { mjpeg: "Stream (MJPEG, Schleife über die Historie)", mp4: "Animation der Historie (MP4)",
+          gif: "Animation der Historie (GIF)" }[fmt];
+        byTestId("viewer-caption").textContent = label + " · " + location.origin + src;
+        applyZoom();
+        if (!vs.playing) setHash(stateHash());
         return;
       }
+      stopVideo();
+      viewerImg.hidden = false;
       delete viewerImg.dataset.stream;
       const frame = vs.frames[vs.index];
       empty.hidden = !!frame;
@@ -1040,12 +1116,14 @@
         byTestId("viewer-position").textContent = "0 / 0";
         return;
       }
-      if (viewerImg.getAttribute("src") !== frame.url) {
+      const url = frameUrl(frame);
+      if (viewerImg.getAttribute("src") !== url) {
         viewerLoading.hidden = !(archive && !frame.cached);
-        viewerImg.src = frame.url;
+        viewerImg.src = url;
       }
       viewerImg.alt = vs.region + " " + frame.created_at;
       byTestId("viewer-caption").textContent = fmtTime(frame.created_at, true) + (vs.index === 0 ? " · neuestes Bild" : "")
+        + (archive ? "" : " · " + (formatPref.frames === "png" || !frame.jpeg_url ? "PNG" : "JPEG"))
         + (archive ? " · MTG FCI · " + (viewerComposite.selectedOptions[0] || {}).textContent : "");
       byTestId("viewer-position").textContent = (vs.frames.length - vs.index) + " / " + vs.frames.length;
       byTestId("viewer-prev").disabled = vs.index >= vs.frames.length - 1;
@@ -1111,6 +1189,8 @@
       document.body.classList.remove("viewer-open");
       delete viewerImg.dataset.stream;
       viewerImg.removeAttribute("src");  // beendet einen laufenden MJPEG-Stream
+      stopVideo();
+      viewerImg.hidden = false;
       resetZoom();
       if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
     }
@@ -1139,6 +1219,18 @@
     viewerComposite.addEventListener("change", () =>
       openViewer({ mode: "archive", region: vs.region, index: vs.index, composite: viewerComposite.value }));
     viewerImg.addEventListener("load", () => { viewerLoading.hidden = true; applyZoom(); });
+    viewerVideo.addEventListener("loadedmetadata", applyZoom);
+    viewerVideo.addEventListener("error", () => {
+      if (!viewerVideo.getAttribute("src")) return;
+      byTestId("viewer-caption").textContent = "MP4 nicht verfügbar – anderes Format wählen.";
+    });
+    formatSelect.addEventListener("change", () => {
+      setFormat(vs.mode, formatSelect.value);
+      const playing = vs.playing;
+      renderViewer();
+      if (playing) startPlaying();  // lädt die Bilder im neuen Format vor
+      setHash(stateHash());
+    });
     frameSelect.addEventListener("change", () => {
       stopPlaying();
       vs.index = parseInt(frameSelect.value, 10) || 0;
@@ -1168,7 +1260,8 @@
 
     document.addEventListener("keydown", (ev) => {
       if (!vs.open) return;
-      if (ev.target === frameSelect || ev.target === viewerComposite || ev.target === byTestId("viewer-speed")) {
+      if (ev.target === frameSelect || ev.target === viewerComposite || ev.target === formatSelect
+          || ev.target === byTestId("viewer-speed")) {
         if (ev.key === "Escape") closeViewer();
         return;  // Pfeiltasten gehören dann der Auswahlliste
       }
@@ -1270,6 +1363,9 @@
       const live = params.get("live");
       const view = params.get("view");
       const archive = params.get("archive");
+      const format = params.get("f");
+      if (format && live) setFormat("live", format);
+      else if (format && view) setFormat("frames", format);
       if (archive && REGIONS.includes(archive)) openViewer({ mode: "archive", region: archive,
         index: parseInt(params.get("i") || "0", 10) || 0, composite: params.get("c") }, true);
       else if (live && REGIONS.includes(live)) openViewer({ mode: "live", region: live }, true);
@@ -1292,6 +1388,7 @@
     const API_REGION = [
       ["live", "/live/{r}", "Live-Stream im Browser"],
       ["latest", "/regions/{r}/latest.png", "Neuestes Einzelbild (PNG)"],
+      ["latest-jpg", "/regions/{r}/latest.jpg", "Neuestes Einzelbild (JPEG, gecacht, schneller)"],
       ["frame0", "/regions/{r}/frames/0.png", "Frame 0 aus dem Puffer (0 = neuester)"],
       ["frames", "/api/regions/{r}/frames", "Historie: alle Frames (JSON)"],
       ["gif", "/regions/{r}/animation.gif", "Animation der Historie (GIF)"],
