@@ -466,6 +466,7 @@ async def list_frames(region_name: str):
                 "created_at": frame.created_at,
                 "source": frame.source,
                 "composite": frame.composite,
+                "borders": frame.borders,
                 "url": f"/regions/{region_name}/history/{frame.filename}",
             }
             for i, frame in enumerate(buffer.frames_newest_first())

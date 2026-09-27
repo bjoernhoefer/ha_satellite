@@ -62,6 +62,7 @@ def test_page_shows_all_core_sections(ui):
         "play-wien",
         "region-source-wien",
         "region-composite-wien",
+        "region-borders-wien",
         "api-region",
         "api-link-latest",
     ):
@@ -458,6 +459,38 @@ def test_change_composite_rerenders_and_updates_preview(ui, live_server):
     latest = live_server.frames("wien")[0]
     assert latest["filename"] not in before
     assert latest["composite"] == "natural_color_hrv"
+
+
+def test_toggle_borders_rerenders(ui, live_server):
+    live_server.ensure_frames("wien", 1)
+    before = {f["filename"] for f in live_server.frames("wien")}
+    box = ui.get_by_test_id("region-borders-wien")
+    expect(box).to_be_checked()
+
+    box.uncheck()
+    expect(ui.get_by_test_id("refresh-message-wien")).to_contain_text("Landesgrenzen ausgeschaltet")
+    regions = {r["name"]: r for r in _stored(live_server)["regions"]}
+    assert regions["wien"]["borders"] is False
+    assert regions["mallorca"]["borders"] is True
+
+    ui.wait_for_function(
+        "(n) => document.querySelectorAll('[data-testid^=\"history-item-wien-\"]').length > n",
+        arg=len(before), timeout=15000,
+    )
+    latest = live_server.frames("wien")[0]
+    assert latest["filename"] not in before
+    assert latest["borders"] is False
+
+    ui.reload()
+    expect(ui.get_by_test_id("region-borders-wien")).not_to_be_checked()
+
+
+def test_borders_checkbox_on_mobile(mobile_page, live_server):
+    mobile_page.goto(live_server.url + "/")
+    box = mobile_page.get_by_test_id("region-borders-wien")
+    expect(box).to_be_visible()
+    box.tap()
+    expect(mobile_page.get_by_test_id("refresh-message-wien")).to_contain_text("Landesgrenzen ausgeschaltet")
 
 
 def test_placeholder_source_is_marked(ui, live_server):

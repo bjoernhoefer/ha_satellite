@@ -29,6 +29,7 @@ src/ha_satellite/
   config.py       Konfigurationsmodell (Pydantic) + YAML-Persistenz + Env-Override,
                    Quellen-Katalog, Speicherort, Historie
   geometry.py      Bounding-Box-Berechnung aus Mittelpunkt + Umkreis
+  overlay.py       Landesgrenzen-Overlay (Natural Earth 1:10m, overlay_data/)
   buffer.py        Ringpuffer (Frames pro Region, Aufräumen, Speicherlimit, Umzug)
   status.py        Status-Speicher (letzter/nächster Lauf, Fehler, Frame-Anzahl)
   scheduler.py     APScheduler-Jobs (nicht-blockierend), Single-Render-Lock,
@@ -115,6 +116,19 @@ zugeschnitten, geladen wird mit `generate=False` (siehe HISTORY.md,
 "HRV-Schärfung"). Funktioniert für Rapid Scan und 0° (Full Disk).
 Richtwerte auf dem Pi 5: ~8–9 s und ~400–450 MB Spitzen-RSS pro Region und
 Lauf.
+
+### Landesgrenzen-Overlay
+
+Pro Region `borders: true` (Default, Checkbox „Landesgrenzen einzeichnen“)
+zeichnet der Render-Kindprozess die Staatsgrenzen gelb mit dunklem Rand ins
+Bild (`overlay.py`), für SEVIRI und FCI (auch Archiv-Renders; der
+Cache-Name enthält den Schalter). Daten: Natural Earth 1:10m
+`admin_0_boundary_lines_land` (gemeinfrei), gepackt in
+`overlay_data/borders_10m.json.gz` (~370 KB, neu erzeugen mit
+`scripts/build_borders.py`). Projiziert wird in dieselbe LAEA wie die
+Zielregion - kein pycoast/GSHHS nötig. Nur Landgrenzen, keine Küsten.
+Umschalten zählt wie ein Kompositwechsel (Frame merkt sich `borders`) und
+rendert sofort neu.
 
 ### MTG FCI und Rohdaten-Archiv (mtg_fci)
 
@@ -291,6 +305,7 @@ Deep-Link `/live/{region}`, Logs ganz unten, Quellen-JSON (eingeklappt,
 editierbar, Validierung), Quellen aktivieren, Abgleich + Übernehmen,
 Speicherort wechseln inkl. Verschieben, kein horizontales Scrollen am Handy,
 Bildtyp/Quelle je Region wechseln (rendert ohne weiteren Klick neu),
+Landesgrenzen je Region ein-/ausschalten (Desktop + Handy),
 Platzhalter-Quellen gekennzeichnet, API-Links folgen dem gewählten Standort
 und sind anklickbar.
 Selektoren laufen ausschließlich über `data-testid` - Markup und Styling

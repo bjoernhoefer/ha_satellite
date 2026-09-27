@@ -150,6 +150,7 @@ class MsgSeviriSource(Source):
             width=region.width,
             height=region.height,
             label=region.name,
+            borders=region.borders,
         )
         try:
             png, sensing_end = render_in_subprocess(request)
@@ -224,6 +225,7 @@ def render_fci_slot(slot, region: RegionConfig, composite: str) -> RenderedFrame
         width=region.width,
         height=region.height,
         label=region.name,
+        borders=region.borders,
     )
     try:
         png, sensing_end = render_in_subprocess(request)

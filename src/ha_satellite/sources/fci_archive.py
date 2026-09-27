@@ -343,6 +343,8 @@ class FciArchive:
 def render_cache_path(slot: Slot, region: RegionConfig, composite: str) -> Path:
     """Cache-Datei für ein bei Bedarf gerendertes Bild (fällt mit dem Slot weg)."""
     geometry = f"{region.lat}|{region.lon}|{region.radius_km}|{region.width}|{region.height}"
+    if region.borders:
+        geometry += "|borders"
     digest = hashlib.sha1(geometry.encode()).hexdigest()[:10]
     return slot.path / RENDERS_SUBDIR / f"{region.name}-{resolve_fci_composite(composite)}-{digest}.png"
 

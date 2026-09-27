@@ -157,6 +157,11 @@
           <option value="{{ region.composite }}" selected>{{ region.composite }}</option>
           {% endif %}
         </select>
+        <label class="inline">
+          <input type="checkbox" class="region-borders" data-region="{{ region.name }}"
+                 data-testid="region-borders-{{ region.name }}" {% if region.borders %}checked{% endif %}>
+          Landesgrenzen einzeichnen
+        </label>
         <div class="warning" data-testid="region-warning-{{ region.name }}"
              {% if config.sources.is_enabled(region.source) %}hidden{% endif %}>
           Quelle deaktiviert – keine automatischen Läufe, nur „Jetzt aktualisieren“.</div>
@@ -657,6 +662,10 @@
         fillCompositeSelect(compositeSelect, driver, patch.composite || compositeSelect.value);
         saveRegionPatch(region, patch, patch.composite ? "Quelle und Bildtyp gespeichert" : "Quelle gespeichert");
       });
+    });
+    document.querySelectorAll("input.region-borders").forEach((box) => {
+      box.addEventListener("change", () => saveRegionField(box.dataset.region, "borders", box.checked,
+        box.checked ? "Landesgrenzen eingeschaltet" : "Landesgrenzen ausgeschaltet"));
     });
     document.querySelectorAll("select.region-composite").forEach((select) => {
       select.addEventListener("change", () => saveRegionField(select.dataset.region, "composite", select.value, "Bildtyp gespeichert"));
