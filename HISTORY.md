@@ -1,5 +1,15 @@
 # HISTORY.md — Chronik und Fallstricke
 
+## Landesgrenzen im Bild
+
+**Ziel:** Orientierung in Binnenregionen (Wien) - bei Mallorca zeigt die
+Küste, wo man ist. pycoast wurde verworfen: braucht den GSHHS/WDBII-Datensatz
+(~150 MB Download zur Laufzeit oder im Image). Stattdessen Natural Earth
+1:10m Landgrenzen, auf ~100 m gerundet und gzip-gepackt (~370 KB) im Paket,
+mit pyproj in die LAEA der Region projiziert und per PIL gezeichnet.
+Punkte außerhalb von 1,5 × Radius werden verworfen (Linie aufgetrennt),
+damit keine riesigen Pixelwerte entstehen.
+
 ## MTG FCI mit Rohdaten-Archiv (Europa-Chunks)
 
 **Ziel:** schärfere Bilder als SEVIRI (FCI: 1 km sichtbar, 2 km IR) ohne

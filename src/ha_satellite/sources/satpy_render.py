@@ -47,6 +47,7 @@ class RenderRequest:
     width: int
     height: int
     label: str
+    borders: bool = False
 
 
 def source_window(source_area, target_area, margin: int = WINDOW_MARGIN_PX):
@@ -157,6 +158,10 @@ def render_png(request: RenderRequest) -> tuple[bytes, datetime]:
 
     pil_image = get_enhanced_image(data).pil_image().convert("RGB")
     sensing_end = data.attrs["end_time"]
+    if request.borders:
+        from ha_satellite.overlay import draw_borders
+
+        draw_borders(pil_image, request.lat, request.lon, request.radius_km)
     _annotate(pil_image, f"{request.label} · {sensing_end:%Y-%m-%d %H:%M} UTC · {request.composite}")
     out = BytesIO()
     pil_image.save(out, format="PNG", optimize=True)

@@ -31,6 +31,7 @@ class Frame:
     # zählt nur der neueste Frame derselben Herkunft als "bereits gerendert".
     source: str | None = None
     composite: str | None = None
+    borders: bool | None = None
 
     def as_dict(self) -> dict:
         data = {"filename": self.filename, "created_at": self.created_at}
@@ -38,6 +39,8 @@ class Frame:
             data["source"] = self.source
         if self.composite is not None:
             data["composite"] = self.composite
+        if self.borders is not None:
+            data["borders"] = self.borders
         return data
 
     def path(self, region_dir: Path) -> Path:
@@ -72,7 +75,7 @@ class RingBuffer:
             raw = json.loads(index_path.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError):
             return []
-        known = {"filename", "created_at", "source", "composite"}
+        known = {"filename", "created_at", "source", "composite", "borders"}
         frames = [Frame(**{k: v for k, v in entry.items() if k in known}) for entry in raw]
         # Nur Frames behalten, deren Datei tatsächlich existiert.
         return [f for f in frames if f.path(self.region_dir).exists()]
@@ -88,6 +91,7 @@ class RingBuffer:
         timestamp: datetime | None = None,
         source: str | None = None,
         composite: str | None = None,
+        borders: bool | None = None,
     ) -> Frame:
         """Fügt einen neuen Frame (PNG-Bytes) als neuesten hinzu und räumt auf.
 
@@ -105,7 +109,8 @@ class RingBuffer:
                 counter += 1
             (self.region_dir / filename).write_bytes(data)
             frame = Frame(
-                filename=filename, created_at=ts.isoformat(), source=source, composite=composite
+                filename=filename, created_at=ts.isoformat(), source=source, composite=composite,
+                borders=borders,
             )
             self._frames.append(frame)
             self._cleanup()

@@ -171,6 +171,7 @@ def test_msg_seviri_renders_new_product(tmp_path, monkeypatch, config):
     assert seen["request"].filenames == (str(product.path),)
     assert seen["request"].composite == config.regions[0].composite
     assert seen["request"].reader == "seviri_l1b_native"
+    assert seen["request"].borders is True
 
 
 def test_msg_seviri_skips_already_rendered_product(tmp_path, monkeypatch, config):
@@ -449,6 +450,17 @@ def test_switching_source_or_composite_renders_even_older_product(tmp_path, monk
     scheduler._run_region("wien")
     assert buffer().latest().source == "msg_seviri"
     assert len(buffer()) == 4
+
+    # Landesgrenzen ausschalten: gleiche Aufnahme, trotzdem neues Bild.
+    calls = len(source.calls)
+    _switch(store, borders=False)
+    scheduler._run_region("wien")
+    assert source.calls[calls][2] is None
+    assert buffer().latest().borders is False
+    newest = buffer().latest().filename
+    scheduler._run_region("wien")
+    assert source.calls[calls + 1][2] is not None
+    assert buffer().latest().filename == newest
 
 
 def test_reload_keeps_schedule_of_unchanged_regions(tmp_path):

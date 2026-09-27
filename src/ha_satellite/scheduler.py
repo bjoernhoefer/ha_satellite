@@ -218,6 +218,7 @@ class RenderScheduler:
                 latest is not None
                 and latest.source == region.source
                 and latest.composite == region.composite
+                and bool(latest.borders) == region.borders
             )
             last_sensing = _parse_timestamp(latest.created_at) if same_origin else None
             try:
@@ -230,6 +231,7 @@ class RenderScheduler:
                     timestamp=rendered.sensing_time,
                     source=region.source,
                     composite=region.composite,
+                    borders=region.borders,
                 )
                 logger.info(
                     "Render %s fertig in %.1f s: %s (%d KB), %d Frames im Puffer",

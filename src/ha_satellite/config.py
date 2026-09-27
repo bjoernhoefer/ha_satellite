@@ -133,6 +133,8 @@ class RegionConfig(BaseModel):
     # Verweist auf die ``id`` eines Eintrags im Quellen-Katalog.
     source: str = "msg_seviri"
     max_frames: int | None = None
+    # Landesgrenzen ins Bild zeichnen (Natural Earth 1:10m, siehe overlay.py).
+    borders: bool = True
 
     @field_validator("name")
     @classmethod
