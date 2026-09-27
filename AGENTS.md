@@ -300,7 +300,9 @@ Secret bleibt maskiert und beim Speichern ohne Neueingabe erhalten,
 Env-Override sperrt die Felder, Intervall speichern, "Jetzt aktualisieren"
 ohne Seitenwechsel, Vorschau anklicken → Vollbild-Betrachter füllt den
 Viewport (Desktop **und** Handy-Viewport 390×844 mit Touch, Zurück-Taste
-schließt), Historie blättern/Zeitraffer, Live-Stream im Browser inkl.
+schließt), Historie blättern/Zeitraffer, Bild per Auswahlliste wählen,
+Zoom im Betrachter (+/−/Reset, Tasten, Ziehen, Desktop + Handy),
+Live-Stream im Browser inkl.
 Deep-Link `/live/{region}`, Logs ganz unten, Quellen-JSON (eingeklappt,
 editierbar, Validierung), Quellen aktivieren, Abgleich + Übernehmen,
 Speicherort wechseln inkl. Verschieben, kein horizontales Scrollen am Handy,

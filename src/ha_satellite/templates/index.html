@@ -81,7 +81,14 @@
     .viewer { position: fixed; inset: 0; z-index: 1000; background: #000; color: #fff; height: 100vh; height: 100dvh; width: 100vw; touch-action: none; user-select: none; -webkit-user-select: none; }
     .viewer[hidden] { display: none; }
     .viewer-stage { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; }
-    .viewer-stage img { width: 100%; height: 100%; object-fit: contain; display: block; }
+    .viewer-stage { overflow: hidden; }
+    .viewer-stage img { width: 100%; height: 100%; object-fit: contain; display: block; transform-origin: center center; will-change: transform; }
+    .viewer.zoomed .viewer-stage { cursor: grab; }
+    .viewer.zoomed.panning .viewer-stage { cursor: grabbing; }
+    .viewer-zoom { display: flex; gap: 0.25rem; align-items: center; }
+    .viewer-bar .viewer-zoom button { padding: 0.45rem 0.6rem; min-width: 40px; }
+    .viewer-bar #viewer-zoom-reset { min-width: 4.2rem; }
+    .viewer-bar #viewer-frame { max-width: 11rem; }
     .viewer-bar { position: absolute; left: 0; right: 0; display: flex; gap: 0.5rem; align-items: center; padding: 0.5rem 0.7rem; background: linear-gradient(rgba(0,0,0,.75), rgba(0,0,0,.35)); transition: opacity 0.2s; flex-wrap: wrap; }
     .viewer-top { top: 0; padding-top: max(0.5rem, env(safe-area-inset-top)); }
     .viewer-bottom { bottom: 0; justify-content: center; padding-bottom: max(0.6rem, env(safe-area-inset-bottom)); background: linear-gradient(rgba(0,0,0,.35), rgba(0,0,0,.75)); }
@@ -98,6 +105,7 @@
       main { padding: 0.6rem; }
       section { padding: 0.8rem; }
       .viewer-bar button, .viewer-bar select { padding: 0.45rem 0.6rem; }
+      .viewer-bar #viewer-frame { max-width: 8.5rem; }
       .hide-mobile { display: none; }
     }
   </style>
@@ -362,18 +370,24 @@
 
   <div class="viewer" id="viewer" data-testid="viewer" hidden>
     <div class="viewer-stage" id="viewer-stage">
-      <img id="viewer-img" data-testid="viewer-image" alt="">
+      <img id="viewer-img" data-testid="viewer-image" alt="" draggable="false">
       <div class="viewer-empty" id="viewer-empty" hidden>Keine Bilder vorhanden</div>
       <div class="viewer-loading" id="viewer-loading" data-testid="viewer-loading" hidden>Wird aus den Rohdaten gerendert (ca. 10 s) …</div>
     </div>
     <div class="viewer-bar viewer-top">
       <div class="viewer-title"><span id="viewer-live-badge" class="live-badge" hidden>LIVE</span><span id="viewer-region"></span>
         <small data-testid="viewer-caption" id="viewer-caption"></small></div>
+      <div class="viewer-zoom">
+        <button type="button" id="viewer-zoom-out" data-testid="viewer-zoom-out" title="Verkleinern (−)">−</button>
+        <button type="button" id="viewer-zoom-reset" data-testid="viewer-zoom-reset" title="Zoom zurücksetzen (0)">100 %</button>
+        <button type="button" id="viewer-zoom-in" data-testid="viewer-zoom-in" title="Vergrößern (+)">+</button>
+      </div>
       <button type="button" id="viewer-fullscreen" data-testid="viewer-fullscreen" title="Vollbild" hidden>⛶</button>
       <button type="button" id="viewer-close" data-testid="viewer-close" title="Schließen (Esc)">✕</button>
     </div>
     <div class="viewer-bar viewer-bottom" id="viewer-controls">
       <button type="button" id="viewer-prev" data-testid="viewer-prev" title="Älter (←)">◀ älter</button>
+      <select id="viewer-frame" data-testid="viewer-frame" title="Bild auswählen"></select>
       <span id="viewer-position" data-testid="viewer-position"></span>
       <button type="button" id="viewer-next" data-testid="viewer-next" title="Neuer (→)">neuer ▶</button>
       <button type="button" id="viewer-play" data-testid="viewer-play" title="Zeitraffer (Leertaste)">▶</button>
@@ -876,6 +890,52 @@
     const vs = { open: false, mode: "frames", region: null, index: 0, frames: [], playing: false, timer: null, pushed: false, composite: null };
     const viewerLoading = document.getElementById("viewer-loading");
     const viewerComposite = byTestId("viewer-composite");
+    const frameSelect = byTestId("viewer-frame");
+    const stage = document.getElementById("viewer-stage");
+
+    /* Zoom & Verschieben (CSS-Transform auf dem Bild, bleibt beim Blättern erhalten) */
+    const ZOOM_STEPS = [1, 1.5, 2, 3, 4, 6, 8];
+    const ZOOM_MAX = ZOOM_STEPS[ZOOM_STEPS.length - 1];
+    const zoom = { z: 1, x: 0, y: 0 };
+    function clampPan() {
+      const w = stage.clientWidth, h = stage.clientHeight;
+      let cw = w, ch = h;
+      if (viewerImg.naturalWidth && viewerImg.naturalHeight) {
+        const r = Math.min(w / viewerImg.naturalWidth, h / viewerImg.naturalHeight);
+        cw = viewerImg.naturalWidth * r; ch = viewerImg.naturalHeight * r;
+      }
+      const mx = Math.max(0, (cw * zoom.z - w) / 2), my = Math.max(0, (ch * zoom.z - h) / 2);
+      zoom.x = Math.min(mx, Math.max(-mx, zoom.x));
+      zoom.y = Math.min(my, Math.max(-my, zoom.y));
+    }
+    function applyZoom() {
+      clampPan();
+      viewerImg.style.transform = zoom.z === 1 ? "" : "translate(" + zoom.x + "px, " + zoom.y + "px) scale(" + zoom.z + ")";
+      viewer.classList.toggle("zoomed", zoom.z > 1);
+      byTestId("viewer-zoom-reset").textContent = Math.round(zoom.z * 100) + " %";
+      byTestId("viewer-zoom-out").disabled = zoom.z <= 1;
+      byTestId("viewer-zoom-in").disabled = zoom.z >= ZOOM_MAX;
+      viewer.dataset.zoom = String(zoom.z);
+    }
+    // (px, py): Punkt relativ zur Bühnenmitte, der beim Zoomen an seiner Stelle bleibt.
+    function zoomAt(z, px = 0, py = 0) {
+      z = Math.min(ZOOM_MAX, Math.max(1, z));
+      const f = z / zoom.z;
+      zoom.x = px - (px - zoom.x) * f;
+      zoom.y = py - (py - zoom.y) * f;
+      zoom.z = z;
+      if (z === 1) { zoom.x = 0; zoom.y = 0; }
+      applyZoom();
+    }
+    function zoomStep(dir) {
+      const next = dir > 0 ? ZOOM_STEPS.find((s) => s > zoom.z + 1e-6) : [...ZOOM_STEPS].reverse().find((s) => s < zoom.z - 1e-6);
+      zoomAt(next === undefined ? (dir > 0 ? ZOOM_MAX : 1) : next);
+    }
+    function resetZoom() { zoomAt(1); }
+    function stagePoint(clientX, clientY) {
+      const r = stage.getBoundingClientRect();
+      return [clientX - r.left - r.width / 2, clientY - r.top - r.height / 2];
+    }
 
     function stopPlaying() {
       vs.playing = false;
@@ -906,13 +966,29 @@
       return "view=" + encodeURIComponent(vs.region) + "&i=" + vs.index;
     }
 
+    function syncFrameSelect() {
+      // Optionen nur neu aufbauen, wenn sich die Frame-Liste geändert hat (Zeitraffer bleibt flüssig).
+      const key = vs.mode + "|" + vs.frames.map((f) => f.url).join("|");
+      if (frameSelect.dataset.key !== key) {
+        frameSelect.dataset.key = key;
+        const label = (iso) => {
+          const d = new Date(iso);
+          return isNaN(d) ? iso : d.toLocaleString("de-AT", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
+        };
+        frameSelect.replaceChildren(...vs.frames.map((f, i) => el("option", { value: String(i),
+          text: label(f.created_at) + (i === 0 ? " (neuestes)" : "") })));
+      }
+      frameSelect.disabled = !vs.frames.length;
+      if (vs.frames.length) frameSelect.value = String(vs.index);
+    }
+
     function renderViewer() {
       const live = vs.mode === "live";
       const archive = vs.mode === "archive";
       document.getElementById("viewer-region").textContent = vs.region + (archive ? " · FCI-Archiv" : "");
       document.getElementById("viewer-live-badge").hidden = !live;
       byTestId("viewer-mode").textContent = live || archive ? "Historie" : "● Live";
-      for (const id of ["viewer-prev", "viewer-next", "viewer-position"]) byTestId(id).hidden = live;
+      for (const id of ["viewer-prev", "viewer-next", "viewer-position", "viewer-frame"]) byTestId(id).hidden = live;
       // Archiv-Bilder werden bei Bedarf gerendert (~10 s) - kein Zeitraffer.
       for (const id of ["viewer-play", "viewer-speed"]) byTestId(id).hidden = live || archive;
       viewerComposite.hidden = !archive;
@@ -934,6 +1010,7 @@
       delete viewerImg.dataset.stream;
       const frame = vs.frames[vs.index];
       empty.hidden = !!frame;
+      syncFrameSelect();
       if (!frame) {
         viewerLoading.hidden = true;
         viewerImg.removeAttribute("src");
@@ -966,6 +1043,7 @@
 
     async function openViewer({ mode, region, index = 0, play = false, composite = null }, fromHash = false) {
       stopPlaying();
+      if (!vs.open || vs.region !== region) resetZoom();
       vs.mode = mode; vs.region = region; vs.index = index;
       if (!vs.open) {
         vs.open = true;
@@ -1011,6 +1089,7 @@
       document.body.classList.remove("viewer-open");
       delete viewerImg.dataset.stream;
       viewerImg.removeAttribute("src");  // beendet einen laufenden MJPEG-Stream
+      resetZoom();
       if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
     }
     function closeViewer() {
@@ -1037,7 +1116,16 @@
       openViewer({ mode: vs.mode === "frames" ? "live" : "frames", region: vs.region, index: 0 }));
     viewerComposite.addEventListener("change", () =>
       openViewer({ mode: "archive", region: vs.region, index: vs.index, composite: viewerComposite.value }));
-    viewerImg.addEventListener("load", () => { viewerLoading.hidden = true; });
+    viewerImg.addEventListener("load", () => { viewerLoading.hidden = true; applyZoom(); });
+    frameSelect.addEventListener("change", () => {
+      stopPlaying();
+      vs.index = parseInt(frameSelect.value, 10) || 0;
+      renderViewer();
+    });
+    byTestId("viewer-zoom-in").addEventListener("click", () => zoomStep(1));
+    byTestId("viewer-zoom-out").addEventListener("click", () => zoomStep(-1));
+    byTestId("viewer-zoom-reset").addEventListener("click", resetZoom);
+    window.addEventListener("resize", () => { if (vs.open) applyZoom(); });
     viewerImg.addEventListener("error", async () => {
       viewerLoading.hidden = true;
       if (vs.mode !== "archive" || !viewerImg.getAttribute("src")) return;
@@ -1058,30 +1146,102 @@
 
     document.addEventListener("keydown", (ev) => {
       if (!vs.open) return;
+      if (ev.target === frameSelect || ev.target === viewerComposite || ev.target === byTestId("viewer-speed")) {
+        if (ev.key === "Escape") closeViewer();
+        return;  // Pfeiltasten gehören dann der Auswahlliste
+      }
       if (ev.key === "Escape") closeViewer();
       else if (ev.key === "ArrowLeft") step(1);
       else if (ev.key === "ArrowRight") step(-1);
+      else if (ev.key === "+" || ev.key === "=") zoomStep(1);
+      else if (ev.key === "-") zoomStep(-1);
+      else if (ev.key === "0") resetZoom();
       else if (ev.key === " " && vs.mode === "frames") { ev.preventDefault(); vs.playing ? stopPlaying() : startPlaying(); }
     });
 
-    // Touch: Wischen links/rechts blättert, Tippen blendet die Bedienelemente aus/ein.
+    // Touch: Wischen links/rechts blättert, Tippen blendet die Bedienelemente aus/ein,
+    // zwei Finger zoomen, gezoomt verschiebt ein Finger das Bild.
     let touchStart = null;
-    const stage = document.getElementById("viewer-stage");
+    let pinch = null;
+    const touchDist = (a, b) => Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
     stage.addEventListener("touchstart", (ev) => {
-      if (ev.touches.length === 1) touchStart = { x: ev.touches[0].clientX, y: ev.touches[0].clientY, t: Date.now() };
-      else touchStart = null;
+      if (ev.touches.length === 2) {
+        const [a, b] = ev.touches;
+        pinch = { dist: touchDist(a, b) || 1 };
+        touchStart = null;
+      } else if (ev.touches.length === 1 && !pinch) {
+        touchStart = { x: ev.touches[0].clientX, y: ev.touches[0].clientY, t: Date.now(), ox: zoom.x, oy: zoom.y };
+      }
     }, { passive: true });
+    stage.addEventListener("touchmove", (ev) => {
+      if (pinch && ev.touches.length === 2) {
+        const [a, b] = ev.touches;
+        const dist = touchDist(a, b) || 1;
+        const [px, py] = stagePoint((a.clientX + b.clientX) / 2, (a.clientY + b.clientY) / 2);
+        zoomAt(zoom.z * dist / pinch.dist, px, py);
+        pinch.dist = dist;
+        ev.preventDefault();
+      } else if (touchStart && zoom.z > 1 && ev.touches.length === 1) {
+        zoom.x = touchStart.ox + ev.touches[0].clientX - touchStart.x;
+        zoom.y = touchStart.oy + ev.touches[0].clientY - touchStart.y;
+        applyZoom();
+        ev.preventDefault();
+      }
+    }, { passive: false });
     stage.addEventListener("touchend", (ev) => {
+      if (pinch) {
+        if (ev.touches.length === 0) pinch = null;
+        touchStart = null;
+        ev.preventDefault();
+        return;
+      }
       if (!touchStart) return;
       const t = ev.changedTouches[0];
       const dx = t.clientX - touchStart.x, dy = t.clientY - touchStart.y;
       touchStart = null;
-      if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy)) step(dx < 0 ? -1 : 1);
+      const tap = Math.abs(dx) < 10 && Math.abs(dy) < 10;
+      if (zoom.z > 1) { if (tap) viewer.classList.toggle("controls-hidden"); }
+      else if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy)) step(dx < 0 ? -1 : 1);
       else if (Math.abs(dy) > 80 && dy > 0) closeViewer();
-      else if (Math.abs(dx) < 10 && Math.abs(dy) < 10) viewer.classList.toggle("controls-hidden");
+      else if (tap) viewer.classList.toggle("controls-hidden");
       ev.preventDefault();
     });
-    stage.addEventListener("click", () => viewer.classList.toggle("controls-hidden"));
+
+    // Maus: Rad zoomt an der Mausposition, Ziehen verschiebt, Doppelklick zoomt 2× / zurück.
+    let drag = null;
+    let suppressClick = false;
+    stage.addEventListener("wheel", (ev) => {
+      ev.preventDefault();
+      const [px, py] = stagePoint(ev.clientX, ev.clientY);
+      zoomAt(zoom.z * (ev.deltaY < 0 ? 1.25 : 0.8), px, py);
+    }, { passive: false });
+    stage.addEventListener("pointerdown", (ev) => {
+      if (ev.pointerType !== "mouse" || ev.button !== 0 || zoom.z <= 1) return;
+      drag = { x: ev.clientX, y: ev.clientY, ox: zoom.x, oy: zoom.y, moved: false };
+      viewer.classList.add("panning");
+      ev.preventDefault();
+    });
+    window.addEventListener("pointermove", (ev) => {
+      if (!drag) return;
+      const dx = ev.clientX - drag.x, dy = ev.clientY - drag.y;
+      if (Math.abs(dx) + Math.abs(dy) > 4) drag.moved = true;
+      zoom.x = drag.ox + dx; zoom.y = drag.oy + dy;
+      applyZoom();
+    });
+    window.addEventListener("pointerup", () => {
+      if (!drag) return;
+      suppressClick = drag.moved;
+      drag = null;
+      viewer.classList.remove("panning");
+    });
+    stage.addEventListener("click", () => {
+      if (suppressClick) { suppressClick = false; return; }
+      viewer.classList.toggle("controls-hidden");
+    });
+    stage.addEventListener("dblclick", (ev) => {
+      const [px, py] = stagePoint(ev.clientX, ev.clientY);
+      zoomAt(zoom.z > 1 ? 1 : 2, px, py);
+    });
 
     function applyHash() {
       const params = new URLSearchParams(location.hash.replace(/^#/, ""));
