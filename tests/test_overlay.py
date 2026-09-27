@@ -27,10 +27,24 @@ def test_island_without_land_borders_stays_empty():
     assert border_segments(39.6, 2.9, 100, 800, 800) == []  # Mallorca
 
 
-def test_draw_borders_changes_pixels():
-    image = Image.new("RGB", (400, 400), (40, 60, 90))
+def test_austrian_states_near_wien():
+    points = [p for s in border_segments(*WIEN, 800, 800, kind="state_lines") for p in s]
+    # Wien ist ein eigenes Bundesland: Grenze zu Niederösterreich rund um die Bildmitte.
+    assert any(abs(x - 400) < 15 and abs(y - 400) < 15 for x, y in points)
+    # Nur Österreich: in Mallorca keine Verwaltungsgrenzen.
+    assert border_segments(39.6, 2.9, 100, 800, 800, kind="state_lines") == []
+
+
+def test_draw_borders_draws_thin_translucent_lines():
+    background = (40, 60, 90)
+    image = Image.new("RGB", (800, 800), background)
     draw_borders(image, *WIEN)
-    assert (255, 215, 0) in {color for _, color in image.getcolors(maxcolors=10000)}
+    colors = {color for _, color in image.getcolors(maxcolors=100000)}
+    assert len(colors) >= 3  # Hintergrund, Staats- und Bundesländergrenzen
+    # Transparent: kein volles Gelb, kein schwarzer Rand mehr.
+    assert (255, 215, 0) not in colors
+    assert (0, 0, 0) not in colors
+    assert image.mode == "RGB"
 
 
 def test_region_draws_borders_by_default():

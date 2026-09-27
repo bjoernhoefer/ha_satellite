@@ -10,6 +10,10 @@ mit pyproj in die LAEA der Region projiziert und per PIL gezeichnet.
 Punkte außerhalb von 1,5 × Radius werden verworfen (Linie aufgetrennt),
 damit keine riesigen Pixelwerte entstehen.
 
+Nachbesserung nach Rollout: 1-px-Gelb mit 3-px-Schwarzrand wirkte zu dick →
+nur noch 1 px ohne Rand, per Alpha-Layer leicht transparent; dazu die
+österreichischen Bundesländer (Natural Earth admin_1, nur AUT) blasser.
+
 ## MTG FCI mit Rohdaten-Archiv (Europa-Chunks)
 
 **Ziel:** schärfere Bilder als SEVIRI (FCI: 1 km sichtbar, 2 km IR) ohne

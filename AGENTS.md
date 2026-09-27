@@ -120,13 +120,15 @@ Lauf.
 ### Landesgrenzen-Overlay
 
 Pro Region `borders: true` (Default, Checkbox „Landesgrenzen einzeichnen“)
-zeichnet der Render-Kindprozess die Staatsgrenzen gelb mit dunklem Rand ins
+zeichnet der Render-Kindprozess die Staatsgrenzen (gelb) und die
+österreichischen Bundesländer (blasser) je 1 px leicht transparent ins
 Bild (`overlay.py`), für SEVIRI und FCI (auch Archiv-Renders; der
 Cache-Name enthält den Schalter). Daten: Natural Earth 1:10m
-`admin_0_boundary_lines_land` (gemeinfrei), gepackt in
+`admin_0_boundary_lines_land` + `admin_1_states_provinces_lines` (nur
+`STATE_COUNTRIES` = AUT, gemeinfrei), gepackt in
 `overlay_data/borders_10m.json.gz` (~370 KB, neu erzeugen mit
 `scripts/build_borders.py`). Projiziert wird in dieselbe LAEA wie die
-Zielregion - kein pycoast/GSHHS nötig. Nur Landgrenzen, keine Küsten.
+Zielregion - kein pycoast/GSHHS nötig. Keine Küstenlinien.
 Umschalten zählt wie ein Kompositwechsel (Frame merkt sich `borders`) und
 rendert sofort neu.
 
