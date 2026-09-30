@@ -1,4 +1,4 @@
-"""Thread-sicherer Status-Speicher (letzter/nächster Lauf, Fehler)."""
+"""Thread-safe status store (last/next run, errors)."""
 
 from __future__ import annotations
 

@@ -1,23 +1,26 @@
 # syntax=docker/dockerfile:1
 
-# Basis-Image: mambaorg/micromamba statt "python:3.12-slim" + pip.
+# Base image: mambaorg/micromamba instead of "python:3.12-slim" + pip.
 #
-# Begründung (siehe auch HISTORY.md): Die geplante Satpy-Rendering-Kette
-# (Phase 2) benötigt pyresample, pykdtree und pyproj. Diese Pakete
-# kompilieren auf ARM64 (Raspberry Pi 5) aus dem PyPI-Sdist heraus sehr
-# langsam (pykdtree/pyresample bauen native Erweiterungen, pyproj bringt
-# PROJ als C-Bibliothek mit) und benötigen zusätzliche System-Header, die
-# in schlanken Images nicht vorhanden sind. conda-forge stellt für all
-# diese Pakete fertige linux-aarch64-Builds bereit, wodurch micromamba
-# (ein schlanker, statisch gelinkter conda-Ersatz ohne den Overhead von
-# Anaconda) den ARM64-Build drastisch beschleunigt und reproduzierbar
-# macht.
+# Rationale (see also HISTORY.md): the Satpy rendering chain needs
+# pyresample, pykdtree and pyproj. On ARM64 (e.g. Raspberry Pi 5) these
+# packages compile very slowly from the PyPI sdist (pykdtree/pyresample
+# build native extensions, pyproj ships PROJ as a C library) and need extra
+# system headers that slim images lack. conda-forge provides ready-made
+# linux-aarch64 builds for all of them, so micromamba (a lean, statically
+# linked conda replacement without the Anaconda overhead) speeds up the
+# ARM64 build drastically and makes it reproducible.
 #
-# Stand Phase 2: Inzwischen liefert PyPI für alle diese Pakete fertige
-# manylinux-aarch64-Wheels, während conda-forge für trollimage (Satpy-
-# Abhängigkeit) keine aktuelle linux-aarch64-Version führt. Die Satpy-Kette
-# kommt daher per pip aus den Wheels; conda-forge stellt nur Python selbst.
+# Current state: PyPI now ships manylinux-aarch64 wheels for all these
+# packages, while conda-forge has no current linux-aarch64 build of
+# trollimage (a Satpy dependency). The Satpy chain is therefore installed
+# via pip from wheels; conda-forge only provides Python itself.
 FROM mambaorg/micromamba:1.5-bookworm
+
+ARG VERSION=dev
+LABEL org.opencontainers.image.version=$VERSION \
+      org.opencontainers.image.source=https://github.com/bjoernhoefer/ha_satellite \
+      org.opencontainers.image.licenses=MIT
 
 USER root
 WORKDIR /app
@@ -34,13 +37,13 @@ RUN micromamba install -y -n base -c conda-forge python=3.12 pip && \
 COPY pyproject.toml README.md /app/
 COPY src /app/src
 
-# --only-binary: nie aus dem Sdist kompilieren (auf dem Pi/unter QEMU
-# extrem langsam) - fehlt ein Wheel, soll der Build sofort scheitern.
+# --only-binary: never compile from an sdist (extremely slow on ARM/under
+# QEMU) - if a wheel is missing, the build should fail immediately.
 RUN micromamba run -n base pip install --no-cache-dir \
         --only-binary=numpy,pyproj,pyresample,pykdtree,trollimage,pillow,netCDF4,cftime .
 
-# Healthchecks und `docker exec` durchlaufen das Entrypoint nicht, d. h. die
-# conda-Umgebung ist dort nicht aktiviert und `python3` läge nicht im PATH.
+# Healthchecks and `docker exec` bypass the entrypoint, i.e. the conda
+# environment is not activated there and `python3` would not be on PATH.
 RUN ln -sf /opt/conda/bin/python /usr/local/bin/python3
 
 RUN mkdir -p /data/frames /data/cache /data/satpy && chown -R $MAMBA_USER:$MAMBA_USER /data

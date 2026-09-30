@@ -1,9 +1,9 @@
-"""Klicktests für die Web-UI (Playwright, echter Browser).
+"""Click tests for the web UI (Playwright, real browser).
 
-Diese Tests sichern die Grundfunktionen der Konfigurationsseite ab, damit
-Layout- oder Styling-Änderungen sie nicht unbemerkt brechen. Selektoren
-laufen ausschließlich über ``data-testid``-Attribute - das Markup darf sich
-also frei ändern, solange diese IDs erhalten bleiben.
+These tests guard the core functions of the configuration page so layout or
+styling changes cannot silently break them. Selectors use ``data-testid``
+attributes exclusively - the markup may change freely as long as these IDs
+are kept.
 """
 
 from __future__ import annotations
@@ -15,8 +15,8 @@ import re
 import pytest
 import yaml
 
-# Lokal ohne Playwright überspringen; in CI (HA_SATELLITE_REQUIRE_UI_TESTS=1)
-# muss ein fehlendes Playwright hart fehlschlagen statt still zu skippen.
+# Skip locally without Playwright; in CI (HA_SATELLITE_REQUIRE_UI_TESTS=1)
+# a missing Playwright must fail hard instead of silently skipping.
 if os.environ.get("HA_SATELLITE_REQUIRE_UI_TESTS"):
     import playwright.sync_api as playwright_api
 else:
@@ -28,12 +28,12 @@ pytestmark = pytest.mark.ui
 
 @pytest.fixture
 def ui(page, live_server):
-    """Öffnet die UI und schlägt fehl, sobald JS-Fehler auftreten."""
+    """Opens the UI and fails as soon as JS errors occur."""
     errors: list[str] = []
     page.on("pageerror", lambda exc: errors.append(str(exc)))
     page.goto(live_server.url + "/")
     yield page
-    assert errors == [], f"JavaScript-Fehler in der UI: {errors}"
+    assert errors == [], f"JavaScript errors in the UI: {errors}"
 
 
 def _stored_credentials(server) -> dict:
@@ -77,7 +77,7 @@ def test_enter_and_save_credentials(ui, live_server):
     ui.get_by_test_id("consumer-secret").fill("my-consumer-secret-ABCD")
     ui.get_by_test_id("save-credentials").click()
 
-    expect(ui.get_by_test_id("credentials-message")).to_have_text("Zugangsdaten gespeichert.")
+    expect(ui.get_by_test_id("credentials-message")).to_have_text("Credentials saved.")
     expect(ui.get_by_test_id("secret-masked")).to_have_text(re.compile(r"^\*+ABCD$"))
     expect(ui.get_by_test_id("consumer-secret")).to_have_value("")
     assert _stored_credentials(live_server) == {
@@ -85,7 +85,7 @@ def test_enter_and_save_credentials(ui, live_server):
         "consumer_secret": "my-consumer-secret-ABCD",
     }
 
-    # Nach dem Neuladen: Key sichtbar, Secret nur maskiert, nie im Klartext.
+    # After reload: key visible, secret only masked, never in plain text.
     ui.reload()
     expect(ui.get_by_test_id("consumer-key")).to_have_value("my-consumer-key")
     expect(ui.get_by_test_id("secret-masked")).to_have_text(re.compile(r"^\*+ABCD$"))
@@ -97,12 +97,12 @@ def test_saving_without_new_secret_keeps_existing_secret(ui, live_server):
     ui.get_by_test_id("consumer-key").fill("key-1")
     ui.get_by_test_id("consumer-secret").fill("first-secret-1111")
     ui.get_by_test_id("save-credentials").click()
-    expect(ui.get_by_test_id("credentials-message")).to_have_text("Zugangsdaten gespeichert.")
+    expect(ui.get_by_test_id("credentials-message")).to_have_text("Credentials saved.")
 
     ui.reload()
     ui.get_by_test_id("consumer-key").fill("key-2")
     ui.get_by_test_id("save-credentials").click()
-    expect(ui.get_by_test_id("credentials-message")).to_have_text("Zugangsdaten gespeichert.")
+    expect(ui.get_by_test_id("credentials-message")).to_have_text("Credentials saved.")
 
     assert _stored_credentials(live_server) == {
         "consumer_key": "key-2",
@@ -124,7 +124,7 @@ def test_env_override_locks_fields(page, start_server):
 def test_change_poll_interval(ui, live_server):
     ui.get_by_test_id("poll-interval").fill("5")
     ui.get_by_test_id("save-sources").click()
-    expect(ui.get_by_test_id("sources-message")).to_have_text("Einstellungen gespeichert.")
+    expect(ui.get_by_test_id("sources-message")).to_have_text("Settings saved.")
 
     ui.reload()
     expect(ui.get_by_test_id("poll-interval")).to_have_value("5")
@@ -134,10 +134,10 @@ def test_change_poll_interval(ui, live_server):
 
 def test_refresh_button_stays_on_page_and_renders_frame(ui, live_server):
     ui.get_by_test_id("refresh-mallorca").click()
-    expect(ui.get_by_test_id("refresh-message-mallorca")).to_have_text("Aktualisierung angestoßen.")
+    expect(ui.get_by_test_id("refresh-message-mallorca")).to_have_text("Refresh triggered.")
     assert ui.url.rstrip("/") == live_server.url
 
-    # Der Scheduler rendert im Hintergrund; danach muss die Vorschau laden.
+    # The scheduler renders in the background; afterwards the preview must load.
     def preview_loaded() -> bool:
         ui.reload()
         return ui.get_by_test_id("preview-mallorca").evaluate(
@@ -149,13 +149,13 @@ def test_refresh_button_stays_on_page_and_renders_frame(ui, live_server):
             break
         ui.wait_for_timeout(200)
     else:
-        pytest.fail("Vorschaubild für mallorca wurde nicht geladen")
+        pytest.fail("Preview image for mallorca was not loaded")
 
 
-# --- Hilfen -------------------------------------------------------------
+# --- Helpers -------------------------------------------------------------
 
 def _viewport_filled(page, testid: str = "viewer-image") -> None:
-    """Das Bild muss den kompletten Viewport einnehmen (kein kleines Popup)."""
+    """The image must fill the entire viewport (no small popup)."""
     box = page.get_by_test_id(testid).bounding_box()
     size = page.viewport_size
     assert box is not None
@@ -176,7 +176,7 @@ def _stored(server) -> dict:
     return yaml.safe_load(server.config_file.read_text(encoding="utf-8"))
 
 
-# --- Betrachter / Historie / Live ------------------------------------------
+# --- Viewer / history / live ------------------------------------------
 
 def test_preview_click_opens_fullscreen_viewer_with_history(ui, live_server):
     frames = live_server.ensure_frames("wien", 3)
@@ -190,7 +190,7 @@ def test_preview_click_opens_fullscreen_viewer_with_history(ui, live_server):
     total = len(live_server.frames("wien"))
     assert total >= len(frames)
     expect(ui.get_by_test_id("viewer-position")).to_have_text(f"{total} / {total}")
-    expect(ui.get_by_test_id("viewer-caption")).to_contain_text("neuestes Bild")
+    expect(ui.get_by_test_id("viewer-caption")).to_contain_text("latest image")
     expect(ui.get_by_test_id("viewer-next")).to_be_disabled()
 
     ui.get_by_test_id("viewer-prev").click()
@@ -214,7 +214,7 @@ def test_history_thumbnail_opens_that_frame(ui, live_server):
     expect(ui.get_by_test_id("viewer")).to_be_visible()
     expect(ui.get_by_test_id("viewer-position")).to_have_text(f"{len(frames) - 2} / {len(frames)}")
     src = ui.get_by_test_id("viewer-image").get_attribute("src")
-    assert src == frames[2]["jpeg_url"]  # Default: gecachtes JPEG
+    assert src == frames[2]["jpeg_url"]  # default: cached JPEG
     ui.get_by_test_id("viewer-close").click()
     expect(ui.get_by_test_id("viewer")).to_be_hidden()
 
@@ -234,18 +234,18 @@ def test_viewer_frame_dropdown_selects_frame(ui, live_server):
     expect(select).to_be_visible()
     expect(select.locator("option")).to_have_count(total)
     expect(select).to_have_value("0")
-    expect(select.locator("option").first).to_contain_text("neuestes")
+    expect(select.locator("option").first).to_contain_text("newest")
 
     select.select_option("2")
     expect(ui.get_by_test_id("viewer-position")).to_have_text(f"{total - 2} / {total}")
     assert ui.get_by_test_id("viewer-image").get_attribute("src") == frames[2]["jpeg_url"]
     assert "i=2" in ui.url
 
-    # Blättern hält die Auswahlliste synchron.
+    # Paging keeps the select in sync.
     ui.get_by_test_id("viewer-next").click()
     expect(select).to_have_value("1")
 
-    ui.get_by_test_id("viewer-mode").click()  # Live: keine Frame-Auswahl
+    ui.get_by_test_id("viewer-mode").click()  # live: no frame selection
     expect(select).to_be_hidden()
 
 
@@ -266,7 +266,7 @@ def test_viewer_zoom_buttons_keys_and_pan(ui, live_server):
     box = ui.get_by_test_id("viewer-image").bounding_box()
     assert box["width"] > ui.viewport_size["width"] * 2.5
 
-    # Ziehen mit der Maus verschiebt das gezoomte Bild, ohne die Leisten auszublenden.
+    # Dragging with the mouse pans the zoomed image without hiding the bars.
     before = ui.get_by_test_id("viewer-image").evaluate("i => i.style.transform")
     vw, vh = ui.viewport_size["width"], ui.viewport_size["height"]
     ui.mouse.move(vw / 2, vh / 2)
@@ -277,7 +277,7 @@ def test_viewer_zoom_buttons_keys_and_pan(ui, live_server):
     assert after != before
     expect(ui.get_by_test_id("viewer")).not_to_have_class(re.compile("controls-hidden"))
 
-    # Zoom bleibt beim Blättern erhalten.
+    # Zoom is kept while paging.
     ui.get_by_test_id("viewer-prev").click()
     assert _zoom(ui) == 3
 
@@ -291,7 +291,7 @@ def test_viewer_zoom_buttons_keys_and_pan(ui, live_server):
     ui.get_by_test_id("viewer-zoom-reset").click()
     assert _zoom(ui) == 1
 
-    # Schließen setzt den Zoom zurück.
+    # Closing resets the zoom.
     ui.get_by_test_id("viewer-zoom-in").click()
     ui.keyboard.press("Escape")
     ui.get_by_test_id("preview-wien").click()
@@ -326,7 +326,7 @@ def test_live_stream_in_browser(ui, live_server):
     expect(ui.get_by_test_id("viewer-prev")).to_be_hidden()
     assert "live=wien" in ui.url
 
-    ui.get_by_test_id("viewer-mode").click()  # Wechsel zur Historie
+    ui.get_by_test_id("viewer-mode").click()  # switch to history
     expect(ui.get_by_test_id("viewer-prev")).to_be_visible()
     expect(ui.get_by_test_id("viewer-image")).to_have_attribute("src", re.compile(r"/history/"))
     ui.get_by_test_id("viewer-close").click()
@@ -352,10 +352,10 @@ def test_viewer_format_switches_between_jpeg_and_png(ui, live_server):
     _viewport_filled(ui)
     expect(ui.get_by_test_id("viewer-caption")).to_contain_text("PNG")
     assert "f=png" in ui.url
-    ui.get_by_test_id("viewer-prev").click()  # Blättern behält das Format
+    ui.get_by_test_id("viewer-prev").click()  # paging keeps the format
     expect(image).to_have_attribute("src", re.compile(r"\.png$"))
 
-    # Die Wahl bleibt nach dem Neuladen erhalten.
+    # The choice survives a reload.
     ui.keyboard.press("Escape")
     ui.reload()
     ui.get_by_test_id("preview-wien").click()
@@ -364,7 +364,7 @@ def test_viewer_format_switches_between_jpeg_and_png(ui, live_server):
     expect(image).to_have_attribute("src", re.compile(r"\.jpg$"))
     assert "f=" not in ui.url
 
-    # Archiv (FCI-Rohdaten): nur PNG, keine Formatauswahl.
+    # Archive (FCI raw data): PNG only, no format selection.
     ui.keyboard.press("Escape")
     ui.get_by_test_id("archive-wien").click()
     expect(fmt).to_be_hidden()
@@ -397,12 +397,12 @@ def test_live_format_mp4_and_gif(ui, live_server):
     assert "scale(1.5)" in video.evaluate("v => v.style.transform")
     ui.get_by_test_id("viewer-zoom-reset").click()
 
-    # Zurück zur Historie: Video gestoppt, Bild wieder sichtbar.
+    # Back to history: video stopped, image visible again.
     ui.get_by_test_id("viewer-mode").click()
     expect(video).to_be_hidden()
     expect(ui.get_by_test_id("viewer-image")).to_have_attribute("src", re.compile(r"/history/"))
     assert video.get_attribute("src") is None
-    ui.get_by_test_id("viewer-mode").click()  # Live merkt sich MP4
+    ui.get_by_test_id("viewer-mode").click()  # live remembers MP4
     expect(fmt).to_have_value("mp4")
     fmt.select_option("mjpeg")
     expect(ui.get_by_test_id("viewer-image")).to_have_attribute("src", re.compile(r"/regions/wien/mjpeg"))
@@ -428,16 +428,16 @@ def mobile_page(browser, live_server):
     page.on("pageerror", lambda exc: errors.append(str(exc)))
     yield page
     context.close()
-    assert errors == [], f"JavaScript-Fehler in der UI: {errors}"
+    assert errors == [], f"JavaScript errors in the UI: {errors}"
 
 
 def test_mobile_viewer_fills_screen_and_back_closes(mobile_page, live_server):
     live_server.ensure_frames("wien", 2)
     page = mobile_page
     page.goto(live_server.url + "/")
-    # Kein horizontales Scrollen auf dem Handy.
+    # No horizontal scrolling on a phone.
     page.wait_for_load_state("load")
-    page.wait_for_timeout(500)  # per JS nachgeladene Inhalte
+    page.wait_for_timeout(500)  # content loaded via JS
     width = page.evaluate("document.documentElement.scrollWidth")
     offenders = page.evaluate(
         "() => [...document.querySelectorAll('body *')].filter(e => {"
@@ -458,18 +458,18 @@ def test_mobile_viewer_fills_screen_and_back_closes(mobile_page, live_server):
     page.get_by_test_id("viewer-prev").tap()
     expect(page.get_by_test_id("viewer-position")).to_contain_text("/")
 
-    # Frame-Auswahl und Zoom sind am Handy erreichbar und bedienbar.
+    # Frame selection and zoom are reachable and usable on a phone.
     for testid in ("viewer-frame", "viewer-zoom-in", "viewer-zoom-out", "viewer-zoom-reset"):
         expect(page.get_by_test_id(testid)).to_be_in_viewport()
     page.get_by_test_id("viewer-frame").select_option("0")
-    expect(page.get_by_test_id("viewer-caption")).to_contain_text("neuestes Bild")
+    expect(page.get_by_test_id("viewer-caption")).to_contain_text("latest image")
     page.get_by_test_id("viewer-zoom-in").tap()
     expect(page.get_by_test_id("viewer-zoom-reset")).to_have_text("150 %")
     page.get_by_test_id("viewer-zoom-reset").tap()
     expect(page.get_by_test_id("viewer-zoom-reset")).to_have_text("100 %")
     assert page.evaluate("document.documentElement.scrollWidth") <= 390
 
-    # Formatwahl am Handy erreichbar; PNG lädt und füllt den Bildschirm.
+    # Format selection reachable on a phone; PNG loads and fills the screen.
     expect(page.get_by_test_id("viewer-format")).to_be_in_viewport()
     page.get_by_test_id("viewer-format").select_option("png")
     expect(page.get_by_test_id("viewer-image")).to_have_attribute("src", re.compile(r"\.png$"))
@@ -477,7 +477,7 @@ def test_mobile_viewer_fills_screen_and_back_closes(mobile_page, live_server):
     _viewport_filled(page)
     page.get_by_test_id("viewer-format").select_option("jpg")
 
-    # Zurück-Taste des Handys schließt den Betrachter, bleibt aber auf der Seite.
+    # The phone's back button closes the viewer but stays on the page.
     page.go_back()
     expect(page.get_by_test_id("viewer")).to_be_hidden()
     assert page.url.rstrip("/").split("#")[0] == live_server.url
@@ -490,13 +490,13 @@ def test_logs_are_shown_at_the_bottom(ui, live_server):
     last_two = ui.evaluate(
         "() => [...document.querySelectorAll('main > section')].slice(-2).map((s) => s.id)"
     )
-    # Logs stehen unten, nur noch gefolgt von der API-Link-Sammlung.
+    # Logs are at the bottom, followed only by the API link list.
     assert last_two == ["sec-logs", "sec-api"]
     logs = ui.get_by_test_id("logs")
-    expect(logs).to_contain_text("Render wien fertig", timeout=10000)
+    expect(logs.locator('[data-testid="log-line"]').first).to_be_visible(timeout=10000)
 
     ui.get_by_test_id("refresh-mallorca").click()
-    expect(logs).to_contain_text("Manuelle Aktualisierung für mallorca", timeout=10000)
+    expect(logs).to_contain_text("Manual refresh requested for mallorca", timeout=10000)
 
     ui.get_by_test_id("logs-level").select_option("ERROR")
     expect(ui.locator('[data-testid="log-line"][data-level="INFO"]').first).to_be_hidden()
@@ -504,7 +504,7 @@ def test_logs_are_shown_at_the_bottom(ui, live_server):
     expect(ui.locator('[data-testid="log-line"]')).to_have_count(0)
 
 
-# --- Quellen -------------------------------------------------------------
+# --- Sources -------------------------------------------------------------
 
 def test_sources_json_editor_is_collapsed_and_editable(ui, live_server):
     editor = ui.get_by_test_id("sources-json")
@@ -515,28 +515,28 @@ def test_sources_json_editor_is_collapsed_and_editable(ui, live_server):
     expect(editor).to_be_visible()
     expect(editor).to_have_value(re.compile(r'"msg_seviri"'))
 
-    editor.fill("[kaputt")
+    editor.fill("[broken")
     ui.get_by_test_id("sources-json-save").click()
-    expect(ui.get_by_test_id("sources-json-message")).to_contain_text("Ungültiges JSON")
+    expect(ui.get_by_test_id("sources-json-message")).to_contain_text("Invalid JSON")
 
     catalog = _stored_catalog_or_default(ui)
-    # Treiber dummy: die Region soll danach keinen echten Download auslösen.
-    catalog.append({"id": "iodc", "driver": "dummy", "label": "MSG Indischer Ozean",
+    # Driver dummy: the region must not trigger a real download afterwards.
+    catalog.append({"id": "iodc", "driver": "dummy", "label": "MSG Indian Ocean",
                     "collection": "EO:EUM:DAT:MSG:HRSEVIRI-IODC", "enabled": True})
     editor.fill(json.dumps(catalog, indent=2))
     ui.get_by_test_id("sources-json-save").click()
-    expect(ui.get_by_test_id("sources-json-message")).to_have_text("Quellen-Katalog gespeichert.")
+    expect(ui.get_by_test_id("sources-json-message")).to_have_text("Source catalog saved.")
     expect(ui.get_by_test_id("source-row-iodc")).to_be_visible()
     assert "iodc" in [e["id"] for e in _stored(live_server)["sources"]["catalog"]]
 
-    # Serverseitige Validierung: Regionen verweisen noch auf dummy.
+    # Server-side validation: regions still reference dummy.
     editor.fill(json.dumps([e for e in catalog if e["id"] != "dummy"]))
     ui.get_by_test_id("sources-json-save").click()
-    expect(ui.get_by_test_id("sources-json-message")).to_contain_text("Speichern fehlgeschlagen")
+    expect(ui.get_by_test_id("sources-json-message")).to_contain_text("Saving failed")
 
-    # Die neue Quelle steht der Region sofort zur Auswahl.
+    # The new source is immediately selectable for the region.
     ui.get_by_test_id("region-source-wien").select_option("iodc")
-    expect(ui.get_by_test_id("refresh-message-wien")).to_contain_text("Quelle gespeichert")
+    expect(ui.get_by_test_id("refresh-message-wien")).to_contain_text("Source saved")
     regions = {r["name"]: r for r in _stored(live_server)["regions"]}
     assert regions["wien"]["source"] == "iodc"
 
@@ -546,10 +546,10 @@ def _stored_catalog_or_default(page) -> list:
 
 
 def test_sources_show_cycle_and_custom_cycle_via_json(ui, live_server):
-    expect(ui.get_by_test_id("source-cycle-msg_seviri")).to_contain_text("Takt 5 min (automatisch)")
-    expect(ui.get_by_test_id("source-cycle-msg_seviri_0deg")).to_contain_text("Takt 15 min")
-    expect(ui.get_by_test_id("source-cycle-mtg_fci")).to_contain_text("Takt 10 min")
-    expect(ui.get_by_test_id("source-cycle-dummy")).to_contain_text("ohne Download")
+    expect(ui.get_by_test_id("source-cycle-msg_seviri")).to_contain_text("Cycle 5 min (automatic)")
+    expect(ui.get_by_test_id("source-cycle-msg_seviri_0deg")).to_contain_text("Cycle 15 min")
+    expect(ui.get_by_test_id("source-cycle-mtg_fci")).to_contain_text("Cycle 10 min")
+    expect(ui.get_by_test_id("source-cycle-dummy")).to_contain_text("no download")
 
     catalog = _stored_catalog_or_default(ui)
     for entry in catalog:
@@ -558,22 +558,22 @@ def test_sources_show_cycle_and_custom_cycle_via_json(ui, live_server):
     ui.get_by_test_id("sources-json-details").locator("summary").click()
     ui.get_by_test_id("sources-json").fill(json.dumps(catalog))
     ui.get_by_test_id("sources-json-save").click()
-    expect(ui.get_by_test_id("sources-json-message")).to_have_text("Quellen-Katalog gespeichert.")
-    expect(ui.get_by_test_id("source-cycle-mtg_fci")).to_contain_text("Takt 20 min")
-    expect(ui.get_by_test_id("source-cycle-mtg_fci")).not_to_contain_text("automatisch")
+    expect(ui.get_by_test_id("sources-json-message")).to_have_text("Source catalog saved.")
+    expect(ui.get_by_test_id("source-cycle-mtg_fci")).to_contain_text("Cycle 20 min")
+    expect(ui.get_by_test_id("source-cycle-mtg_fci")).not_to_contain_text("automatic")
     stored = {e["id"]: e for e in _stored(live_server)["sources"]["catalog"]}
     assert stored["mtg_fci"]["cycle_minutes"] == 20
 
-    # Quellen ohne festen Takt folgen dem allgemeinen Abrufintervall.
+    # Sources without a fixed cycle follow the general polling interval.
     ui.get_by_test_id("poll-interval").fill("7")
     ui.get_by_test_id("save-sources").click()
-    expect(ui.get_by_test_id("source-cycle-dummy")).to_contain_text("Takt 7 min")
+    expect(ui.get_by_test_id("source-cycle-dummy")).to_contain_text("Cycle 7 min")
 
 
 def test_sources_cycle_on_mobile(mobile_page, live_server):
     mobile_page.goto(live_server.url + "/#sec-sources")
     expect(mobile_page.get_by_test_id("source-cycle-msg_seviri")).to_be_visible()
-    expect(mobile_page.get_by_test_id("source-cycle-msg_seviri")).to_contain_text("Takt 5 min")
+    expect(mobile_page.get_by_test_id("source-cycle-msg_seviri")).to_contain_text("Cycle 5 min")
     width = mobile_page.evaluate("() => document.documentElement.scrollWidth")
     assert width <= 390
 
@@ -581,27 +581,27 @@ def test_sources_cycle_on_mobile(mobile_page, live_server):
 def test_toggle_source_and_region_warning(ui, live_server):
     expect(ui.get_by_test_id("region-warning-wien")).to_be_hidden()
     ui.get_by_test_id("source-enabled-dummy").uncheck()
-    expect(ui.get_by_test_id("sources-table-message")).to_have_text("Quelle dummy deaktiviert.")
+    expect(ui.get_by_test_id("sources-table-message")).to_have_text("Source dummy disabled.")
     expect(ui.get_by_test_id("region-warning-wien")).to_be_visible()
     catalog = {e["id"]: e for e in _stored(live_server)["sources"]["catalog"]}
     assert catalog["dummy"]["enabled"] is False
 
     ui.get_by_test_id("source-enabled-dummy").check()
-    expect(ui.get_by_test_id("sources-table-message")).to_have_text("Quelle dummy aktiviert.")
+    expect(ui.get_by_test_id("sources-table-message")).to_have_text("Source dummy enabled.")
     expect(ui.get_by_test_id("region-warning-wien")).to_be_hidden()
 
 
 def test_sync_with_eumetsat_and_adopt(page, start_server, fake_eumetsat):
     server = start_server(env={"HA_SATELLITE_EUMETSAT_API": fake_eumetsat})
     page.goto(server.url + "/")
-    expect(page.get_by_test_id("sources-last-sync")).to_have_text("noch nie")
+    expect(page.get_by_test_id("sources-last-sync")).to_have_text("never")
     page.get_by_test_id("sources-sync").click()
-    expect(page.get_by_test_id("sources-sync-message")).to_have_text("Abgleich abgeschlossen.")
-    expect(page.get_by_test_id("source-sync-status-msg_seviri")).to_contain_text("verfügbar")
+    expect(page.get_by_test_id("sources-sync-message")).to_have_text("Sync completed.")
+    expect(page.get_by_test_id("source-sync-status-msg_seviri")).to_contain_text("available")
     expect(page.get_by_test_id("discovered-EO-EUM-DAT-MSG-HRSEVIRI-IODC")).to_be_visible()
 
     page.get_by_test_id("adopt-EO-EUM-DAT-MSG-HRSEVIRI-IODC").click()
-    expect(page.get_by_test_id("sources-sync-message")).to_contain_text("übernommen")
+    expect(page.get_by_test_id("sources-sync-message")).to_contain_text("adopted")
     expect(page.get_by_test_id("discovered-EO-EUM-DAT-MSG-HRSEVIRI-IODC")).to_have_count(0)
     catalog = {e["collection"]: e for e in _stored(server)["sources"]["catalog"]}
     assert catalog["EO:EUM:DAT:MSG:HRSEVIRI-IODC"]["enabled"] is False
@@ -609,10 +609,10 @@ def test_sync_with_eumetsat_and_adopt(page, start_server, fake_eumetsat):
 
 def test_sync_failure_is_shown(ui):
     ui.get_by_test_id("sources-sync").click()
-    expect(ui.get_by_test_id("sources-sync-message")).to_contain_text("Abgleich fehlgeschlagen")
+    expect(ui.get_by_test_id("sources-sync-message")).to_contain_text("Sync failed")
 
 
-# --- Speicherort ---------------------------------------------------------
+# --- Storage location ---------------------------------------------------------
 
 def test_change_storage_location_via_ui(page, live_server):
     live_server.ensure_frames("wien", 2)
@@ -628,7 +628,7 @@ def test_change_storage_location_via_ui(page, live_server):
     page.get_by_test_id("history-minutes").fill("180")
     page.get_by_test_id("save-storage").click()
 
-    expect(page.get_by_test_id("storage-message")).to_contain_text(f"Speicherort: {target}")
+    expect(page.get_by_test_id("storage-message")).to_contain_text(f"Storage location: {target}")
     expect(page.get_by_test_id("storage-current")).to_have_text(str(target))
     assert list((target / "wien").glob("*.png"))
     stored = _stored(live_server)
@@ -639,12 +639,14 @@ def test_change_storage_location_via_ui(page, live_server):
 
 
 def test_invalid_storage_location_shows_error(ui):
-    ui.get_by_test_id("storage-path").fill("relativer/pfad")
+    ui.get_by_test_id("storage-path").fill("relative/path")
     ui.get_by_test_id("save-storage").click()
-    expect(ui.get_by_test_id("storage-message")).to_contain_text("absolut")
+    message = ui.get_by_test_id("storage-message")
+    expect(message).to_have_class(re.compile(r"\berror\b"))
+    expect(message).to_contain_text("Saving failed")
 
 
-# --- Quelle/Bildtyp wechseln --------------------------------------------------
+# --- Switching source/image type --------------------------------------------------
 
 def test_change_composite_rerenders_and_updates_preview(ui, live_server):
     live_server.ensure_frames("wien", 1)
@@ -653,11 +655,11 @@ def test_change_composite_rerenders_and_updates_preview(ui, live_server):
     expect(select).to_have_value("natural_color_hrv_with_night_ir")
 
     select.select_option("natural_color_hrv")
-    expect(ui.get_by_test_id("refresh-message-wien")).to_contain_text("Bildtyp gespeichert")
+    expect(ui.get_by_test_id("refresh-message-wien")).to_contain_text("Image type saved")
     regions = {r["name"]: r for r in _stored(live_server)["regions"]}
     assert regions["wien"]["composite"] == "natural_color_hrv"
 
-    # Ohne weiteren Klick: der Server rendert neu, die Historie lädt nach.
+    # Without another click: the server re-renders, the history reloads.
     expect(ui.get_by_test_id("history-item-wien-0")).to_be_visible()
     ui.wait_for_function(
         "(n) => document.querySelectorAll('[data-testid^=\"history-item-wien-\"]').length > n",
@@ -675,7 +677,7 @@ def test_toggle_borders_rerenders(ui, live_server):
     expect(box).to_be_checked()
 
     box.uncheck()
-    expect(ui.get_by_test_id("refresh-message-wien")).to_contain_text("Landesgrenzen ausgeschaltet")
+    expect(ui.get_by_test_id("refresh-message-wien")).to_contain_text("Country borders disabled")
     regions = {r["name"]: r for r in _stored(live_server)["regions"]}
     assert regions["wien"]["borders"] is False
     assert regions["mallorca"]["borders"] is True
@@ -697,18 +699,18 @@ def test_borders_checkbox_on_mobile(mobile_page, live_server):
     box = mobile_page.get_by_test_id("region-borders-wien")
     expect(box).to_be_visible()
     box.tap()
-    expect(mobile_page.get_by_test_id("refresh-message-wien")).to_contain_text("Landesgrenzen ausgeschaltet")
+    expect(mobile_page.get_by_test_id("refresh-message-wien")).to_contain_text("Country borders disabled")
 
 
 def test_placeholder_source_is_marked(ui, live_server):
-    expect(ui.get_by_test_id("region-placeholder-wien")).to_be_visible()  # Test-Server: dummy
+    expect(ui.get_by_test_id("region-placeholder-wien")).to_be_visible()  # test server: dummy
     options = ui.get_by_test_id("region-source-wien").locator("option")
-    expect(options.filter(has_text="Data Tailor")).to_contain_text("Platzhalter")
-    expect(options.filter(has_text="Rapid Scan")).not_to_contain_text("Platzhalter")
-    expect(ui.get_by_test_id("source-row-data_tailor")).to_contain_text("Platzhalter")
+    expect(options.filter(has_text="Data Tailor")).to_contain_text("placeholder")
+    expect(options.filter(has_text="Rapid Scan")).not_to_contain_text("placeholder")
+    expect(ui.get_by_test_id("source-row-data_tailor")).to_contain_text("placeholder")
 
     ui.get_by_test_id("region-source-wien").select_option("msg_seviri")
-    expect(ui.get_by_test_id("refresh-message-wien")).to_contain_text("Quelle gespeichert")
+    expect(ui.get_by_test_id("refresh-message-wien")).to_contain_text("Source saved")
     expect(ui.get_by_test_id("region-placeholder-wien")).to_be_hidden()
 
 
@@ -725,10 +727,10 @@ def test_api_links_follow_selected_region_and_work(ui, live_server):
     expect(ui.get_by_test_id("api-link-mjpeg")).to_have_attribute("href", "/regions/mallorca/mjpeg")
     expect(ui.get_by_test_id("api-link-live")).to_have_attribute("href", "/live/mallorca")
     expect(ui.get_by_test_id("api-post-1")).to_contain_text("/api/regions/mallorca/refresh")
-    # Allgemeine Links hängen nicht vom Standort ab.
+    # General links do not depend on the location.
     expect(ui.get_by_test_id("api-link-status")).to_have_attribute("href", "/api/status")
 
-    # Anklicken öffnet einen neuen Tab, die UI bleibt stehen.
+    # Clicking opens a new tab, the UI stays put.
     with ui.context.expect_page() as new_tab:
         latest.click()
     tab = new_tab.value
@@ -738,7 +740,7 @@ def test_api_links_follow_selected_region_and_work(ui, live_server):
     tab.close()
     assert ui.url.startswith(live_server.url + "/")
 
-    # Alle lesenden Links antworten (außer MJPEG/MP4: Stream bzw. optional).
+    # All read links respond (except MJPEG/MP4: stream or optional).
     for link in ui.locator("[data-testid^='api-link-']").all():
         testid = link.get_attribute("data-testid")
         if testid in ("api-link-mjpeg", "api-link-mp4"):
@@ -755,7 +757,7 @@ def test_api_links_on_mobile_do_not_overflow(mobile_page, live_server):
     assert width <= 390
 
 
-# --- MTG FCI: Bildtypen, Rohdaten-Archiv ----------------------------------------
+# --- MTG FCI: image types, raw data archive ----------------------------------------
 
 def _png(color) -> bytes:
     import io
@@ -772,18 +774,18 @@ def test_switching_to_fci_offers_fci_composites(ui, live_server):
     expect(select).to_have_value("natural_color_hrv_with_night_ir")
 
     ui.get_by_test_id("region-source-wien").select_option("mtg_fci")
-    expect(ui.get_by_test_id("refresh-message-wien")).to_contain_text("Quelle und Bildtyp gespeichert")
+    expect(ui.get_by_test_id("refresh-message-wien")).to_contain_text("Source and image type saved")
     expect(select).to_have_value("natural_color_with_night_cloudtop")
     expect(select.locator("option", has_text="HRV")).to_have_count(0)
     region = {r["name"]: r for r in _stored(live_server)["regions"]}["wien"]
     assert (region["source"], region["composite"]) == ("mtg_fci", "natural_color_with_night_cloudtop")
     expect(ui.get_by_test_id("region-placeholder-wien")).to_be_hidden()
 
-    # "natural_color" gibt es für beide Satelliten -> bleibt beim Zurückwechseln.
+    # "natural_color" exists for both satellites -> kept when switching back.
     select.select_option("natural_color")
-    expect(ui.get_by_test_id("refresh-message-wien")).to_contain_text("Bildtyp gespeichert")
+    expect(ui.get_by_test_id("refresh-message-wien")).to_contain_text("Image type saved")
     ui.get_by_test_id("region-source-wien").select_option("msg_seviri")
-    expect(ui.get_by_test_id("refresh-message-wien")).to_contain_text("Quelle gespeichert")
+    expect(ui.get_by_test_id("refresh-message-wien")).to_contain_text("Source saved")
     expect(select).to_have_value("natural_color")
     expect(select.locator("option", has_text="HRV").first).to_be_attached()
 
@@ -818,7 +820,7 @@ def test_archive_viewer_browses_slots_and_composites(ui, live_server):
     _image_loaded(ui, "viewer-image")
     assert "c=cloudtop" in ui.url
 
-    ui.get_by_test_id("viewer-mode").click()  # zurück zur normalen Historie
+    ui.get_by_test_id("viewer-mode").click()  # back to the normal history
     expect(ui.get_by_test_id("viewer-composite")).to_be_hidden()
     ui.get_by_test_id("viewer-close").click()
     expect(viewer).to_be_hidden()
@@ -826,15 +828,34 @@ def test_archive_viewer_browses_slots_and_composites(ui, live_server):
 
 def test_archive_viewer_without_data_explains_why(ui):
     ui.get_by_test_id("archive-mallorca").click()
-    expect(ui.get_by_test_id("viewer")).to_contain_text("Keine FCI-Rohdaten im Archiv")
+    expect(ui.get_by_test_id("viewer")).to_contain_text("No FCI raw data in the archive")
 
 
 def test_archive_settings_are_saved(ui, live_server):
-    expect(ui.get_by_test_id("archive-summary")).to_contain_text("Keine MTG-FCI-Quelle aktiv")
+    expect(ui.get_by_test_id("archive-summary")).to_contain_text("No MTG FCI source active")
     expect(ui.get_by_test_id("archive-summary")).to_contain_text("32–40")
     ui.get_by_test_id("archive-retention").fill("6")
     ui.get_by_test_id("archive-chunk-min").fill("30")
     ui.get_by_test_id("save-storage").click()
-    expect(ui.get_by_test_id("storage-message")).to_contain_text("Gespeichert")
+    expect(ui.get_by_test_id("storage-message")).to_contain_text("Saved")
     assert _stored(live_server)["archive"] == {"retention_hours": 6, "chunk_min": 30, "chunk_max": 40}
     expect(ui.get_by_test_id("archive-summary")).to_contain_text("30–40")
+
+
+# --- Version / language -----------------------------------------------------
+
+def test_app_version_is_shown(ui, live_server):
+    from ha_satellite import __version__
+
+    expect(ui.get_by_test_id("app-version")).to_have_text(f"v{__version__}")
+    expect(ui.get_by_test_id("api-link-version")).to_have_attribute("href", "/api/version")
+    response = ui.request.get(live_server.url + "/api/version")
+    assert response.json() == {"version": __version__}
+
+
+def test_page_is_english(ui):
+    expect(ui.get_by_test_id("sources-table").locator("tbody tr").first).to_be_visible()
+    assert ui.locator("html").get_attribute("lang") == "en"
+    text = ui.locator("body").inner_text()
+    for word in (" und ", "Speichern", "Einstellungen", "Bild ", "Aktualisieren", "Quelle", "ä", "ö", "ü", "ß"):
+        assert word not in text, f"German text found: {word!r}"

@@ -1,8 +1,8 @@
-"""Tests für die Phase-2-Quellen: Download-Cache, Dedup und Crop-Fenster.
+"""Tests for the data sources: download cache, dedup and crop window.
 
-``eumdac`` und der Satpy-Kindprozess werden gemockt; der Crop-Test nutzt
-die echte Geometrie des SEVIRI-Rapid-Scans (gespiegelte Area, 3712x1392),
-ohne dass ein ~100-MB-Produkt nötig ist.
+``eumdac`` and the Satpy child process are mocked; the crop test uses the
+real geometry of the SEVIRI Rapid Scan (mirrored area, 3712x1392) without
+needing a ~100 MB product.
 """
 
 from __future__ import annotations
@@ -103,7 +103,7 @@ def test_product_cache_downloads_once_and_keeps_only_latest(tmp_path, monkeypatc
     latest = cache.latest("EO:EUM:DAT:MSG:MSG15-RSS", CREDS, ".nat")
     assert latest.product_id == "MSG4-B"
     assert cache.cached("EO:EUM:DAT:MSG:MSG15-RSS") == latest
-    # Vorheriges Produkt bleibt für einen evtl. laufenden Render-Vorgang.
+    # Previous product is kept for a render that may still be running.
     assert sorted(p.name for p in latest.path.parent.iterdir()) == ["MSG4-A.nat", "MSG4-B.nat"]
 
     products.insert(0, FakeProduct("MSG4-C", SENSING + timedelta(minutes=10), b"third"))
@@ -113,7 +113,7 @@ def test_product_cache_downloads_once_and_keeps_only_latest(tmp_path, monkeypatc
 
 
 def test_product_cache_requires_credentials(tmp_path):
-    with pytest.raises(DataStoreError, match="Zugangsdaten"):
+    with pytest.raises(DataStoreError, match="credentials"):
         ProductCache(tmp_path).latest("c", EumetsatCredentials(), ".nat")
 
 
@@ -125,7 +125,7 @@ def test_product_cache_wraps_search_errors(tmp_path, monkeypatch):
 
 def test_product_cache_reports_empty_search(tmp_path, monkeypatch):
     install_fake_eumdac(monkeypatch, [])
-    with pytest.raises(DataStoreError, match="Kein Produkt"):
+    with pytest.raises(DataStoreError, match="No product"):
         ProductCache(tmp_path).latest("c", CREDS, ".nat")
 
 
@@ -196,15 +196,15 @@ def test_msg_seviri_skips_already_rendered_product(tmp_path, monkeypatch, config
 
 def test_msg_seviri_maps_errors_to_render_error(tmp_path, monkeypatch, config):
     monkeypatch.setattr(
-        sources, "_product_cache", lambda: StubCache(error=DataStoreError("kaputt"))
+        sources, "_product_cache", lambda: StubCache(error=DataStoreError("broken"))
     )
-    with pytest.raises(RenderError, match="kaputt"):
+    with pytest.raises(RenderError, match="broken"):
         MsgSeviriSource().render(config.regions[0], config, None)
 
 
 def test_msg_seviri_renders_downloaded_product_without_network(tmp_path, monkeypatch, config):
     local = Product("MSG4-L", SENSING, tmp_path / "l.nat")
-    stub = StubCache(error=DataStoreError("darf nicht gefragt werden"))
+    stub = StubCache(error=DataStoreError("must not be queried"))
     stub.local = local
     monkeypatch.setattr(sources, "_product_cache", lambda: stub)
     seen = {}
@@ -218,7 +218,7 @@ def test_msg_seviri_renders_downloaded_product_without_network(tmp_path, monkeyp
     assert seen["files"] == (str(local.path),)
     assert stub.latest_calls == 0
 
-    # fetch() lädt dagegen immer über den Data Store.
+    # fetch(), in contrast, always downloads via the Data Store.
     stub.error, stub.product = None, Product("MSG4-N", SENSING + timedelta(minutes=5), tmp_path / "n")
     entry = config.sources.get("msg_seviri")
     assert MsgSeviriSource().fetch(entry, config) == SENSING + timedelta(minutes=5)
@@ -227,7 +227,7 @@ def test_msg_seviri_renders_downloaded_product_without_network(tmp_path, monkeyp
 
 # -- Scheduler -------------------------------------------------------------------
 class SlowSource:
-    """Rendert langsam und prüft, dass nie zwei Läufe parallel sind."""
+    """Renders slowly and checks that two runs never overlap."""
 
     def __init__(self):
         self.active = 0
@@ -273,7 +273,7 @@ def test_concurrent_regions_wait_for_lock_instead_of_skipping(tmp_path, monkeypa
         assert datetime.fromisoformat(buffer.latest().created_at) == SENSING
         assert status.get(name).last_error is None
 
-    # Zweiter Lauf: gleiche Aufnahme -> kein neuer Frame, aber auch kein Fehler.
+    # Second run: same acquisition -> no new frame, but no error either.
     scheduler._run_region("wien")
     assert len(buffers.get("wien", 4, 500)) == 1
     assert status.get("wien").last_error is None
@@ -286,7 +286,7 @@ RSS_PROJ = (
     "+proj=geos +lon_0=9.5 +h=35785831 +x_0=0 +y_0=0 +a=6378169 "
     "+rf=295.488065897014 +units=m +no_defs"
 )
-# Wie im Produkt: x-Extent absteigend (gespiegelt), nur der nördliche Streifen.
+# As in the product: descending x extent (mirrored), only the northern stripe.
 RSS_EXTENT = (5567248.0, 5570248.5, -5570248.5, 1393687.2)
 
 
@@ -313,8 +313,8 @@ def test_source_window_covers_whole_target_region(rss_area, name, lat, lon):
     assert not np.ma.is_masked(all_cols)
     assert rows.start <= int(all_rows.min()) and int(all_rows.max()) < rows.stop
     assert cols.start <= int(all_cols.min()) and int(all_cols.max()) < cols.stop
-    # 600 km bei ~3-5 km Pixeln: Fenster muss deutlich über 100 Pixel groß sein
-    # (pyresamples reduce_data lieferte für Wien nur 26x4).
+    # 600 km at ~3-5 km pixels: the window must be well over 100 pixels
+    # (pyresample's reduce_data returned only 26x4 for Vienna).
     assert rows.stop - rows.start > 100
     assert cols.stop - cols.start > 100
 
@@ -328,11 +328,11 @@ def test_source_window_rejects_region_outside_disk(rss_area):
     )
 
     request = RenderRequest("r", ("f",), "c", 35.0, 139.0, 300, 50, 50, "tokio")
-    with pytest.raises(SatpyRenderError, match="außerhalb"):
+    with pytest.raises(SatpyRenderError, match="outside"):
         source_window(rss_area, target_area(request))
 
 
-# -- HRV-Schärfung -----------------------------------------------------------------
+# -- HRV sharpening ----------------------------------------------------------------
 HRV_EXTENT = (5566247.7, 5571249.0, -5571249.0, 1392686.9)
 
 
@@ -351,7 +351,7 @@ def test_crop_uses_own_window_per_resolution(rss_area):
 
     assert vis_crop.attrs["area"].shape == vis_crop.shape
     assert hrv_crop.attrs["area"].shape == hrv_crop.shape
-    # gleiches Gebiet, dreifache Auflösung (± Rand)
+    # same area, triple resolution (± margin)
     assert abs(hrv_crop.shape[0] - 3 * vis_crop.shape[0]) < 3 * 2 * 16
     assert abs(hrv_crop.shape[1] - 3 * vis_crop.shape[1]) < 3 * 2 * 16
 
@@ -415,7 +415,7 @@ def test_source_window_ignores_points_with_only_one_valid_index():
     )
 
     class HalfValidArea:
-        """Wie das südliche HRV-Fenster im Full Disk: Spalten gültig, Zeilen nicht."""
+        """Like the southern HRV window in the full disk: columns valid, rows not."""
 
         shape = (100, 100)
 
@@ -425,13 +425,13 @@ def test_source_window_ignores_points_with_only_one_valid_index():
             return cols, rows
 
     request = RenderRequest("r", ("f",), "c", 48.2, 16.37, 300, 20, 20, "wien")
-    with pytest.raises(SatpyRenderError, match="außerhalb"):
+    with pytest.raises(SatpyRenderError, match="outside"):
         source_window(HalfValidArea(), target_area(request))
 
 
 # -- Quellen-/Kompositwechsel ----------------------------------------------------
 class OriginSource:
-    """Liefert je Quelle eine feste Aufnahmezeit (0° hinkt Rapid Scan hinterher)."""
+    """Returns a fixed sensing time per source (0° lags behind Rapid Scan)."""
 
     SENSING_BY_SOURCE = {"msg_seviri": SENSING, "msg_seviri_0deg": SENSING - timedelta(minutes=13)}
 
@@ -442,7 +442,7 @@ class OriginSource:
         sensing = self.SENSING_BY_SOURCE[region.source]
         self.calls.append((region.source, region.composite, last_sensing))
         if last_sensing is not None and sensing <= last_sensing:
-            raise NoNewData("bereits gerendert")
+            raise NoNewData("already rendered")
         return RenderedFrame(f"{region.source}/{region.composite}".encode(), sensing)
 
 
@@ -463,31 +463,31 @@ def test_switching_source_or_composite_renders_even_older_product(tmp_path, monk
     scheduler._run_region("wien")
     assert len(buffer()) == 1
 
-    # Wechsel auf 0°: Aufnahme ist älter als der Rapid-Scan-Frame, wird aber
-    # trotzdem gerendert und ist danach der neueste Frame.
+    # Switch to 0°: the acquisition is older than the Rapid Scan frame, but is
+    # still rendered and becomes the newest frame.
     _switch(store, source="msg_seviri_0deg")
     scheduler._run_region("wien")
     assert len(buffer()) == 2
     assert buffer().latest().source == "msg_seviri_0deg"
     assert buffer().get(0).path(buffer().region_dir).read_bytes().startswith(b"msg_seviri_0deg/")
 
-    # Gleiche Quelle erneut: kein doppelter Frame.
+    # Same source again: no duplicate frame.
     scheduler._run_region("wien")
     assert len(buffer()) == 2
 
-    # Nur das Komposit ändern: gleiche Aufnahme, trotzdem neues Bild.
+    # Only change the composite: same acquisition, still a new image.
     _switch(store, composite="natural_color_hrv")
     scheduler._run_region("wien")
     assert len(buffer()) == 3
     assert buffer().latest().composite == "natural_color_hrv"
 
-    # Zurück auf Rapid Scan: wieder sofort ein Bild.
+    # Back to Rapid Scan: an image right away again.
     _switch(store, source="msg_seviri")
     scheduler._run_region("wien")
     assert buffer().latest().source == "msg_seviri"
     assert len(buffer()) == 4
 
-    # Landesgrenzen ausschalten: gleiche Aufnahme, trotzdem neues Bild.
+    # Turn off borders: same acquisition, still a new image.
     calls = len(source.calls)
     _switch(store, borders=False)
     scheduler._run_region("wien")
@@ -510,8 +510,8 @@ def test_reload_sets_up_download_jobs_and_renders_changed_regions(tmp_path):
     try:
         scheduler.reload()
         ids = _job_ids(scheduler)
-        # Rapid Scan wird von Regionen genutzt -> eigener Download-Job; die
-        # Regionen rendern erst nach dem Download (kein Intervall-Job).
+        # Rapid Scan is used by regions -> its own download job; the regions
+        # only render after the download (no interval job).
         assert "download-msg_seviri" in ids
         assert "download-msg_seviri_0deg" not in ids  # deaktiviert
         assert not [i for i in ids if i.startswith("render-")]
@@ -521,7 +521,7 @@ def test_reload_sets_up_download_jobs_and_renders_changed_regions(tmp_path):
         renders = [i for i in _job_ids(scheduler) if i.startswith("render-now-")]
         assert len(renders) == 1 and "-wien-" in renders[0]
 
-        # FCI lädt ins Archiv, auch ohne Region; 0° ohne Region nicht.
+        # FCI downloads into the archive even without a region; 0° without a region does not.
         config = store.get()
         for entry in config.sources.catalog:
             entry.enabled = entry.id in ("msg_seviri", "msg_seviri_0deg", "mtg_fci")
@@ -556,14 +556,14 @@ def test_reload_keeps_interval_of_unchanged_placeholder_regions(tmp_path):
 
         wien = scheduler._scheduler.get_job("render-wien").next_run_time
         mallorca = scheduler._scheduler.get_job("render-mallorca").next_run_time
-        assert wien < later - timedelta(minutes=5)  # geändert -> sofort
-        assert mallorca == later  # unverändert -> Takt bleibt
+        assert wien < later - timedelta(minutes=5)  # changed -> immediately
+        assert mallorca == later  # unchanged -> cycle stays
     finally:
         scheduler._scheduler.shutdown(wait=False)
 
 
 class FetchSource:
-    """Download-Treiber mit steuerbarer neuester Aufnahme."""
+    """Download driver with a controllable newest acquisition."""
 
     def __init__(self, sensing: datetime):
         self.sensing = sensing
@@ -582,10 +582,10 @@ def _close(actual: datetime, expected: datetime, tolerance: float = 5.0) -> bool
 
 
 def test_download_follows_cycle_and_triggers_renders_only_for_new_data(tmp_path, monkeypatch):
-    store = ConfigStore(tmp_path / "config.yaml")  # Regionen auf Rapid Scan (5 min)
+    store = ConfigStore(tmp_path / "config.yaml")  # regions on Rapid Scan (5 min)
     scheduler = RenderScheduler(store, BufferManager(tmp_path / "frames"), StatusStore())
     now = datetime.now(timezone.utc)
-    source = FetchSource(now - timedelta(minutes=3))  # 3 min Lieferverzögerung
+    source = FetchSource(now - timedelta(minutes=3))  # 3 min delivery delay
     monkeypatch.setattr("ha_satellite.scheduler.get_source", lambda name: source)
     queued: list[str] = []
     monkeypatch.setattr(scheduler, "_queue_render", queued.append)
@@ -593,45 +593,45 @@ def test_download_follows_cycle_and_triggers_renders_only_for_new_data(tmp_path,
     assert scheduler.download("msg_seviri") is True
     assert sorted(queued) == ["mallorca", "wien"]
     state = scheduler._downloads["msg_seviri"]
-    # Nächster Download: Aufnahmeende + Takt + Verzögerung = jetzt + 5 min.
+    # Next download: sensing end + cycle + delay = now + 5 min.
     assert _close(state.due, source.sensing + timedelta(minutes=8))
     status = scheduler.download_status()["msg_seviri"]
     assert status["cycle_minutes"] == 5 and status["active"] is True
     assert status["latency_seconds"] == pytest.approx(180, abs=5)
 
-    # Vor dem Termin: der Takt-Job fragt den Data Store nicht.
+    # Before it is due: the cycle job does not query the Data Store.
     scheduler._tick_download("msg_seviri")
     assert source.fetches == 1
 
-    # Gleiche Aufnahme -> keine Renders.
+    # Same acquisition -> no renders.
     queued.clear()
     assert scheduler.download("msg_seviri") is False
     assert queued == []
 
-    # Erwartete Aufnahme überfällig (noch nicht da): jede Minute erneut fragen.
+    # Expected acquisition overdue (not there yet): ask again every minute.
     state.last_sensing -= timedelta(minutes=6)
     source.sensing = state.last_sensing
     scheduler.download("msg_seviri")
     assert _close(state.due, datetime.now(timezone.utc) + timedelta(minutes=1))
-    # Mehr als einen Takt überfällig (Datenstrom stockt): nur noch im Takt.
+    # More than one cycle overdue (data stream stalled): only once per cycle.
     state.last_sensing -= timedelta(minutes=10)
     source.sensing = state.last_sensing
     scheduler.download("msg_seviri")
     assert _close(state.due, datetime.now(timezone.utc) + timedelta(minutes=5))
 
-    # Neue Aufnahme: Regionen werden gerendert.
+    # New acquisition: regions are rendered.
     source.sensing = now
     assert scheduler.download("msg_seviri") is True
     assert sorted(queued) == ["mallorca", "wien"]
 
-    # Fehler: kein Absturz, erneuter Versuch spätestens nach 5 min.
+    # Error: no crash, retry after 5 min at the latest.
     source.error = RenderError("401 Unauthorized")
     assert scheduler.download("msg_seviri") is False
     assert state.last_error == "401 Unauthorized"
     assert _close(state.due, datetime.now(timezone.utc) + timedelta(minutes=5))
     assert scheduler.download_status()["msg_seviri"]["last_error"] == "401 Unauthorized"
 
-    # Deaktivierte Quelle: kein Download.
+    # Disabled source: no download.
     assert scheduler.download("msg_seviri_0deg") is False
 
 
@@ -645,7 +645,7 @@ def test_render_subprocess_retries_once_after_crash(monkeypatch):
     def flaky(request, timeout):
         calls.append(1)
         if len(calls) == 1:
-            raise satpy_render.RenderProcessCrashed("Render-Prozess durch SIGSEGV beendet")
+            raise satpy_render.RenderProcessCrashed("Render process killed by SIGSEGV")
         return b"png", "t"
 
     monkeypatch.setattr(satpy_render, "_run_once", flaky)
@@ -653,23 +653,23 @@ def test_render_subprocess_retries_once_after_crash(monkeypatch):
     assert len(calls) == 2
 
     def always_crash(request, timeout):
-        raise satpy_render.RenderProcessCrashed("kaputt")
+        raise satpy_render.RenderProcessCrashed("broken")
 
     monkeypatch.setattr(satpy_render, "_run_once", always_crash)
-    with pytest.raises(satpy_render.SatpyRenderError, match="kaputt"):
+    with pytest.raises(satpy_render.SatpyRenderError, match="broken"):
         satpy_render.render_in_subprocess(object())
 
     def timeout(request, timeout):
         calls.append(1)
-        raise satpy_render.SatpyRenderError("Zeitlimit")
+        raise satpy_render.SatpyRenderError("time limit")
 
     calls.clear()
     monkeypatch.setattr(satpy_render, "_run_once", timeout)
-    with pytest.raises(satpy_render.SatpyRenderError, match="Zeitlimit"):
+    with pytest.raises(satpy_render.SatpyRenderError, match="time limit"):
         satpy_render.render_in_subprocess(object())
-    assert len(calls) == 1  # kein Retry bei Zeitüberschreitung
+    assert len(calls) == 1  # no retry on timeout
 
     assert "SIGKILL" in satpy_render._describe_exit(-signal.SIGKILL)
-    assert "Speicherlimit" in satpy_render._describe_exit(-signal.SIGKILL)
+    assert "memory limit" in satpy_render._describe_exit(-signal.SIGKILL)
     assert "SIGSEGV" in satpy_render._describe_exit(-signal.SIGSEGV)
-    assert "Exit-Code 1" in satpy_render._describe_exit(1)
+    assert "exit code 1" in satpy_render._describe_exit(1)

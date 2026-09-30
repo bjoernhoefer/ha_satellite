@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="de">
+<html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
@@ -44,7 +44,7 @@
     .row { display: flex; gap: 0.6rem; flex-wrap: wrap; align-items: center; }
     .grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 0 1rem; }
 
-    /* Regionen */
+    /* Regions */
     .regions { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 1rem; }
     .region-card { border: 1px solid var(--border); border-radius: 10px; padding: 0.8rem; background: #fcfdfe; min-width: 0; }
     .region-card h3 { margin: 0 0 0.3rem; font-size: 1rem; }
@@ -60,7 +60,7 @@
     .history-strip span { display: block; font-size: 0.7rem; text-align: center; color: var(--muted); padding: 0.1rem 0; }
     .warning { color: var(--warn); font-size: 0.85rem; margin-top: 0.3rem; }
 
-    /* Speicherort */
+    /* Storage location */
     .candidates { display: grid; grid-template-columns: minmax(0, 1fr); gap: 0.4rem; margin-top: 0.4rem; }
     .candidate { border: 1px solid var(--border); border-radius: 8px; padding: 0.5rem 0.7rem; cursor: pointer; display: flex; gap: 0.6rem; align-items: flex-start; font-weight: normal; margin: 0; }
     .candidate.selected { border-color: var(--accent); background: #eff6ff; }
@@ -76,7 +76,7 @@
     .log-line.INFO .lvl { color: #60a5fa; }
     .log-line .src { color: #a78bfa; }
 
-    /* Vollbild-Betrachter (kein Popup: füllt den gesamten Viewport) */
+    /* Fullscreen viewer (no popup: fills the entire viewport) */
     body.viewer-open { overflow: hidden; }
     .viewer { position: fixed; inset: 0; z-index: 1000; background: #000; color: #fff; height: 100vh; height: 100dvh; width: 100vw; touch-action: none; user-select: none; -webkit-user-select: none; }
     .viewer[hidden] { display: none; }
@@ -113,49 +113,49 @@
 </head>
 <body>
   <header>
-    <h1>ha_satellite – Satellitenbilder für Home Assistant</h1>
+    <h1>ha_satellite – satellite images for Home Assistant <small data-testid="app-version" style="font-weight:normal;opacity:.7">v{{ version }}</small></h1>
     <nav class="toc">
-      <a href="#sec-regions">Regionen</a><a href="#sec-sources">Quellen</a><a href="#sec-storage">Speicherort</a>
-      <a href="#sec-credentials">Zugangsdaten</a><a href="#sec-status">Status</a><a href="#sec-logs">Logs</a><a href="#sec-api">API</a>
+      <a href="#sec-regions">Regions</a><a href="#sec-sources">Sources</a><a href="#sec-storage">Storage</a>
+      <a href="#sec-credentials">Credentials</a><a href="#sec-status">Status</a><a href="#sec-logs">Logs</a><a href="#sec-api">API</a>
     </nav>
   </header>
   <main>
 
   <section id="sec-regions">
-    <h2>Regionen</h2>
+    <h2>Regions</h2>
     <div class="regions">
       {% for region in config.regions %}
       <div class="region-card" data-testid="region-{{ region.name }}" data-region="{{ region.name }}">
         <h3>{{ region.name }}</h3>
         <div class="muted">{{ region.lat }}, {{ region.lon }} · {{ region.radius_km }} km · {{ region.width }}×{{ region.height }} px</div>
         <div class="preview-wrap" data-preview-wrap="{{ region.name }}">
-          <img class="preview" src="/regions/{{ region.name }}/latest.jpg" alt="{{ region.name }} – neuestes Bild"
-               role="button" tabindex="0" title="Groß anzeigen"
+          <img class="preview" src="/regions/{{ region.name }}/latest.jpg" alt="{{ region.name }} – latest image"
+               role="button" tabindex="0" title="Show large"
                data-region="{{ region.name }}" data-testid="preview-{{ region.name }}">
-          <div class="placeholder">Noch kein Bild vorhanden</div>
+          <div class="placeholder">No image yet</div>
         </div>
         <div class="row">
           <button type="button" class="refresh primary" data-region="{{ region.name }}"
-                  data-testid="refresh-{{ region.name }}">Jetzt aktualisieren</button>
+                  data-testid="refresh-{{ region.name }}">Refresh now</button>
           <button type="button" class="open-live" data-region="{{ region.name }}"
                   data-testid="live-{{ region.name }}">● Live</button>
           <button type="button" class="open-play" data-region="{{ region.name }}"
-                  data-testid="play-{{ region.name }}">▶ Zeitraffer</button>
+                  data-testid="play-{{ region.name }}">▶ Time-lapse</button>
           <button type="button" class="open-archive" data-region="{{ region.name }}"
-                  title="Aus dem MTG-FCI-Rohdaten-Archiv rendern (Zeitpunkt und Bildtyp frei wählbar)"
-                  data-testid="archive-{{ region.name }}">🛰 FCI-Archiv</button>
+                  title="Render from the MTG FCI raw data archive (any time and image type)"
+                  data-testid="archive-{{ region.name }}">🛰 FCI archive</button>
         </div>
-        <label for="region-source-{{ region.name }}">Quelle</label>
+        <label for="region-source-{{ region.name }}">Source</label>
         <select id="region-source-{{ region.name }}" class="region-source" data-region="{{ region.name }}"
                 data-testid="region-source-{{ region.name }}">
           {% for entry in config.sources.catalog %}
-          <option value="{{ entry.id }}" {% if entry.id == region.source %}selected{% endif %}>{{ entry.label or entry.id }}{% if entry.driver in placeholder_drivers %} – Platzhalter{% endif %}{% if not entry.enabled %} (deaktiviert){% endif %}</option>
+          <option value="{{ entry.id }}" {% if entry.id == region.source %}selected{% endif %}>{{ entry.label or entry.id }}{% if entry.driver in placeholder_drivers %} – placeholder{% endif %}{% if not entry.enabled %} (disabled){% endif %}</option>
           {% endfor %}
         </select>
         <div class="warning" data-testid="region-placeholder-{{ region.name }}"
              {% if (config.sources.get(region.source).driver if config.sources.get(region.source) else "") not in placeholder_drivers %}hidden{% endif %}>
-          Diese Quelle liefert noch keine echten Satellitenbilder (Platzhalter).</div>
-        <label for="region-composite-{{ region.name }}">Bildtyp (Komposit)</label>
+          This source does not deliver real satellite images yet (placeholder).</div>
+        <label for="region-composite-{{ region.name }}">Image type (composite)</label>
         <select id="region-composite-{{ region.name }}" class="region-composite" data-region="{{ region.name }}"
                 data-testid="region-composite-{{ region.name }}">
           {% set region_composites = composites_by_driver.get(driver_of.get(region.source), composites) %}
@@ -169,13 +169,13 @@
         <label class="inline">
           <input type="checkbox" class="region-borders" data-region="{{ region.name }}"
                  data-testid="region-borders-{{ region.name }}" {% if region.borders %}checked{% endif %}>
-          Landesgrenzen einzeichnen (inkl. österr. Bundesländer)
+          Draw country borders (incl. Austrian states)
         </label>
         <div class="warning" data-testid="region-warning-{{ region.name }}"
              {% if config.sources.is_enabled(region.source) %}hidden{% endif %}>
-          Quelle deaktiviert – keine automatischen Läufe, nur „Jetzt aktualisieren“.</div>
+          Source disabled – no automatic runs, only “Refresh now”.</div>
         <div class="message" data-testid="refresh-message-{{ region.name }}" role="status"></div>
-        <div class="muted" data-testid="history-summary-{{ region.name }}">Historie wird geladen …</div>
+        <div class="muted" data-testid="history-summary-{{ region.name }}">Loading history …</div>
         <div class="history-strip" data-testid="history-{{ region.name }}" data-region="{{ region.name }}"></div>
       </div>
       {% endfor %}
@@ -183,14 +183,14 @@
   </section>
 
   <section id="sec-sources">
-    <h2>Quellen &amp; Abrufintervall</h2>
-    <p class="muted">Nur aktivierte Quellen werden automatisch abgerufen. Welche Quelle eine Region nutzt,
-      wird oben bei der Region gewählt. Heruntergeladen wird im Aufnahmetakt der Quelle (Rapid Scan 5 min,
-      MTG FCI 10 min, 0° 15 min), sobald die neue Aufnahme verfügbar ist; danach werden die Regionen der
-      Quelle gerendert. Eigener Takt je Quelle über <code>cycle_minutes</code> im JSON.</p>
+    <h2>Sources &amp; polling interval</h2>
+    <p class="muted">Only enabled sources are fetched automatically. The source a region uses is selected
+      with the region above. Downloads follow the source's scan cycle (Rapid Scan 5 min,
+      MTG FCI 10 min, 0° 15 min) as soon as the new scan is available; afterwards the regions using the
+      source are rendered. Custom cycle per source via <code>cycle_minutes</code> in the JSON.</p>
     <div class="table-wrap">
       <table data-testid="sources-table">
-        <thead><tr><th>Aktiv</th><th>Quelle</th><th class="hide-mobile">Treiber</th><th>EUMETSAT-Abgleich</th></tr></thead>
+        <thead><tr><th>Active</th><th>Source</th><th class="hide-mobile">Driver</th><th>EUMETSAT sync</th></tr></thead>
         <tbody id="sources-tbody"></tbody>
       </table>
     </div>
@@ -199,103 +199,103 @@
     <form id="sources-form" data-testid="sources-form">
       <div class="grid2">
         <div>
-          <label for="poll-interval">Abrufintervall für Quellen ohne eigenen Takt (Minuten)</label>
+          <label for="poll-interval">Polling interval for sources without their own cycle (minutes)</label>
           <input id="poll-interval" name="poll_interval_minutes" type="number" min="1" step="1" required
                  data-testid="poll-interval" value="{{ config.sources.poll_interval_minutes }}">
         </div>
         <div>
-          <label for="auto-sync-hours">Automatischer Quellen-Abgleich (Stunden, 0 = aus)</label>
+          <label for="auto-sync-hours">Automatic source sync (hours, 0 = off)</label>
           <input id="auto-sync-hours" name="auto_sync_hours" type="number" min="0" step="1" required
                  data-testid="auto-sync-hours" value="{{ config.sources.auto_sync_hours }}">
         </div>
       </div>
-      <button type="submit" data-testid="save-sources">Speichern</button>
+      <button type="submit" data-testid="save-sources">Save</button>
       <div class="message" data-testid="sources-message" role="status"></div>
     </form>
 
-    <h3 style="font-size:1rem;margin-top:1rem">Abgleich mit dem EUMETSAT Data Store</h3>
-    <p class="muted">Prüft, ob die Collections der Quellen verfügbar sind und wie aktuell das letzte Produkt ist,
-      und findet neue, unterstützte Collections.
-      Letzter Abgleich: <span data-testid="sources-last-sync">–</span></p>
-    <button type="button" data-testid="sources-sync">Jetzt abgleichen</button>
+    <h3 style="font-size:1rem;margin-top:1rem">Sync with the EUMETSAT Data Store</h3>
+    <p class="muted">Checks whether the sources' collections are available and how recent the latest product is,
+      and finds new, supported collections.
+      Last sync: <span data-testid="sources-last-sync">–</span></p>
+    <button type="button" data-testid="sources-sync">Sync now</button>
     <div class="message" data-testid="sources-sync-message" role="status"></div>
     <div data-testid="discovered-list"></div>
 
     <details data-testid="sources-json-details" style="margin-top:1rem">
-      <summary style="cursor:pointer;font-weight:600">Quellen-Katalog als JSON bearbeiten</summary>
-      <p class="muted">Felder: <code>id</code> (eindeutig, wird von Regionen referenziert), <code>driver</code>
+      <summary style="cursor:pointer;font-weight:600">Edit source catalog as JSON</summary>
+      <p class="muted">Fields: <code>id</code> (unique, referenced by regions), <code>driver</code>
         ({{ drivers | join(", ") }}), <code>label</code>, <code>collection</code> (EUMETSAT-Collection-ID),
-        <code>enabled</code>, <code>description</code>, <code>cycle_minutes</code> (Aufnahmetakt, leer = automatisch).</p>
+        <code>enabled</code>, <code>description</code>, <code>cycle_minutes</code> (scan cycle, empty = automatic).</p>
       <textarea id="sources-json" data-testid="sources-json" spellcheck="false" autocomplete="off"></textarea>
       <div class="row">
-        <button type="button" class="primary" data-testid="sources-json-save">JSON speichern</button>
-        <button type="button" data-testid="sources-json-reset">Zurücksetzen</button>
+        <button type="button" class="primary" data-testid="sources-json-save">Save JSON</button>
+        <button type="button" data-testid="sources-json-reset">Reset</button>
       </div>
       <div class="message" data-testid="sources-json-message" role="status"></div>
     </details>
   </section>
 
   <section id="sec-storage">
-    <h2>Speicherort &amp; Historie</h2>
-    <p class="muted">Aktuell: <code data-testid="storage-current">…</code> · belegt
-      <span data-testid="storage-used">…</span> · Dienst läuft als <span data-testid="storage-uid">…</span></p>
-    <p class="muted">Im Container sind nur eingehängte Volumes dauerhaft. <code>docker-compose.yml</code> hängt
-      <code>/mnt</code> des Hosts unter <code>/mnt</code> ein – Datenträger wie <code>/mnt/data</code> oder
-      <code>/mnt/data2</code> erscheinen daher unten automatisch.</p>
+    <h2>Storage location &amp; history</h2>
+    <p class="muted">Current: <code data-testid="storage-current">…</code> · used
+      <span data-testid="storage-used">…</span> · service runs as <span data-testid="storage-uid">…</span></p>
+    <p class="muted">Inside the container only mounted volumes are persistent. <code>docker-compose.yml</code> mounts
+      the host's <code>/mnt</code> at <code>/mnt</code> – drives like <code>/mnt/data</code> or
+      <code>/mnt/data2</code> therefore appear below automatically.</p>
     <div class="candidates" data-testid="storage-candidates"></div>
     <form id="storage-form" data-testid="storage-form">
-      <label for="storage-path">Speicherort der Bilder</label>
+      <label for="storage-path">Image storage location</label>
       <input id="storage-path" type="text" data-testid="storage-path" autocomplete="off" spellcheck="false"
              placeholder="/mnt/data/ha_satellite">
       <label class="inline"><input type="checkbox" id="storage-move" data-testid="storage-move" checked>
-        vorhandene Bilder an den neuen Ort verschieben</label>
+        move existing images to the new location</label>
       <div class="grid2">
         <div>
-          <label for="history-minutes">Historie (Minuten)</label>
+          <label for="history-minutes">History (minutes)</label>
           <input id="history-minutes" type="number" min="1" step="1" data-testid="history-minutes"
                  value="{{ config.history.history_minutes }}">
         </div>
         <div>
-          <label for="max-storage">Speicherlimit je Region (MB)</label>
+          <label for="max-storage">Storage limit per region (MB)</label>
           <input id="max-storage" type="number" min="1" step="1" data-testid="max-storage"
                  value="{{ config.history.max_storage_mb }}">
         </div>
       </div>
-      <h3 style="font-size:1rem;margin-top:1rem">MTG-FCI-Rohdaten-Archiv</h3>
-      <p class="muted">Ist eine MTG-FCI-Quelle aktiv, werden je Aufnahme nur die Streifen („Chunks“, 1 = Süd …
-        40 = Nord) geladen, die der Bereich unten und alle Regionen brauchen (Europa ≈ 32–40, ~180 MB je Aufnahme),
-        und hier aufbewahrt. Daraus lassen sich Regionen und Bildtypen nachträglich rendern
-        („🛰 FCI-Archiv“ bei der Region) – auch für neu angelegte Regionen.</p>
+      <h3 style="font-size:1rem;margin-top:1rem">MTG FCI raw data archive</h3>
+      <p class="muted">If an MTG FCI source is active, only the stripes (“chunks”, 1 = south …
+        40 = north) needed by the range below and all regions are downloaded per scan (Europe ≈ 32–40, ~180 MB per scan)
+        and kept here. Regions and image types can be rendered from them afterwards
+        (“🛰 FCI archive” at the region) – also for newly created regions.</p>
       <p class="muted" data-testid="archive-summary">…</p>
       <div class="grid2">
         <div>
-          <label for="archive-retention">Aufbewahrung (Stunden, 0 = nur neueste Aufnahme)</label>
+          <label for="archive-retention">Retention (hours, 0 = latest scan only)</label>
           <input id="archive-retention" type="number" min="0" max="168" step="1" data-testid="archive-retention"
                  value="{{ config.archive.retention_hours }}">
         </div>
         <div>
-          <label>Chunk-Bereich (von – bis)</label>
+          <label>Chunk range (from – to)</label>
           <div class="row">
             <input id="archive-chunk-min" type="number" min="1" max="40" step="1" data-testid="archive-chunk-min"
-                   value="{{ config.archive.chunk_min }}" style="width:6rem" aria-label="Chunk von">
+                   value="{{ config.archive.chunk_min }}" style="width:6rem" aria-label="Chunk from">
             <span>–</span>
             <input id="archive-chunk-max" type="number" min="1" max="40" step="1" data-testid="archive-chunk-max"
-                   value="{{ config.archive.chunk_max }}" style="width:6rem" aria-label="Chunk bis">
+                   value="{{ config.archive.chunk_max }}" style="width:6rem" aria-label="Chunk to">
           </div>
         </div>
       </div>
-      <button type="submit" class="primary" data-testid="save-storage">Speicherort &amp; Historie speichern</button>
+      <button type="submit" class="primary" data-testid="save-storage">Save storage location &amp; history</button>
       <div class="message" data-testid="storage-message" role="status"></div>
     </form>
   </section>
 
   <section id="sec-credentials">
-    <h2>EUMETSAT-Zugangsdaten</h2>
-    <p class="muted">Consumer Key und Secret gibt es unter
+    <h2>EUMETSAT credentials</h2>
+    <p class="muted">Get a consumer key and secret at
       <a href="https://api.eumetsat.int/api-key/" target="_blank" rel="noopener">api.eumetsat.int/api-key</a>.</p>
     {% if env_overrides %}
-    <p class="muted" data-testid="env-override-notice">Per Umgebungsvariable gesetzt und daher hier
-      nicht änderbar: {{ env_overrides | join(", ") }}</p>
+    <p class="muted" data-testid="env-override-notice">Set via environment variable and therefore
+      not editable here: {{ env_overrides | join(", ") }}</p>
     {% endif %}
     <form id="credentials-form" data-testid="credentials-form">
       <label for="consumer-key">Consumer Key</label>
@@ -307,12 +307,12 @@
       <label for="consumer-secret">Consumer Secret</label>
       <input id="consumer-secret" name="consumer_secret" type="password" autocomplete="new-password"
              data-testid="consumer-secret"
-             placeholder="{% if masked.eumetsat.consumer_secret %}gespeichert ({{ masked.eumetsat.consumer_secret }}) – leer lassen, um es beizubehalten{% else %}noch nicht gesetzt{% endif %}"
+             placeholder="{% if masked.eumetsat.consumer_secret %}saved ({{ masked.eumetsat.consumer_secret }}) – leave empty to keep it{% else %}not set yet{% endif %}"
              {% if "consumer_secret" in env_overrides %}disabled{% endif %}>
-      <p class="muted">Gespeichertes Secret:
+      <p class="muted">Stored secret:
         <span data-testid="secret-masked">{{ masked.eumetsat.consumer_secret or "–" }}</span></p>
 
-      <button type="submit" data-testid="save-credentials">Zugangsdaten speichern</button>
+      <button type="submit" data-testid="save-credentials">Save credentials</button>
       <div class="message" data-testid="credentials-message" role="status"></div>
     </form>
   </section>
@@ -321,7 +321,7 @@
     <h2>Status</h2>
     <div class="table-wrap">
       <table>
-        <thead><tr><th>Region</th><th>Letzter Lauf</th><th>Nächster Lauf</th><th>Frames</th><th>Letzter Fehler</th></tr></thead>
+        <thead><tr><th>Region</th><th>Last run</th><th>Next run</th><th>Frames</th><th>Last error</th></tr></thead>
         <tbody id="status-tbody">
           {% for name, s in status.items() %}
           <tr data-testid="status-{{ name }}">
@@ -343,63 +343,64 @@
       <label class="inline">Level
         <select data-testid="logs-level" id="logs-level" style="width:auto">
           <option value="INFO">Info+</option>
-          <option value="WARNING">Warnungen+</option>
-          <option value="ERROR">Nur Fehler</option>
+          <option value="WARNING">Warnings+</option>
+          <option value="ERROR">Errors only</option>
         </select></label>
-      <label class="inline"><input type="checkbox" id="logs-autoscroll" data-testid="logs-autoscroll" checked> automatisch scrollen</label>
-      <button type="button" data-testid="logs-clear" style="margin-top:0.4rem">Anzeige leeren</button>
+      <label class="inline"><input type="checkbox" id="logs-autoscroll" data-testid="logs-autoscroll" checked> auto-scroll</label>
+      <button type="button" data-testid="logs-clear" style="margin-top:0.4rem">Clear display</button>
       <a class="button" style="margin-top:0.4rem" href="/api/logs?format=text&amp;limit=0" download="ha_satellite.log"
-         data-testid="logs-download">Herunterladen</a>
+         data-testid="logs-download">Download</a>
     </div>
     <div class="logs" data-testid="logs" id="logs" aria-live="polite"></div>
   </section>
   <section id="sec-api">
-    <h2>API-Links</h2>
-    <p class="muted">Alle lesenden Endpunkte zum Anklicken (öffnen in einem neuen Tab). Die Adressen
-      lassen sich direkt in Home Assistant verwenden (z. B. MJPEG-Kamera).</p>
-    <label for="api-region">Standort</label>
+    <h2>API links</h2>
+    <p class="muted">All read-only endpoints, clickable (open in a new tab). The addresses
+      can be used directly in Home Assistant (e.g. MJPEG camera).</p>
+    <label for="api-region">Location</label>
     <select id="api-region" data-testid="api-region" style="max-width:20rem">
       {% for region in config.regions %}<option value="{{ region.name }}">{{ region.name }}</option>{% endfor %}
     </select>
-    <h3>Standort</h3>
+    <h3>Location</h3>
     <ul class="api-links" data-testid="api-region-links"></ul>
-    <h3>Allgemein</h3>
+    <h3>General</h3>
     <ul class="api-links" data-testid="api-general-links"></ul>
-    <h3>Aktionen (POST, nicht per Klick aufrufbar)</h3>
+    <h3>Actions (POST, not callable by click)</h3>
     <ul class="api-links" data-testid="api-post-links"></ul>
   </section>
 
+    <footer class="muted" style="text-align:center">ha_satellite v{{ version }}</footer>
   </main>
 
   <div class="viewer" id="viewer" data-testid="viewer" hidden>
     <div class="viewer-stage" id="viewer-stage">
       <img id="viewer-img" data-testid="viewer-image" alt="" draggable="false">
       <video id="viewer-video" data-testid="viewer-video" muted loop autoplay playsinline hidden></video>
-      <div class="viewer-empty" id="viewer-empty" hidden>Keine Bilder vorhanden</div>
-      <div class="viewer-loading" id="viewer-loading" data-testid="viewer-loading" hidden>Wird aus den Rohdaten gerendert (ca. 10 s) …</div>
+      <div class="viewer-empty" id="viewer-empty" hidden>No images available</div>
+      <div class="viewer-loading" id="viewer-loading" data-testid="viewer-loading" hidden>Rendering from raw data (approx. 10 s) …</div>
     </div>
     <div class="viewer-bar viewer-top">
       <div class="viewer-title"><span id="viewer-live-badge" class="live-badge" hidden>LIVE</span><span id="viewer-region"></span>
         <small data-testid="viewer-caption" id="viewer-caption"></small></div>
       <div class="viewer-zoom">
-        <button type="button" id="viewer-zoom-out" data-testid="viewer-zoom-out" title="Verkleinern (−)">−</button>
-        <button type="button" id="viewer-zoom-reset" data-testid="viewer-zoom-reset" title="Zoom zurücksetzen (0)">100 %</button>
-        <button type="button" id="viewer-zoom-in" data-testid="viewer-zoom-in" title="Vergrößern (+)">+</button>
+        <button type="button" id="viewer-zoom-out" data-testid="viewer-zoom-out" title="Zoom out (−)">−</button>
+        <button type="button" id="viewer-zoom-reset" data-testid="viewer-zoom-reset" title="Reset zoom (0)">100 %</button>
+        <button type="button" id="viewer-zoom-in" data-testid="viewer-zoom-in" title="Zoom in (+)">+</button>
       </div>
-      <button type="button" id="viewer-fullscreen" data-testid="viewer-fullscreen" title="Vollbild" hidden>⛶</button>
-      <button type="button" id="viewer-close" data-testid="viewer-close" title="Schließen (Esc)">✕</button>
+      <button type="button" id="viewer-fullscreen" data-testid="viewer-fullscreen" title="Fullscreen" hidden>⛶</button>
+      <button type="button" id="viewer-close" data-testid="viewer-close" title="Close (Esc)">✕</button>
     </div>
     <div class="viewer-bar viewer-bottom" id="viewer-controls">
-      <button type="button" id="viewer-prev" data-testid="viewer-prev" title="Älter (←)">◀ älter</button>
-      <select id="viewer-frame" data-testid="viewer-frame" title="Bild auswählen"></select>
+      <button type="button" id="viewer-prev" data-testid="viewer-prev" title="Older (←)">◀ older</button>
+      <select id="viewer-frame" data-testid="viewer-frame" title="Select image"></select>
       <span id="viewer-position" data-testid="viewer-position"></span>
-      <button type="button" id="viewer-next" data-testid="viewer-next" title="Neuer (→)">neuer ▶</button>
-      <button type="button" id="viewer-play" data-testid="viewer-play" title="Zeitraffer (Leertaste)">▶</button>
-      <select id="viewer-speed" data-testid="viewer-speed" title="Geschwindigkeit">
+      <button type="button" id="viewer-next" data-testid="viewer-next" title="Newer (→)">newer ▶</button>
+      <button type="button" id="viewer-play" data-testid="viewer-play" title="Time-lapse (space)">▶</button>
+      <select id="viewer-speed" data-testid="viewer-speed" title="Speed">
         <option value="1000">1 fps</option><option value="500" selected>2 fps</option>
         <option value="250">4 fps</option><option value="125">8 fps</option>
       </select>
-      <select id="viewer-composite" data-testid="viewer-composite" title="Bildtyp (FCI-Archiv)" hidden>
+      <select id="viewer-composite" data-testid="viewer-composite" title="Image type (FCI archive)" hidden>
         {% for name, label in fci_composites.items() %}
         <option value="{{ name }}">{{ label }}</option>
         {% endfor %}
@@ -439,7 +440,7 @@
       if (!iso) return "–";
       const d = new Date(iso);
       if (isNaN(d)) return iso;
-      return withDate ? d.toLocaleString("de-AT") : d.toLocaleTimeString("de-AT", { hour: "2-digit", minute: "2-digit" });
+      return withDate ? d.toLocaleString("en-GB") : d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
     }
     function fmtBytes(n) {
       if (n === null || n === undefined) return "–";
@@ -459,7 +460,7 @@
     }
     const postConfig = (payload) => postJson("/api/config", payload);
 
-    /* ---------- Zugangsdaten ---------- */
+    /* ---------- Credentials ---------- */
     document.getElementById("credentials-form").addEventListener("submit", async (event) => {
       event.preventDefault();
       const message = byTestId("credentials-message");
@@ -474,27 +475,27 @@
         const masked = saved.eumetsat.consumer_secret;
         byTestId("secret-masked").textContent = masked || "–";
         secretInput.placeholder = masked
-          ? "gespeichert (" + masked + ") – leer lassen, um es beizubehalten"
-          : "noch nicht gesetzt";
-        showMessage(message, "Zugangsdaten gespeichert.", true);
+          ? "saved (" + masked + ") – leave empty to keep it"
+          : "not set yet";
+        showMessage(message, "Credentials saved.", true);
       } catch (err) {
-        showMessage(message, "Speichern fehlgeschlagen: " + err.message, false);
+        showMessage(message, "Saving failed: " + err.message, false);
       }
     });
 
-    /* ---------- Quellen ---------- */
+    /* ---------- Sources ---------- */
     let sourcesState = { catalog: [], sync: {}, downloads: {} };
 
     function cycleInfo(entry) {
       const info = (sourcesState.downloads || {})[entry.id];
       if (!info) return "";
-      const parts = ["Takt " + info.cycle_minutes + " min" + (info.cycle_auto ? " (automatisch)" : "")];
+      const parts = ["Cycle " + info.cycle_minutes + " min" + (info.cycle_auto ? " (automatic)" : "")];
       if (info.downloads) {
-        if (info.last_sensing) parts.push("letzte Aufnahme " + fmtTime(info.last_sensing, true));
-        if (info.next_check_at) parts.push("nächster Download " + fmtTime(info.next_check_at, true));
-        if (!info.active && entry.enabled) parts.push("kein Download (keine Region nutzt die Quelle)");
+        if (info.last_sensing) parts.push("last scan " + fmtTime(info.last_sensing, true));
+        if (info.next_check_at) parts.push("next download " + fmtTime(info.next_check_at, true));
+        if (!info.active && entry.enabled) parts.push("no download (no region uses this source)");
       } else {
-        parts.push("ohne Download");
+        parts.push("no download");
       }
       return parts.join(" · ");
     }
@@ -507,15 +508,15 @@
       for (const entry of sourcesState.catalog) {
         const sync = syncSources[entry.id];
         let syncCell;
-        if (!sync) syncCell = el("span", { class: "muted", text: "noch nicht abgeglichen" });
+        if (!sync) syncCell = el("span", { class: "muted", text: "not synced yet" });
         else if (sync.status === "ok") syncCell = el("span", {},
-          el("span", { class: "badge ok", text: "verfügbar" }),
-          el("span", { class: "muted", text: "letztes Produkt " + fmtTime(sync.latest_product_at, true) }));
-        else if (sync.status === "local") syncCell = el("span", { class: "badge", text: "lokal" });
+          el("span", { class: "badge ok", text: "available" }),
+          el("span", { class: "muted", text: "latest product " + fmtTime(sync.latest_product_at, true) }));
+        else if (sync.status === "local") syncCell = el("span", { class: "badge", text: "local" });
         else syncCell = el("span", {}, el("span", { class: "badge err", text: sync.status }),
           el("span", { class: "muted", text: sync.message || "" }));
         const checkbox = el("input", { type: "checkbox", "data-testid": "source-enabled-" + entry.id,
-          "aria-label": (entry.label || entry.id) + " aktiv", checked: entry.enabled,
+          "aria-label": (entry.label || entry.id) + " active", checked: entry.enabled,
           onchange: (ev) => toggleSource(entry.id, ev.target.checked) });
         tbody.append(el("tr", { "data-testid": "source-row-" + entry.id },
           el("td", {}, checkbox),
@@ -526,23 +527,23 @@
               ? el("div", { class: "badge err", "data-testid": "source-download-error-" + entry.id,
                   text: "Download: " + sourcesState.downloads[entry.id].last_error }) : ""),
           el("td", { class: "hide-mobile" }, el("code", { text: entry.driver }),
-            PLACEHOLDER_DRIVERS.includes(entry.driver) ? el("span", { class: "badge warn", text: "Platzhalter" }) : ""),
+            PLACEHOLDER_DRIVERS.includes(entry.driver) ? el("span", { class: "badge warn", text: "placeholder" }) : ""),
           el("td", { "data-testid": "source-sync-status-" + entry.id }, syncCell)));
       }
       const sync = sourcesState.sync || {};
       byTestId("sources-last-sync").textContent = sync.last_run_at
-        ? fmtTime(sync.last_run_at, true) + (sync.error ? " (Fehler: " + sync.error + ")" : "") : "noch nie";
+        ? fmtTime(sync.last_run_at, true) + (sync.error ? " (error: " + sync.error + ")" : "") : "never";
       const list = byTestId("discovered-list");
       list.replaceChildren();
       const discovered = sync.discovered || [];
       if (discovered.length) {
-        list.append(el("p", { class: "muted", text: "Neu entdeckte, unterstützte Collections:" }));
+        list.append(el("p", { class: "muted", text: "Newly discovered, supported collections:" }));
         for (const item of discovered) {
           const slug = item.collection.replace(/[^A-Za-z0-9]+/g, "-");
           list.append(el("div", { class: "row", "data-testid": "discovered-" + slug },
             el("span", {}, el("strong", { text: item.title }), " ", el("code", { class: "muted", text: item.collection }),
               " ", el("span", { class: "badge", text: item.driver })),
-            el("button", { type: "button", "data-testid": "adopt-" + slug, text: "Übernehmen",
+            el("button", { type: "button", "data-testid": "adopt-" + slug, text: "Adopt",
               onclick: () => adoptSource(item.collection) })));
         }
       }
@@ -555,8 +556,8 @@
         const current = select.value;
         select.replaceChildren(...sourcesState.catalog.map((entry) =>
           el("option", { value: entry.id, selected: entry.id === current,
-            text: (entry.label || entry.id) + (PLACEHOLDER_DRIVERS.includes(entry.driver) ? " – Platzhalter" : "")
-              + (entry.enabled ? "" : " (deaktiviert)") })));
+            text: (entry.label || entry.id) + (PLACEHOLDER_DRIVERS.includes(entry.driver) ? " – placeholder" : "")
+              + (entry.enabled ? "" : " (disabled)") })));
         if (!sourcesState.catalog.some((e) => e.id === current)) select.value = "";
         updateRegionWarning(select.dataset.region, select.value);
       });
@@ -572,7 +573,7 @@
         sourcesState = await api("/api/sources");
         renderSources();
       } catch (err) {
-        showMessage(byTestId("sources-table-message"), "Quellen konnten nicht geladen werden: " + err.message, false);
+        showMessage(byTestId("sources-table-message"), "Sources could not be loaded: " + err.message, false);
       }
     }
 
@@ -582,11 +583,11 @@
         sourcesState.catalog = saved.sources.catalog;
         jsonDirty = false;
         renderSources();
-        loadSources();  // Takt/Download-Status nach der Änderung
+        loadSources();  // cycle/download status after the change
         showMessage(message, okText, true);
         return true;
       } catch (err) {
-        showMessage(message, "Speichern fehlgeschlagen: " + err.message, false);
+        showMessage(message, "Saving failed: " + err.message, false);
         return false;
       }
     }
@@ -594,7 +595,7 @@
     async function toggleSource(id, enabled) {
       const catalog = sourcesState.catalog.map((e) => (e.id === id ? { ...e, enabled } : e));
       const ok = await saveCatalog(catalog, byTestId("sources-table-message"),
-        "Quelle " + id + (enabled ? " aktiviert." : " deaktiviert."));
+        "Source " + id + (enabled ? " enabled." : " disabled."));
       if (!ok) renderSources();
     }
 
@@ -604,31 +605,31 @@
       let catalog;
       try {
         catalog = JSON.parse(document.getElementById("sources-json").value);
-        if (!Array.isArray(catalog)) throw new Error("Erwartet wird eine Liste ([...]) von Quellen");
+        if (!Array.isArray(catalog)) throw new Error("Expected a list ([...]) of sources");
       } catch (err) {
-        showMessage(message, "Ungültiges JSON: " + err.message, false);
+        showMessage(message, "Invalid JSON: " + err.message, false);
         return;
       }
-      await saveCatalog(catalog, message, "Quellen-Katalog gespeichert.");
+      await saveCatalog(catalog, message, "Source catalog saved.");
     });
     byTestId("sources-json-reset").addEventListener("click", () => {
       jsonDirty = false;
       renderSources();
-      showMessage(byTestId("sources-json-message"), "Auf gespeicherten Stand zurückgesetzt.", true);
+      showMessage(byTestId("sources-json-message"), "Reset to saved state.", true);
     });
 
     byTestId("sources-sync").addEventListener("click", async (event) => {
       const button = event.currentTarget;
       const message = byTestId("sources-sync-message");
       button.disabled = true;
-      showMessage(message, "Abgleich läuft …", true);
+      showMessage(message, "Sync running …", true);
       try {
         sourcesState.sync = await postJson("/api/sources/sync", {});
         renderSources();
-        if (sourcesState.sync.error) showMessage(message, "Abgleich fehlgeschlagen: " + sourcesState.sync.error, false);
-        else showMessage(message, "Abgleich abgeschlossen.", true);
+        if (sourcesState.sync.error) showMessage(message, "Sync failed: " + sourcesState.sync.error, false);
+        else showMessage(message, "Sync completed.", true);
       } catch (err) {
-        showMessage(message, "Abgleich fehlgeschlagen: " + err.message, false);
+        showMessage(message, "Sync failed: " + err.message, false);
       } finally {
         button.disabled = false;
       }
@@ -639,9 +640,9 @@
       try {
         const entry = await postJson("/api/sources/adopt", { collection });
         await loadSources();
-        showMessage(message, "Quelle " + entry.id + " übernommen (deaktiviert – bei Bedarf aktivieren).", true);
+        showMessage(message, "Source " + entry.id + " adopted (disabled – enable if needed).", true);
       } catch (err) {
-        showMessage(message, "Übernehmen fehlgeschlagen: " + err.message, false);
+        showMessage(message, "Adopting failed: " + err.message, false);
       }
     }
 
@@ -652,16 +653,16 @@
       const autoSync = parseInt(document.getElementById("auto-sync-hours").value, 10);
       try {
         await postConfig({ sources: { poll_interval_minutes: poll, auto_sync_hours: autoSync } });
-        showMessage(message, "Einstellungen gespeichert.", true);
+        showMessage(message, "Settings saved.", true);
         refreshStatus();
         loadSources();
       } catch (err) {
-        showMessage(message, "Speichern fehlgeschlagen: " + err.message, false);
+        showMessage(message, "Saving failed: " + err.message, false);
       }
     });
 
-    // Quelle/Komposit einer Region ändern: der Server rendert die Region
-    // danach sofort neu, die Vorschau lädt nach, sobald der Lauf fertig ist.
+    // Changing a region's source/composite: the server re-renders the region
+    // immediately, the preview reloads once the run is done.
     async function saveRegionField(region, field, value, okText) {
       return saveRegionPatch(region, { [field]: value }, okText);
     }
@@ -672,18 +673,18 @@
         const regions = config.regions.map((r) => (r.name === region ? { ...r, ...patch } : r));
         await postConfig({ regions });
         if (patch.source) updateRegionWarning(region, patch.source);
-        showMessage(message, okText + " – neues Bild wird erzeugt …", true);
+        showMessage(message, okText + " – generating new image …", true);
         fastPollUntil = Date.now() + 90000;
       } catch (err) {
-        showMessage(message, "Speichern fehlgeschlagen: " + err.message, false);
+        showMessage(message, "Saving failed: " + err.message, false);
       }
     }
     function driverOf(sourceId) {
       const entry = sourcesState.catalog.find((e) => e.id === sourceId);
       return entry ? entry.driver : null;
     }
-    // Bildtypen hängen vom Satelliten ab (SEVIRI vs. FCI): Auswahl beim
-    // Quellenwechsel austauschen, nicht verfügbaren Bildtyp auf den Standard setzen.
+    // Image types depend on the satellite (SEVIRI vs. FCI): swap the options on a
+    // source change and reset an unavailable image type to the default.
     function fillCompositeSelect(select, driver, current) {
       const list = COMPOSITES_BY_DRIVER[driver] || COMPOSITES_BY_DRIVER.msg_seviri;
       const options = Object.entries(list).map(([name, label]) => el("option", { value: name, text: label, selected: name === current }));
@@ -699,18 +700,18 @@
         const list = COMPOSITES_BY_DRIVER[driver];
         if (list && !(compositeSelect.value in list)) patch.composite = DEFAULT_COMPOSITES[driver];
         fillCompositeSelect(compositeSelect, driver, patch.composite || compositeSelect.value);
-        saveRegionPatch(region, patch, patch.composite ? "Quelle und Bildtyp gespeichert" : "Quelle gespeichert");
+        saveRegionPatch(region, patch, patch.composite ? "Source and image type saved" : "Source saved");
       });
     });
     document.querySelectorAll("input.region-borders").forEach((box) => {
       box.addEventListener("change", () => saveRegionField(box.dataset.region, "borders", box.checked,
-        box.checked ? "Landesgrenzen eingeschaltet" : "Landesgrenzen ausgeschaltet"));
+        box.checked ? "Country borders enabled" : "Country borders disabled"));
     });
     document.querySelectorAll("select.region-composite").forEach((select) => {
-      select.addEventListener("change", () => saveRegionField(select.dataset.region, "composite", select.value, "Bildtyp gespeichert"));
+      select.addEventListener("change", () => saveRegionField(select.dataset.region, "composite", select.value, "Image type saved"));
     });
 
-    /* ---------- Regionen: Vorschau, Historie, Aktualisieren ---------- */
+    /* ---------- Regions: preview, history, refresh ---------- */
     const framesCache = {};
 
     function reloadPreview(region) {
@@ -741,11 +742,11 @@
         const summary = byTestId("history-summary-" + region);
         if (data.frames.length) {
           const oldest = data.frames[data.frames.length - 1];
-          summary.textContent = "Historie: " + data.frames.length + " Bild(er) seit " + fmtTime(oldest.created_at, true);
-        } else summary.textContent = "Historie: noch keine Bilder";
+          summary.textContent = "History: " + data.frames.length + " image(s) since " + fmtTime(oldest.created_at, true);
+        } else summary.textContent = "History: no images yet";
         return data.frames;
       } catch (err) {
-        byTestId("history-summary-" + region).textContent = "Historie nicht verfügbar: " + err.message;
+        byTestId("history-summary-" + region).textContent = "History not available: " + err.message;
         return [];
       }
     }
@@ -758,10 +759,10 @@
         try {
           const response = await fetch("/api/regions/" + encodeURIComponent(region) + "/refresh", { method: "POST" });
           if (!response.ok) throw new Error("HTTP " + response.status);
-          showMessage(message, "Aktualisierung angestoßen.", true);
+          showMessage(message, "Refresh triggered.", true);
           fastPollUntil = Date.now() + 30000;
         } catch (err) {
-          showMessage(message, "Fehlgeschlagen: " + err.message, false);
+          showMessage(message, "Failed: " + err.message, false);
         } finally {
           button.disabled = false;
         }
@@ -774,7 +775,7 @@
     document.querySelectorAll("button.open-archive").forEach((b) =>
       b.addEventListener("click", () => openViewer({ mode: "archive", region: b.dataset.region })));
 
-    /* ---------- Status (Polling, lädt bei neuen Frames Vorschau/Historie nach) ---------- */
+    /* ---------- Status (polling, reloads preview/history on new frames) ---------- */
     const lastSeenRun = {};
     let fastPollUntil = 0;
     async function refreshStatus() {
@@ -799,7 +800,7 @@
       refreshStatus().finally(() => setTimeout(statusLoop, Date.now() < fastPollUntil ? 1000 : 5000));
     }
 
-    /* ---------- Speicherort ---------- */
+    /* ---------- Storage location ---------- */
     async function loadStorage() {
       try {
         const data = await api("/api/storage");
@@ -812,12 +813,12 @@
         const list = byTestId("storage-candidates");
         list.replaceChildren(...data.candidates.map((c, i) => {
           const badges = [];
-          if (c.is_current) badges.push(el("span", { class: "badge ok", text: "aktuell" }));
-          if (c.is_default) badges.push(el("span", { class: "badge", text: "Standard (/data-Volume)" }));
-          if (c.free_bytes !== null) badges.push(el("span", { class: "badge", text: fmtBytes(c.free_bytes) + " frei von " + fmtBytes(c.total_bytes) }));
-          if (!c.writable) badges.push(el("span", { class: "badge err", text: "nicht beschreibbar" }));
-          if (c.container_only) badges.push(el("span", { class: "badge err", text: "nicht persistent" }));
-          else if (c.same_disk_as_data) badges.push(el("span", { class: "badge warn", text: "System-Disk" }));
+          if (c.is_current) badges.push(el("span", { class: "badge ok", text: "current" }));
+          if (c.is_default) badges.push(el("span", { class: "badge", text: "default (/data volume)" }));
+          if (c.free_bytes !== null) badges.push(el("span", { class: "badge", text: fmtBytes(c.free_bytes) + " free of " + fmtBytes(c.total_bytes) }));
+          if (!c.writable) badges.push(el("span", { class: "badge err", text: "not writable" }));
+          if (c.container_only) badges.push(el("span", { class: "badge err", text: "not persistent" }));
+          else if (c.same_disk_as_data) badges.push(el("span", { class: "badge warn", text: "system disk" }));
           const radio = el("input", { type: "radio", name: "storage-candidate", value: c.path, checked: input.value === c.path });
           const label = el("label", { class: "candidate" + (input.value === c.path ? " selected" : ""),
             "data-testid": "storage-candidate-" + i, "data-path": c.path },
@@ -830,21 +831,21 @@
           return label;
         }));
       } catch (err) {
-        showMessage(byTestId("storage-message"), "Speicherinfo nicht verfügbar: " + err.message, false);
+        showMessage(byTestId("storage-message"), "Storage info not available: " + err.message, false);
       }
     }
     function renderArchiveSummary(a) {
       if (!a) return;
       const parts = [];
-      if (!a.enabled_sources.length) parts.push("Keine MTG-FCI-Quelle aktiv – es wird nichts archiviert.");
-      else parts.push("Aktiv für " + a.enabled_sources.join(", ") + ".");
-      parts.push("Geladene Chunks: " + a.chunks_text + ".");
+      if (!a.enabled_sources.length) parts.push("No MTG FCI source active – nothing is archived.");
+      else parts.push("Active for " + a.enabled_sources.join(", ") + ".");
+      parts.push("Downloaded chunks: " + a.chunks_text + ".");
       for (const [collection, c] of Object.entries(a.collections)) {
-        parts.push(collection + ": " + c.slots + " Aufnahme(n), " + fmtBytes(c.used_bytes)
+        parts.push(collection + ": " + c.slots + " scan(s), " + fmtBytes(c.used_bytes)
           + (c.slots ? " (" + fmtTime(c.oldest, true) + " – " + fmtTime(c.newest, true) + ")" : "") + ".");
       }
       for (const [collection, st] of Object.entries(a.status || {})) {
-        if (st.last_error) parts.push("Fehler (" + collection + "): " + st.last_error);
+        if (st.last_error) parts.push("Error (" + collection + "): " + st.last_error);
       }
       byTestId("archive-summary").textContent = parts.join(" ");
     }
@@ -854,7 +855,7 @@
       const message = byTestId("storage-message");
       const button = byTestId("save-storage");
       button.disabled = true;
-      showMessage(message, "Speichere …", true);
+      showMessage(message, "Saving …", true);
       try {
         const result = await postJson("/api/storage", {
           frames_dir: document.getElementById("storage-path").value.trim(),
@@ -866,11 +867,11 @@
           archive_chunk_max: parseInt(document.getElementById("archive-chunk-max").value, 10),
         });
         delete document.getElementById("storage-path").dataset.touched;
-        showMessage(message, "Gespeichert. Speicherort: " + result.current + " (" + result.moved_frames + " Bilder verschoben).", true);
+        showMessage(message, "Saved. Storage location: " + result.current + " (" + result.moved_frames + " images moved).", true);
         await loadStorage();
         REGIONS.forEach((r) => { reloadPreview(r); loadHistory(r); });
       } catch (err) {
-        showMessage(message, "Speichern fehlgeschlagen: " + err.message, false);
+        showMessage(message, "Saving failed: " + err.message, false);
       } finally {
         button.disabled = false;
       }
@@ -903,13 +904,13 @@
           while (logsEl.childElementCount > 1500) logsEl.firstElementChild.remove();
           if (document.getElementById("logs-autoscroll").checked || nearBottom) logsEl.scrollTop = logsEl.scrollHeight;
         }
-      } catch (err) { /* nächster Versuch */ }
+      } catch (err) { /* next attempt */ }
       setTimeout(pollLogs, 2000);
     }
     document.getElementById("logs-level").addEventListener("change", applyLogFilter);
     byTestId("logs-clear").addEventListener("click", () => logsEl.replaceChildren());
 
-    /* ---------- Vollbild-Betrachter ---------- */
+    /* ---------- Fullscreen viewer ---------- */
     const viewer = document.getElementById("viewer");
     const viewerImg = document.getElementById("viewer-img");
     const vs = { open: false, mode: "frames", region: null, index: 0, frames: [], playing: false, timer: null, pushed: false, composite: null };
@@ -920,24 +921,24 @@
     const viewerVideo = document.getElementById("viewer-video");
     const formatSelect = byTestId("viewer-format");
 
-    /* Format je Modus: Historie als JPEG (schnell, Default) oder PNG (Original),
-       Live als MJPEG-Stream oder als vorab erzeugte Animation (MP4/GIF). */
+    /* Format per mode: history as JPEG (fast, default) or PNG (original),
+       live as MJPEG stream or as pre-generated animation (MP4/GIF). */
     const FORMATS = {
-      frames: [["jpg", "JPEG · schnell"], ["png", "PNG · Original"]],
-      live: [["mjpeg", "MJPEG-Stream"], ["mp4", "MP4-Video"], ["gif", "GIF-Animation"]],
+      frames: [["jpg", "JPEG · fast"], ["png", "PNG · Original"]],
+      live: [["mjpeg", "MJPEG stream"], ["mp4", "MP4 video"], ["gif", "GIF animation"]],
     };
     const FORMAT_KEY = "ha_satellite.viewer.format.";
     const validFormat = (mode, value) => (FORMATS[mode] || []).some(([key]) => key === value);
     function loadFormat(mode) {
       let value = null;
-      try { value = localStorage.getItem(FORMAT_KEY + mode); } catch (err) { /* privater Modus */ }
+      try { value = localStorage.getItem(FORMAT_KEY + mode); } catch (err) { /* private mode */ }
       return validFormat(mode, value) ? value : FORMATS[mode][0][0];
     }
     const formatPref = { frames: loadFormat("frames"), live: loadFormat("live") };
     function setFormat(mode, value) {
       if (!validFormat(mode, value)) return;
       formatPref[mode] = value;
-      try { localStorage.setItem(FORMAT_KEY + mode, value); } catch (err) { /* privater Modus */ }
+      try { localStorage.setItem(FORMAT_KEY + mode, value); } catch (err) { /* private mode */ }
     }
     function frameUrl(frame) {
       return vs.mode === "frames" && formatPref.frames === "jpg" && frame.jpeg_url ? frame.jpeg_url : frame.url;
@@ -962,7 +963,7 @@
     }
     const activeMedia = () => (viewerVideo.hidden ? viewerImg : viewerVideo);
 
-    /* Zoom & Verschieben (CSS-Transform auf dem Bild, bleibt beim Blättern erhalten) */
+    /* Zoom & pan (CSS transform on the image, kept while paging) */
     const ZOOM_STEPS = [1, 1.5, 2, 3, 4, 6, 8];
     const ZOOM_MAX = ZOOM_STEPS[ZOOM_STEPS.length - 1];
     const zoom = { z: 1, x: 0, y: 0 };
@@ -990,7 +991,7 @@
       byTestId("viewer-zoom-in").disabled = zoom.z >= ZOOM_MAX;
       viewer.dataset.zoom = String(zoom.z);
     }
-    // (px, py): Punkt relativ zur Bühnenmitte, der beim Zoomen an seiner Stelle bleibt.
+    // (px, py): point relative to the stage center that stays in place while zooming.
     function zoomAt(z, px = 0, py = 0) {
       z = Math.min(ZOOM_MAX, Math.max(1, z));
       const f = z / zoom.z;
@@ -1042,16 +1043,16 @@
     }
 
     function syncFrameSelect() {
-      // Optionen nur neu aufbauen, wenn sich die Frame-Liste geändert hat (Zeitraffer bleibt flüssig).
+      // Only rebuild options when the frame list changed (keeps the time-lapse smooth).
       const key = vs.mode + "|" + vs.frames.map((f) => f.url).join("|");
       if (frameSelect.dataset.key !== key) {
         frameSelect.dataset.key = key;
         const label = (iso) => {
           const d = new Date(iso);
-          return isNaN(d) ? iso : d.toLocaleString("de-AT", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
+          return isNaN(d) ? iso : d.toLocaleString("en-GB", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
         };
         frameSelect.replaceChildren(...vs.frames.map((f, i) => el("option", { value: String(i),
-          text: label(f.created_at) + (i === 0 ? " (neuestes)" : "") })));
+          text: label(f.created_at) + (i === 0 ? " (newest)" : "") })));
       }
       frameSelect.disabled = !vs.frames.length;
       if (vs.frames.length) frameSelect.value = String(vs.index);
@@ -1060,18 +1061,18 @@
     function renderViewer() {
       const live = vs.mode === "live";
       const archive = vs.mode === "archive";
-      document.getElementById("viewer-region").textContent = vs.region + (archive ? " · FCI-Archiv" : "");
+      document.getElementById("viewer-region").textContent = vs.region + (archive ? " · FCI archive" : "");
       document.getElementById("viewer-live-badge").hidden = !live;
-      byTestId("viewer-mode").textContent = live || archive ? "Historie" : "● Live";
+      byTestId("viewer-mode").textContent = live || archive ? "History" : "● Live";
       for (const id of ["viewer-prev", "viewer-next", "viewer-position", "viewer-frame"]) byTestId(id).hidden = live;
-      // Archiv-Bilder werden bei Bedarf gerendert (~10 s) - kein Zeitraffer.
+      // Archive images are rendered on demand (~10 s) - no time-lapse.
       for (const id of ["viewer-play", "viewer-speed"]) byTestId(id).hidden = live || archive;
       viewerComposite.hidden = !archive;
       syncFormatSelect();
       const empty = document.getElementById("viewer-empty");
       empty.textContent = archive
-        ? "Keine FCI-Rohdaten im Archiv – MTG-FCI-Quelle unter „Quellen“ aktivieren."
-        : "Keine Bilder vorhanden";
+        ? "No FCI raw data in the archive – enable an MTG FCI source under “Sources”."
+        : "No images available";
       if (live) {
         viewerLoading.hidden = true;
         empty.hidden = true;
@@ -1080,7 +1081,7 @@
         const src = base + (fmt === "mp4" ? "/animation.mp4" : fmt === "gif" ? "/animation.gif" : "/mjpeg");
         if (fmt === "mp4") {
           delete viewerImg.dataset.stream;
-          viewerImg.removeAttribute("src");  // beendet einen laufenden MJPEG-Stream
+          viewerImg.removeAttribute("src");  // ends a running MJPEG stream
           viewerImg.hidden = true;
           viewerVideo.hidden = false;
           if (viewerVideo.dataset.src !== src) {
@@ -1096,8 +1097,8 @@
             viewerImg.src = src + "?t=" + Date.now();
           }
         }
-        const label = { mjpeg: "Stream (MJPEG, Schleife über die Historie)", mp4: "Animation der Historie (MP4)",
-          gif: "Animation der Historie (GIF)" }[fmt];
+        const label = { mjpeg: "Stream (MJPEG, looping over the history)", mp4: "History animation (MP4)",
+          gif: "History animation (GIF)" }[fmt];
         byTestId("viewer-caption").textContent = label + " · " + location.origin + src;
         applyZoom();
         if (!vs.playing) setHash(stateHash());
@@ -1122,7 +1123,7 @@
         viewerImg.src = url;
       }
       viewerImg.alt = vs.region + " " + frame.created_at;
-      byTestId("viewer-caption").textContent = fmtTime(frame.created_at, true) + (vs.index === 0 ? " · neuestes Bild" : "")
+      byTestId("viewer-caption").textContent = fmtTime(frame.created_at, true) + (vs.index === 0 ? " · latest image" : "")
         + (archive ? "" : " · " + (formatPref.frames === "png" || !frame.jpeg_url ? "PNG" : "JPEG"))
         + (archive ? " · MTG FCI · " + (viewerComposite.selectedOptions[0] || {}).textContent : "");
       byTestId("viewer-position").textContent = (vs.frames.length - vs.index) + " / " + vs.frames.length;
@@ -1151,7 +1152,7 @@
         viewer.classList.remove("controls-hidden");
         document.body.classList.add("viewer-open");
         if (!fromHash) {
-          // Eigener History-Eintrag: "Zurück" (z. B. am Handy) schließt den Betrachter.
+          // Own history entry: "Back" (e.g. on a phone) closes the viewer.
           history.pushState({ viewer: true }, "", location.pathname + location.search + "#" + stateHash());
           vs.pushed = true;
         }
@@ -1167,7 +1168,7 @@
         vs.frames = data.frames;
         vs.index = Math.min(vs.index, Math.max(vs.frames.length - 1, 0));
         renderViewer();
-        if (data.error) byTestId("viewer-caption").textContent = "Archiv nicht verfügbar: " + data.error;
+        if (data.error) byTestId("viewer-caption").textContent = "Archive not available: " + data.error;
       } else if (mode === "frames") {
         vs.frames = framesCache[region] || [];
         renderViewer();
@@ -1188,7 +1189,7 @@
       viewer.hidden = true;
       document.body.classList.remove("viewer-open");
       delete viewerImg.dataset.stream;
-      viewerImg.removeAttribute("src");  // beendet einen laufenden MJPEG-Stream
+      viewerImg.removeAttribute("src");  // ends a running MJPEG stream
       stopVideo();
       viewerImg.hidden = false;
       resetZoom();
@@ -1222,13 +1223,13 @@
     viewerVideo.addEventListener("loadedmetadata", applyZoom);
     viewerVideo.addEventListener("error", () => {
       if (!viewerVideo.getAttribute("src")) return;
-      byTestId("viewer-caption").textContent = "MP4 nicht verfügbar – anderes Format wählen.";
+      byTestId("viewer-caption").textContent = "MP4 not available – choose another format.";
     });
     formatSelect.addEventListener("change", () => {
       setFormat(vs.mode, formatSelect.value);
       const playing = vs.playing;
       renderViewer();
-      if (playing) startPlaying();  // lädt die Bilder im neuen Format vor
+      if (playing) startPlaying();  // preloads the images in the new format
       setHash(stateHash());
     });
     frameSelect.addEventListener("change", () => {
@@ -1248,8 +1249,8 @@
         const response = await fetch(src);
         const body = await response.json().catch(() => ({}));
         if (viewerImg.getAttribute("src") === src)
-          byTestId("viewer-caption").textContent = "Rendern fehlgeschlagen: " + (body.detail || "HTTP " + response.status);
-      } catch (err) { /* Netzfehler: Beschriftung unverändert lassen */ }
+          byTestId("viewer-caption").textContent = "Rendering failed: " + (body.detail || "HTTP " + response.status);
+      } catch (err) { /* network error: leave caption unchanged */ }
     });
     const fsButton = byTestId("viewer-fullscreen");
     fsButton.hidden = !(viewer.requestFullscreen && document.fullscreenEnabled);
@@ -1263,7 +1264,7 @@
       if (ev.target === frameSelect || ev.target === viewerComposite || ev.target === formatSelect
           || ev.target === byTestId("viewer-speed")) {
         if (ev.key === "Escape") closeViewer();
-        return;  // Pfeiltasten gehören dann der Auswahlliste
+        return;  // arrow keys then belong to the select
       }
       if (ev.key === "Escape") closeViewer();
       else if (ev.key === "ArrowLeft") step(1);
@@ -1274,8 +1275,8 @@
       else if (ev.key === " " && vs.mode === "frames") { ev.preventDefault(); vs.playing ? stopPlaying() : startPlaying(); }
     });
 
-    // Touch: Wischen links/rechts blättert, Tippen blendet die Bedienelemente aus/ein,
-    // zwei Finger zoomen, gezoomt verschiebt ein Finger das Bild.
+    // Touch: swipe left/right pages, tap toggles the controls,
+    // two fingers zoom, when zoomed one finger pans the image.
     let touchStart = null;
     let pinch = null;
     const touchDist = (a, b) => Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
@@ -1322,7 +1323,7 @@
       ev.preventDefault();
     });
 
-    // Maus: Rad zoomt an der Mausposition, Ziehen verschiebt, Doppelklick zoomt 2× / zurück.
+    // Mouse: wheel zooms at the pointer, drag pans, double-click zooms 2× / back.
     let drag = null;
     let suppressClick = false;
     stage.addEventListener("wheel", (ev) => {
@@ -1374,34 +1375,35 @@
     }
     window.addEventListener("popstate", applyHash);
 
-    /* ---------- API-Links ---------- */
+    /* ---------- API links ---------- */
     const API_GENERAL = [
-      ["config", "/api/config", "Aktuelle Konfiguration (Secret maskiert)"],
-      ["status", "/api/status", "Letzter/nächster Lauf, Frame-Anzahl, Fehler je Region"],
-      ["sources", "/api/sources", "Quellen-Katalog + Ergebnis des letzten Abgleichs"],
-      ["storage", "/api/storage", "Speicherort, Belegung, Kandidaten"],
-      ["archive-info", "/api/archive", "MTG-FCI-Rohdaten-Archiv: Aufbewahrung, Chunks, Belegung"],
-      ["logs", "/api/logs", "Log-Einträge (JSON)"],
-      ["logs-text", "/api/logs?format=text", "Log-Einträge als Text"],
+      ["config", "/api/config", "Current configuration (secret masked)"],
+      ["status", "/api/status", "Last/next run, frame count, errors per region"],
+      ["sources", "/api/sources", "Source catalog + result of the last sync"],
+      ["storage", "/api/storage", "Storage location, usage, candidates"],
+      ["archive-info", "/api/archive", "MTG FCI raw data archive: retention, chunks, usage"],
+      ["logs", "/api/logs", "Log entries (JSON)"],
+      ["logs-text", "/api/logs?format=text", "Log entries as text"],
+      ["version", "/api/version", "App version"],
       ["healthz", "/healthz", "Liveness"],
     ];
     const API_REGION = [
-      ["live", "/live/{r}", "Live-Stream im Browser"],
-      ["latest", "/regions/{r}/latest.png", "Neuestes Einzelbild (PNG)"],
-      ["latest-jpg", "/regions/{r}/latest.jpg", "Neuestes Einzelbild (JPEG, gecacht, schneller)"],
-      ["frame0", "/regions/{r}/frames/0.png", "Frame 0 aus dem Puffer (0 = neuester)"],
-      ["frames", "/api/regions/{r}/frames", "Historie: alle Frames (JSON)"],
-      ["gif", "/regions/{r}/animation.gif", "Animation der Historie (GIF)"],
-      ["mp4", "/regions/{r}/animation.mp4", "Animation der Historie (MP4)"],
-      ["mjpeg", "/regions/{r}/mjpeg", "MJPEG-Stream (Home-Assistant-Kamera)"],
-      ["archive", "/api/regions/{r}/archive", "FCI-Archiv: verfügbare Aufnahmen (JSON, Bild-URLs mit ?composite=…)"],
+      ["live", "/live/{r}", "Live stream in the browser"],
+      ["latest", "/regions/{r}/latest.png", "Latest single image (PNG)"],
+      ["latest-jpg", "/regions/{r}/latest.jpg", "Latest single image (JPEG, cached, faster)"],
+      ["frame0", "/regions/{r}/frames/0.png", "Frame 0 from the buffer (0 = newest)"],
+      ["frames", "/api/regions/{r}/frames", "History: all frames (JSON)"],
+      ["gif", "/regions/{r}/animation.gif", "History animation (GIF)"],
+      ["mp4", "/regions/{r}/animation.mp4", "History animation (MP4)"],
+      ["mjpeg", "/regions/{r}/mjpeg", "MJPEG stream (Home Assistant camera)"],
+      ["archive", "/api/regions/{r}/archive", "FCI archive: available scans (JSON, image URLs with ?composite=…)"],
     ];
     const API_POST = [
-      ["/api/config", "Konfiguration speichern"],
-      ["/api/regions/{r}/refresh", "Sofortiger Render-Lauf"],
-      ["/api/sources/sync", "Quellen-Abgleich ausführen"],
-      ["/api/sources/adopt", "Entdeckte Collection übernehmen"],
-      ["/api/storage", "Speicherort/Historie setzen"],
+      ["/api/config", "Save configuration"],
+      ["/api/regions/{r}/refresh", "Immediate render run"],
+      ["/api/sources/sync", "Run source sync"],
+      ["/api/sources/adopt", "Adopt discovered collection"],
+      ["/api/storage", "Set storage location/history"],
     ];
     function apiItem(method, path, text, testid) {
       const url = location.origin + path;

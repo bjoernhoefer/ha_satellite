@@ -1,8 +1,9 @@
-"""Gemeinsame Fixtures: echter uvicorn-Server mit isoliertem Datenverzeichnis.
+"""Shared fixtures: real uvicorn server with an isolated data directory.
 
-Der Server läuft bewusst als eigener Prozess statt über ``TestClient``:
-``ha_satellite.main`` liest Pfade und Konfiguration beim Import, und die
-Klicktests brauchen ohnehin einen echten HTTP-Server für den Browser.
+The server deliberately runs as a separate process instead of via
+``TestClient``: ``ha_satellite.main`` reads paths and configuration at
+import time, and the click tests need a real HTTP server for the browser
+anyway.
 """
 
 from __future__ import annotations
@@ -28,10 +29,10 @@ from ha_satellite.config import default_config
 
 
 def _dummy_config() -> dict:
-    """Vorgabe-Regionen, aber mit der Testquelle statt echter EUMETSAT-Daten.
+    """Default regions, but using the test source instead of real EUMETSAT data.
 
-    So rendert der Server auch ohne Zugangsdaten sofort Frames, und kein
-    Test löst versehentlich Downloads aus dem Data Store aus.
+    This way the server renders frames immediately without credentials, and
+    no test accidentally triggers downloads from the Data Store.
     """
     config = default_config().model_dump()
     for entry in config["sources"]["catalog"]:
@@ -55,10 +56,10 @@ class LiveServer:
         return httpx.get(f"{self.url}/api/regions/{region}/frames").json()["frames"]
 
     def ensure_frames(self, region: str, count: int, timeout: float = 20.0) -> list[dict]:
-        """Stößt Render-Läufe an, bis mindestens ``count`` Frames da sind.
+        """Trigger render runs until at least ``count`` frames exist.
 
-        Wiederholt den Trigger, da kollidierende Läufe (globaler Render-Lock)
-        bewusst übersprungen werden.
+        Repeats the trigger since colliding runs (global render lock) are
+        deliberately skipped.
         """
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
@@ -81,19 +82,19 @@ def _wait_until_healthy(url: str, process: subprocess.Popen, timeout: float = 20
     while time.monotonic() < deadline:
         if process.poll() is not None:
             output = process.stdout.read() if process.stdout else ""
-            raise RuntimeError(f"Server ist beim Start abgestürzt:\n{output}")
+            raise RuntimeError(f"Server crashed on startup:\n{output}")
         try:
             if httpx.get(f"{url}/healthz", timeout=1.0).status_code == 200:
                 return
         except httpx.HTTPError:
             pass
         time.sleep(0.1)
-    raise RuntimeError("Server wurde nicht rechtzeitig erreichbar")
+    raise RuntimeError("Server did not become reachable in time")
 
 
 @pytest.fixture
 def start_server(tmp_path: Path) -> Iterator[Callable[..., LiveServer]]:
-    """Fabrik für Server-Instanzen; ``env`` erlaubt z. B. EUMETSAT-Overrides."""
+    """Factory for server instances; ``env`` allows e.g. EUMETSAT overrides."""
     processes: list[subprocess.Popen] = []
 
     def _start(env: dict[str, str] | None = None) -> LiveServer:
@@ -114,7 +115,7 @@ def start_server(tmp_path: Path) -> Iterator[Callable[..., LiveServer]]:
             HA_SATELLITE_DATA_DIR=str(data_dir),
             HA_SATELLITE_CONFIG=str(data_dir / "config.yaml"),
             HA_SATELLITE_STORAGE_ROOTS=str(storage_root),
-            # Nie gegen die echte EUMETSAT-API: geschlossener Port als Default.
+            # Never hit the real EUMETSAT API: closed port as default.
             HA_SATELLITE_EUMETSAT_API="http://127.0.0.1:9",
         )
         server_env.update(env or {})

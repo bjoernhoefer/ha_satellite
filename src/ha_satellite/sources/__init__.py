@@ -1,9 +1,9 @@
-"""Source-Abstraktion für die verschiedenen EUMETSAT-Datenquellen.
+"""Source abstraction for the various EUMETSAT data sources.
 
-Jede Quelle implementiert ``render(region, config, last_sensing) ->
-RenderedFrame``. ``msg_seviri`` und ``mtg_fci`` laden echte Daten aus dem
-EUMETSAT Data Store und rendern sie mit Satpy; ``data_tailor`` liefert
-bis zu seiner Umsetzung noch Platzhalterbilder ("Dummy-Frames").
+Each source implements ``render(region, config, last_sensing) ->
+RenderedFrame``. ``msg_seviri`` and ``mtg_fci`` load real data from the
+EUMETSAT Data Store and render it with Satpy; ``data_tailor`` still
+delivers placeholder images ("dummy frames") until it is implemented.
 """
 
 from __future__ import annotations
@@ -29,17 +29,17 @@ logger = logging.getLogger(__name__)
 
 
 class RenderError(Exception):
-    """Wird ausgelöst, wenn ein Frame nicht erzeugt werden konnte."""
+    """Raised when a frame could not be produced."""
 
 
 class NoNewData(Exception):
-    """Seit dem letzten Frame gibt es keine neue Aufnahme - kein Fehler."""
+    """No new acquisition since the last frame - not an error."""
 
 
 @dataclass(frozen=True)
 class RenderedFrame:
     png: bytes
-    # Aufnahmezeitpunkt (Ende des Scans) - wird zum Frame-Zeitstempel.
+    # Sensing time (end of scan) - becomes the frame timestamp.
     sensing_time: datetime
 
 
@@ -48,18 +48,18 @@ def data_dir() -> Path:
 
 
 class Source(ABC):
-    """Basisklasse für austauschbare Bildquellen."""
+    """Base class for interchangeable image sources."""
 
     name: str = "base"
-    # Eigener Download-Schritt (fetch) im Takt der Quelle?
+    # Separate download step (fetch) at the source's cycle?
     downloads: bool = False
-    # Auch herunterladen, wenn keine Region die Quelle nutzt (Rohdaten-Archiv).
+    # Download even if no region uses the source (raw data archive).
     archive_always: bool = False
 
     def fetch(self, entry: "SourceDefinition", config: AppConfig) -> datetime:
-        """Neuestes Produkt lokal bereitstellen (idempotent, ohne Rendern).
+        """Make the newest product available locally (idempotent, no rendering).
 
-        Liefert das Aufnahmeende des neuesten lokal vorhandenen Produkts.
+        Returns the sensing end of the newest locally available product.
         """
         raise NotImplementedError
 
@@ -70,11 +70,10 @@ class Source(ABC):
         config: AppConfig,
         last_sensing: datetime | None = None,
     ) -> RenderedFrame:
-        """Erzeugt einen Frame für die Region.
+        """Produces a frame for the region.
 
-        ``last_sensing`` ist der Aufnahmezeitpunkt des neuesten Frames im
-        Puffer; liegt keine neuere Aufnahme vor, wird ``NoNewData``
-        ausgelöst.
+        ``last_sensing`` is the sensing time of the newest frame in the
+        buffer; if there is no newer acquisition, ``NoNewData`` is raised.
         """
         raise NotImplementedError
 
@@ -82,7 +81,7 @@ class Source(ABC):
         return RenderedFrame(self._dummy_frame(region), datetime.now(timezone.utc))
 
     def _dummy_frame(self, region: RegionConfig) -> bytes:
-        """Gemeinsamer Platzhalter-Renderer, bis die echte Quelle steht."""
+        """Shared placeholder renderer until the real source is available."""
         bbox = region.bounding_box()
         image = Image.new("RGB", (region.width, region.height), color=(10, 20, 40))
         draw = ImageDraw.Draw(image)
@@ -90,7 +89,7 @@ class Source(ABC):
         lines = [
             f"ha_satellite ({self.name})",
             f"Region: {region.name}",
-            f"Komposit: {region.composite}",
+            f"Composite: {region.composite}",
             f"BBox: {bbox.lat_min:.2f},{bbox.lon_min:.2f} .. {bbox.lat_max:.2f},{bbox.lon_max:.2f}",
             timestamp,
         ]
@@ -104,7 +103,7 @@ class Source(ABC):
 
 
 class DummySource(Source):
-    """Reine Testquelle, die ausschließlich Platzhalterbilder erzeugt."""
+    """Pure test source that only produces placeholder images."""
 
     name = "dummy"
 
@@ -125,10 +124,10 @@ def _product_cache() -> ProductCache:
 
 
 class MsgSeviriSource(Source):
-    """MSG/SEVIRI aus dem Data Store + lokales Satpy-Rendering.
+    """MSG/SEVIRI from the Data Store + local Satpy rendering.
 
-    Ein Produkt (~100 MB) wird einmal geladen und von allen Regionen
-    genutzt; gerendert wird in einem Kindprozess.
+    A product (~100 MB) is downloaded once and used by all regions;
+    rendering happens in a child process.
     """
 
     name = "msg_seviri"
@@ -155,11 +154,11 @@ class MsgSeviriSource(Source):
         )
 
         collection = config.sources.collection_for(region.source)
-        # Normalerweise hat der Download-Job das Produkt gerade geladen;
-        # nur ohne lokales Produkt (z. B. direkt nach dem Start) selbst laden.
+        # Normally the download job has just fetched the product; only download
+        # it here if there is no local product (e.g. right after startup).
         product = _product_cache().cached(collection) or self._download(collection, config)
         if last_sensing is not None and product.sensing_end <= last_sensing:
-            raise NoNewData(f"{product.product_id} bereits gerendert")
+            raise NoNewData(f"{product.product_id} already rendered")
 
         request = RenderRequest(
             reader=self.reader,
@@ -183,13 +182,13 @@ class MsgSeviriSource(Source):
 
 
 class DataTailorSource(Source):
-    """Serverseitiger Zuschnitt via EUMETSAT Data Tailor (folgt)."""
+    """Server-side cropping via EUMETSAT Data Tailor (to come)."""
 
     name = "data_tailor"
 
     def render(self, region, config, last_sensing=None) -> RenderedFrame:
         logger.warning(
-            "data_tailor: Anbindung noch nicht implementiert, liefere Dummy-Frame für %s",
+            "data_tailor: integration not implemented yet, delivering dummy frame for %s",
             region.name,
         )
         return self._dummy(region)
@@ -206,8 +205,8 @@ def archive_root(config: AppConfig) -> Path:
 
 
 def fci_source_for(config: AppConfig, region: RegionConfig | None = None):
-    """FCI-Katalogeintrag für eine Region: ihre eigene Quelle, falls FCI,
-    sonst der erste aktivierte (bzw. erste) FCI-Eintrag."""
+    """FCI catalog entry for a region: its own source if FCI,
+    otherwise the first enabled (or first) FCI entry."""
     if region is not None:
         own = config.sources.get(region.source)
         if own is not None and own.driver == "mtg_fci":
@@ -217,7 +216,7 @@ def fci_source_for(config: AppConfig, region: RegionConfig | None = None):
 
 
 def render_fci_slot(slot, region: RegionConfig, composite: str) -> RenderedFrame:
-    """Rendert eine Region aus einem archivierten FCI-Slot."""
+    """Renders a region from an archived FCI slot."""
     from ha_satellite.config import resolve_fci_composite
     from ha_satellite.sources.fci_archive import chunks_for_region, format_chunks
     from ha_satellite.sources.satpy_render import (
@@ -228,13 +227,13 @@ def render_fci_slot(slot, region: RegionConfig, composite: str) -> RenderedFrame
 
     needed = chunks_for_region(region)
     if not needed:
-        raise RenderError(f"Region {region.name} liegt außerhalb der FCI-Vollscheibe")
+        raise RenderError(f"Region {region.name} is outside the FCI full disk")
     files = slot.chunk_files()
     missing = needed - set(files)
     if missing:
         raise RenderError(
-            f"Slot {slot.name} enthält nicht alle Chunks für {region.name} "
-            f"(benötigt {format_chunks(needed)}, fehlt {format_chunks(missing)})"
+            f"Slot {slot.name} does not contain all chunks for {region.name} "
+            f"(needs {format_chunks(needed)}, missing {format_chunks(missing)})"
         )
     request = RenderRequest(
         reader="fci_l1c_nc",
@@ -258,7 +257,7 @@ def render_fci_slot(slot, region: RegionConfig, composite: str) -> RenderedFrame
 
 
 def sync_fci_archive(config: AppConfig, collection: str):
-    """Neuesten FCI-Slot ins Archiv laden (idempotent), liefert den Slot."""
+    """Download the newest FCI slot into the archive (idempotent), returns the slot."""
     from ha_satellite.config import DEFAULT_FCI_COLLECTION
     from ha_satellite.sources.fci_archive import ArchiveError, get_archive, wanted_chunks
 
@@ -274,11 +273,11 @@ def sync_fci_archive(config: AppConfig, collection: str):
 
 
 class MtgFciSource(Source):
-    """MTG/FCI (1 km sichtbar, 2 km IR) aus dem Chunk-Archiv.
+    """MTG/FCI (1 km visible, 2 km IR) from the chunk archive.
 
-    Pro Slot werden nur die benötigten Chunks geladen (Europa ~180 MB statt
-    ~1 GB) und für ``archive.retention_hours`` aufbewahrt; gerendert werden
-    nur die Chunks der Region (hält den Speicher unter ~500 MB).
+    Per slot only the required chunks are downloaded (Europe ~180 MB instead
+    of ~1 GB) and kept for ``archive.retention_hours``; only the region's
+    chunks are rendered (keeps memory below ~500 MB).
     """
 
     name = "mtg_fci"
@@ -293,8 +292,8 @@ class MtgFciSource(Source):
         from ha_satellite.sources.fci_archive import chunks_for_region, get_archive
 
         collection = config.sources.collection_for(region.source, DEFAULT_FCI_COLLECTION)
-        # Neuester archivierter Slot mit allen Chunks der Region (vom
-        # Download-Job geladen); fehlt er, selbst laden.
+        # Newest archived slot with all of the region's chunks (downloaded by
+        # the download job); if missing, download it here.
         needed = chunks_for_region(region)
         slot = next(
             (s for s in get_archive(archive_root(config)).slots(collection)[:1]
@@ -302,7 +301,7 @@ class MtgFciSource(Source):
             None,
         ) or sync_fci_archive(config, collection)
         if last_sensing is not None and slot.sensing_end <= last_sensing:
-            raise NoNewData(f"{slot.product_id} bereits gerendert")
+            raise NoNewData(f"{slot.product_id} already rendered")
         return render_fci_slot(slot, region, region.composite)
 
 
@@ -318,4 +317,4 @@ def get_source(name: str) -> Source:
     try:
         return SOURCE_REGISTRY[name]()
     except KeyError as exc:
-        raise RenderError(f"Unbekannte Quelle: {name}") from exc
+        raise RenderError(f"Unknown source: {name}") from exc

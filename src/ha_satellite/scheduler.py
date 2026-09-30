@@ -1,26 +1,26 @@
-"""Nicht-blockierender Scheduler: Download im Aufnahmetakt, Rendern danach.
+"""Non-blocking scheduler: download at the capture cycle, render afterwards.
 
-Nutzt APScheduler mit einem eigenen Thread-Pool, sodass der FastAPI-
-Webserver (asyncio) niemals auf Download oder Rendering wartet.
+Uses APScheduler with its own thread pool so the FastAPI web server
+(asyncio) never waits for downloads or rendering.
 
-- **Download** je aktiver Quelle mit Download-Treiber (``msg_seviri``,
-  ``mtg_fci``) im Takt der Quelle (Rapid Scan 5 min, FCI 10 min, 0° 15 min;
-  ``SourcesConfig.cycle_for``). Der Zeitpunkt richtet sich nach der
-  letzten Aufnahme: Aufnahmeende + Takt + beobachtete Lieferverzögerung.
-  Ist das Produkt dann noch nicht da, wird jede Minute erneut gefragt.
-  Downloads halten den Render-Lock nicht (nur I/O).
-- **Rendern** wird durch eine neue Aufnahme ausgelöst (für alle Regionen
-  der Quelle) und nutzt das bereits lokal liegende Produkt. Ein globaler
-  Lock stellt sicher, dass immer nur ein Render-Vorgang gleichzeitig läuft
-  ("Ein Render-Vorgang zur Zeit") - wichtig, da sich der Pi 5 die
-  Ressourcen mit Grafana teilt. Quellen ohne Download (Platzhalter)
-  rendern weiter im festen Intervall.
-- Nach jedem neuen Frame werden Vorschaubild, JPEG und Animationen
-  vorab erzeugt (``media.prewarm``), damit das Abspielen sofort startet.
+- **Download** per active source with a download driver (``msg_seviri``,
+  ``mtg_fci``) at the source's cycle (Rapid Scan 5 min, FCI 10 min, 0° 15
+  min; ``SourcesConfig.cycle_for``). Timing follows the last capture:
+  end of capture + cycle + observed delivery latency. If the product is
+  not there yet, it is polled every minute. Downloads do not hold the
+  render lock (I/O only).
+- **Rendering** is triggered by a new capture (for all regions of the
+  source) and uses the product already stored locally. A global lock
+  ensures only one render runs at a time ("one render at a time") -
+  important on small hosts that share resources with other services.
+  Sources without downloads (placeholders) keep rendering at a fixed
+  interval.
+- After each new frame, thumbnail, JPEG and animations are pre-generated
+  (``media.prewarm``) so playback starts immediately.
 
-Fehler (fehlende Slots, API-Timeouts, ungültige Credentials) werden
-geloggt und im StatusStore vermerkt, führen aber nicht zum Absturz;
-der nächste planmäßige Lauf versucht es erneut (einfaches Retry).
+Errors (missing slots, API timeouts, invalid credentials) are logged and
+recorded in the StatusStore but never crash the service; the next
+scheduled run retries (simple retry).
 """
 
 from __future__ import annotations
@@ -52,13 +52,13 @@ JOB_ID_PREFIX = "render-"
 DOWNLOAD_JOB_PREFIX = "download-"
 MEDIA_JOB_PREFIX = "media-"
 SYNC_JOB_ID = "source-sync"
-# Download (~100 MB) + Rendering einer Region bleibt deutlich darunter.
+# Download (~100 MB) + rendering one region stays well below this.
 LOCK_TIMEOUT_SECONDS = 15 * 60
-# Download-Jobs prüfen in diesem Abstand, ob sie fällig sind (ohne Netz).
+# Download jobs check at this interval whether they are due (no network).
 TICK_SECONDS = 20
-# Erwartetes Produkt noch nicht da: so oft erneut fragen.
+# Expected product not there yet: poll again this often.
 RETRY_INTERVAL = timedelta(minutes=1)
-# Nach einem Fehler (Auth, Timeout, ...) spätestens so erneut versuchen.
+# After an error (auth, timeout, ...) retry at the latest after this.
 ERROR_RETRY = timedelta(minutes=5)
 MIN_GAP = timedelta(seconds=15)
 
@@ -77,7 +77,7 @@ def _iso(value: datetime | None) -> str | None:
 
 @dataclass
 class DownloadState:
-    """Takt-Zustand einer Quelle (nur im Speicher)."""
+    """Cycle state of a source (in memory only)."""
 
     due: datetime = field(default_factory=lambda: datetime.min.replace(tzinfo=timezone.utc))
     last_sensing: datetime | None = None
@@ -85,8 +85,8 @@ class DownloadState:
     last_new_at: datetime | None = None
     next_expected: datetime | None = None
     last_error: str | None = None
-    # Verzögerung zwischen Aufnahmeende und Verfügbarkeit (letzte Produkte);
-    # das Minimum nähert sich der echten Lieferverzögerung an.
+    # Delay between end of capture and availability (recent products);
+    # the minimum approximates the real delivery latency.
     latencies: deque = field(default_factory=lambda: deque(maxlen=12))
 
     def latency(self) -> timedelta:
@@ -107,7 +107,7 @@ class RenderScheduler:
         self._source_sync = source_sync
         self._render_lock = threading.Lock()
         self._scheduler = BackgroundScheduler()
-        # Region -> Einstellungen beim letzten Aufsetzen (erkennt Änderungen).
+        # Region -> settings at the last setup (detects changes).
         self._signatures: dict[str, tuple[int, str]] = {}
         self._downloads: dict[str, DownloadState] = {}
         self._download_lock = threading.Lock()
@@ -122,27 +122,27 @@ class RenderScheduler:
         self._scheduler.shutdown(wait=False)
 
     def reload(self) -> None:
-        """Nach Konfigurationsänderungen: Jobs neu aufsetzen."""
+        """After configuration changes: set up jobs again."""
         self._reschedule()
 
     @contextmanager
     def exclusive(self, timeout: float = 120.0):
-        """Blockiert Render-Läufe (z. B. während des Speicherort-Wechsels)."""
+        """Block render runs (e.g. while changing the storage location)."""
         if not self._render_lock.acquire(timeout=timeout):
-            raise TimeoutError("Render-Vorgang läuft noch, bitte später erneut versuchen")
+            raise TimeoutError("A render is still running, please try again later")
         try:
             yield
         finally:
             self._render_lock.release()
 
-    # -- Aufsetzen -----------------------------------------------------------
+    # -- Setup ---------------------------------------------------------------
     @staticmethod
     def _downloads_for(driver: str) -> bool:
         cls = SOURCE_REGISTRY.get(driver)
         return driver in DOWNLOAD_DRIVERS and cls is not None and cls.downloads
 
     def download_sources(self, config: AppConfig) -> list[str]:
-        """Quellen mit eigenem Download-Job: aktiv und genutzt (bzw. Archiv)."""
+        """Sources with their own download job: active and in use (or archive)."""
         used = {region.source for region in config.regions}
         return [
             entry.id
@@ -157,7 +157,7 @@ class RenderScheduler:
         for job in self._scheduler.get_jobs():
             if job.id.startswith((JOB_ID_PREFIX, DOWNLOAD_JOB_PREFIX)) or job.id == SYNC_JOB_ID:
                 if job.id.startswith(f"{JOB_ID_PREFIX}now-"):
-                    continue  # ausstehende Einmal-Renders bleiben
+                    continue  # pending one-off renders stay
                 previous_runs[job.id] = getattr(job, "next_run_time", None)
                 job.remove()
         config = self._config_store.get()
@@ -179,12 +179,12 @@ class RenderScheduler:
             )
         cycles = ", ".join(
             f"{sid} {config.sources.cycle_for(sid)} min" for sid in download_ids
-        ) or "keine"
+        ) or "none"
 
         for region in config.regions:
             if not config.sources.is_enabled(region.source):
                 logger.info(
-                    "Region %s: Quelle '%s' ist deaktiviert - keine automatischen Läufe",
+                    "Region %s: source '%s' is disabled - no automatic runs",
                     region.name, region.source,
                 )
                 self._signatures.pop(region.name, None)
@@ -195,20 +195,20 @@ class RenderScheduler:
             known = region.name in self._signatures
             self._signatures[region.name] = signature
             if region.source in download_ids:
-                # Gerendert wird, sobald der Download eine neue Aufnahme hat.
-                # Geänderte/neue Regionen sofort (beim Start übernimmt das
-                # der erste Download).
+                # Rendering happens once the download has a new capture.
+                # Changed/new regions render immediately (at startup the
+                # first download takes care of it).
                 if changed and self._initialized:
                     if known:
-                        logger.info("Region %s geändert - rendere sofort neu", region.name)
+                        logger.info("Region %s changed - rendering immediately", region.name)
                     self._queue_render(region.name)
                 continue
-            # Quellen ohne Download (Platzhalter): festes Intervall wie bisher.
+            # Sources without download (placeholders): fixed interval.
             job_id = f"{JOB_ID_PREFIX}{region.name}"
             next_run = previous_runs.get(job_id)
             if next_run is None or changed:
                 if known and changed:
-                    logger.info("Region %s geändert - rendere sofort neu", region.name)
+                    logger.info("Region %s changed - rendering immediately", region.name)
                 next_run = now
             self._scheduler.add_job(
                 self._run_region,
@@ -222,7 +222,7 @@ class RenderScheduler:
             )
         self._initialized = True
         logger.info(
-            "Scheduler neu aufgesetzt: Download-Takt %s; Abrufintervall sonst %d min",
+            "Scheduler reconfigured: download cycles %s; otherwise poll interval %d min",
             cycles, config.sources.poll_interval_minutes,
         )
 
@@ -252,9 +252,9 @@ class RenderScheduler:
         self.download(source_id)
 
     def download(self, source_id: str) -> bool:
-        """Neueste Aufnahme der Quelle laden; bei neuer Aufnahme Regionen rendern.
+        """Fetch the source's newest capture; render regions on a new capture.
 
-        Liefert ``True``, wenn eine neue Aufnahme vorliegt.
+        Returns ``True`` if a new capture is available.
         """
         config = self._config_store.get()
         entry = config.sources.get(source_id)
@@ -269,9 +269,9 @@ class RenderScheduler:
             sensing = get_source(entry.driver).fetch(entry, config)
         except Exception as exc:
             if isinstance(exc, RenderError):
-                logger.error("Download %s fehlgeschlagen: %s", source_id, exc)
+                logger.error("Download %s failed: %s", source_id, exc)
             else:  # pragma: no cover - defensive
-                logger.exception("Download %s: unerwarteter Fehler", source_id)
+                logger.exception("Download %s: unexpected error", source_id)
             state.last_error = str(exc)
             state.due = checked + min(cycle, ERROR_RETRY)
             return False
@@ -290,7 +290,7 @@ class RenderScheduler:
         elif now - expected < cycle:
             due = now + RETRY_INTERVAL
         else:
-            due = now + cycle  # Datenstrom stockt: nicht jede Minute fragen
+            due = now + cycle  # data stream stalled: don't poll every minute
         state.due = max(due, now + MIN_GAP)
         state.next_expected = expected
         if new:
@@ -299,16 +299,16 @@ class RenderScheduler:
                 if r.source == source_id and config.sources.is_enabled(r.source)
             ]
             logger.info(
-                "Download %s: neue Aufnahme %s (Takt %d min, Verzögerung %d s), "
-                "nächste erwartet %s, rendere %s",
+                "Download %s: new capture %s (cycle %d min, latency %d s), "
+                "next expected %s, rendering %s",
                 source_id, sensing.strftime("%H:%M"), cycle.total_seconds() // 60,
                 state.latency().total_seconds(), expected.strftime("%H:%M:%S"),
-                ", ".join(regions) or "keine Region",
+                ", ".join(regions) or "no region",
             )
             for name in regions:
                 self._queue_render(name)
         else:
-            logger.debug("Download %s: noch keine neue Aufnahme", source_id)
+            logger.debug("Download %s: no new capture yet", source_id)
         return new
 
     def download_status(self) -> dict[str, dict]:
@@ -333,7 +333,7 @@ class RenderScheduler:
             }
         return result
 
-    # -- Rendern ---------------------------------------------------------------
+    # -- Render ---------------------------------------------------------------
     def _queue_render(self, region_name: str) -> None:
         self._scheduler.add_job(
             self._run_region,
@@ -343,7 +343,7 @@ class RenderScheduler:
         )
 
     def trigger_now(self, region_name: str) -> None:
-        """Für den UI-Button "Jetzt aktualisieren"."""
+        """For the UI button "Refresh now"."""
         self._scheduler.add_job(
             self._run_region,
             args=[region_name],
@@ -361,29 +361,29 @@ class RenderScheduler:
         config = self._config_store.get()
         region = config.region(region_name)
         if region is None:
-            logger.error("Region %s existiert nicht mehr, überspringe Lauf", region_name)
+            logger.error("Region %s no longer exists, skipping run", region_name)
             return
 
         next_run_at = self._next_run_for(config, region.source)
         new_frame = None
 
         if not self._render_lock.acquire(timeout=LOCK_TIMEOUT_SECONDS):
-            logger.warning("Render-Lock nicht erhalten, überspringe %s in diesem Zyklus", region_name)
+            logger.warning("Could not acquire render lock, skipping %s this cycle", region_name)
             return
         try:
             definition = config.sources.get(region.source)
             if definition is None:
-                raise RenderError(f"Quelle '{region.source}' ist nicht im Katalog")
+                raise RenderError(f"Source '{region.source}' is not in the catalog")
             started = time.monotonic()
             source = get_source(definition.driver)
             buffer = self._buffers.get(
                 region.name, config.max_frames_for(region), config.history.max_storage_mb
             )
             latest = buffer.latest()
-            # Nur vergleichen, wenn der neueste Frame aus derselben Quelle mit
-            # demselben Komposit stammt - sonst (Quellen-/Kompositwechsel) sofort
-            # neu rendern, auch wenn die Aufnahme älter ist (0° hinkt Rapid Scan
-            # ~15 min hinterher).
+            # Only compare if the newest frame comes from the same source with the
+            # same composite - otherwise (source/composite switch) render
+            # immediately, even if the capture is older (0° lags Rapid Scan by
+            # ~15 min).
             same_origin = (
                 latest is not None
                 and latest.source == region.source
@@ -392,13 +392,13 @@ class RenderScheduler:
             )
             last_sensing = _parse_timestamp(latest.created_at) if same_origin else None
             logger.info(
-                "Render %s gestartet (Quelle %s, Treiber %s, Komposit %s)",
+                "Render %s started (source %s, driver %s, composite %s)",
                 region.name, definition.id, definition.driver, region.composite,
             )
             try:
                 rendered = source.render(region, config, last_sensing)
             except NoNewData as info:
-                logger.info("Keine neue Aufnahme für %s: %s", region_name, info)
+                logger.info("No new capture for %s: %s", region_name, info)
             else:
                 new_frame = buffer.add_frame(
                     rendered.png,
@@ -408,23 +408,23 @@ class RenderScheduler:
                     borders=region.borders,
                 )
                 logger.info(
-                    "Render %s fertig in %.1f s: %s (%d KB), %d Frames im Puffer",
+                    "Render %s finished in %.1f s: %s (%d KB), %d frames in buffer",
                     region.name, time.monotonic() - started, new_frame.filename,
                     len(rendered.png) // 1024, len(buffer),
                 )
             self._status.record_success(region.name, len(buffer), next_run_at)
         except RenderError as exc:
-            logger.error("Rendering für %s fehlgeschlagen: %s", region_name, exc)
+            logger.error("Rendering for %s failed: %s", region_name, exc)
             self._status.record_error(region.name, str(exc), next_run_at)
         except Exception as exc:  # pragma: no cover - defensive
-            logger.exception("Unerwarteter Fehler beim Rendern von %s", region_name)
+            logger.exception("Unexpected error while rendering %s", region_name)
             self._status.record_error(region.name, str(exc), next_run_at)
         finally:
             self._render_lock.release()
 
         if new_frame is not None:
-            # Eigener Job je Region (ausstehende werden zusammengefasst):
-            # blockiert weder den Render-Lock noch den nächsten Lauf.
+            # Separate job per region (pending ones are coalesced):
+            # blocks neither the render lock nor the next run.
             self._scheduler.add_job(
                 self._prewarm,
                 args=[region_name, buffer, config.server.mjpeg_fps],
@@ -437,4 +437,4 @@ class RenderScheduler:
         try:
             media.prewarm(buffer, fps)
         except Exception:  # pragma: no cover - defensive
-            logger.exception("Vorschau/Animation für %s konnte nicht erzeugt werden", region_name)
+            logger.exception("Could not create preview/animation for %s", region_name)

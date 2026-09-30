@@ -1,29 +1,29 @@
 #!/usr/bin/env bash
-# Startet standardmäßig als root (Docker-Default), da ein per Bind-Mount
-# eingehängtes /data-Volume die im Image gesetzte Ownership überschreibt -
-# ein "chown" im Dockerfile allein reicht deshalb nicht aus. Dieses Skript
-# gleicht die Ownership zur Laufzeit an und lässt die eigentliche
-# Anwendung anschließend mit reduzierten Rechten (mambauser) laufen.
+# Starts as root by default (Docker default), because a bind-mounted
+# /data volume overrides the ownership set in the image - a "chown" in the
+# Dockerfile alone is therefore not enough. This script fixes the ownership
+# at runtime and then runs the actual application with reduced privileges
+# (mambauser).
 #
-# PUID/PGID (optional): UID/GID, mit der der Dienst läuft. Sollte zum
-# Besitzer der Host-Verzeichnisse passen, in die Bilder geschrieben werden
-# (z. B. /mnt/data/ha_satellite), sonst schlägt der Speicherort-Wechsel in
-# der Web-UI mit "nicht beschreibbar" fehl.
+# PUID/PGID (optional): UID/GID the service runs as. Should match the owner
+# of the host directories images are written to (e.g.
+# /mnt/data/ha_satellite), otherwise changing the storage location in the
+# web UI fails with "not writable".
 set -euo pipefail
 
 if [ "$(id -u)" = "0" ]; then
     if [ -n "${PGID:-}" ] && [ "$PGID" != "$(id -g mambauser)" ]; then
-        groupmod -o -g "$PGID" mambauser || echo "WARNUNG: PGID=$PGID konnte nicht gesetzt werden" >&2
+        groupmod -o -g "$PGID" mambauser || echo "WARNING: could not set PGID=$PGID" >&2
     fi
     if [ -n "${PUID:-}" ] && [ "$PUID" != "$(id -u mambauser)" ]; then
-        usermod -o -u "$PUID" mambauser || echo "WARNUNG: PUID=$PUID konnte nicht gesetzt werden" >&2
+        usermod -o -u "$PUID" mambauser || echo "WARNING: could not set PUID=$PUID" >&2
     fi
 
     mkdir -p /data/frames
     chown -R mambauser:mambauser /data
 
-    # In der Web-UI gewählten Speicherort (falls vorhanden) mitziehen, damit
-    # er nach einer PUID/PGID-Änderung beschreibbar bleibt.
+    # Also fix the storage location chosen in the web UI (if any) so it
+    # stays writable after a PUID/PGID change.
     frames_dir="$(/usr/local/bin/python3 - <<'PY' 2>/dev/null || true
 import os, yaml
 path = os.environ.get("HA_SATELLITE_CONFIG", "/data/config.yaml")
@@ -37,7 +37,7 @@ PY
 )"
     if [ -n "$frames_dir" ] && [ -d "$frames_dir" ]; then
         chown -R mambauser:mambauser "$frames_dir" || \
-            echo "WARNUNG: Ownership von $frames_dir konnte nicht angepasst werden" >&2
+            echo "WARNING: could not adjust ownership of $frames_dir" >&2
     fi
 
     exec setpriv --reuid=mambauser --regid=mambauser --init-groups \

@@ -1,4 +1,4 @@
-name: Build und Push Container-Image
+name: Build and publish container image
 
 on:
   push:
@@ -17,6 +17,7 @@ permissions:
 
 jobs:
   build:
+    needs: test
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -25,13 +26,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up QEMU (für ARM64-Emulation)
+      - name: Set up QEMU (for ARM64 emulation)
         uses: docker/setup-qemu-action@v3
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Login bei GHCR
+      - name: Log in to GHCR
         if: github.event_name != 'pull_request'
         uses: docker/login-action@v3
         with:
@@ -39,7 +40,10 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Metadaten (Tags/Labels)
+      - name: Read app version
+        run: echo "APP_VERSION=$(sed -n 's/^__version__ = \"\(.*\)\"/\1/p' src/ha_satellite/__init__.py)" >> "$GITHUB_ENV"
+
+      - name: Metadata (tags/labels)
         id: meta
         uses: docker/metadata-action@v5
         with:
@@ -47,10 +51,12 @@ jobs:
           tags: |
             type=ref,event=branch
             type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
             type=sha
             type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=${{ env.APP_VERSION }},enable={{is_default_branch}}
 
-      - name: Build (und Push außer bei PRs)
+      - name: Build (and push, except for PRs)
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -59,6 +65,8 @@ jobs:
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            VERSION=${{ env.APP_VERSION }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -68,25 +76,46 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Python einrichten
+      - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
-      - name: Abhängigkeiten installieren
+      - name: Install dependencies
         run: pip install -e ".[dev,ui]"
 
-      - name: Chromium für Klicktests installieren
+      - name: Verify version (tag must match __version__)
+        run: |
+          VERSION=$(python -c "import ha_satellite; print(ha_satellite.__version__)")
+          echo "Version: $VERSION"
+          if [[ "$GITHUB_REF" == refs/tags/v* && "${GITHUB_REF#refs/tags/v}" != "$VERSION" ]]; then
+            echo "::error::Tag ${GITHUB_REF#refs/tags/} does not match version $VERSION"; exit 1
+          fi
+
+      - name: Install Chromium for UI click tests
         run: playwright install --with-deps chromium
 
-      - name: Tests ausführen (inkl. UI-Klicktests)
+      - name: Run tests (including UI click tests)
         env:
           HA_SATELLITE_REQUIRE_UI_TESTS: "1"
         run: pytest -q --tracing retain-on-failure
-      - name: Playwright-Traces bei Fehlschlag sichern
+      - name: Upload Playwright traces on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: playwright-traces
           path: test-results/
           if-no-files-found: ignore
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --generate-notes --verify-tag

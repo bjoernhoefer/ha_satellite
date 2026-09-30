@@ -1,18 +1,18 @@
-"""Abgleich des Quellen-Katalogs mit dem EUMETSAT Data Store.
+"""Sync of the source catalog with the EUMETSAT Data Store.
 
-Nutzt ausschließlich die öffentlichen (nicht authentifizierten) Browse- und
-Search-Endpunkte der EUMETSAT Data Store API:
+Uses only the public (unauthenticated) browse and search endpoints of the
+EUMETSAT Data Store API:
 
-- ``/data/browse/1.0.0/collections`` - Liste aller Collections (ID, Titel,
-  Anzahl Produkte). Daraus ergibt sich, ob eine im Katalog eingetragene
-  Collection (noch) existiert, und welche weiteren, von einem vorhandenen
-  Treiber unterstützten Collections neu verfügbar sind ("entdeckt").
-- ``/data/search-products/1.0.0/os`` - liefert u. a. den Zeitstempel des
-  jüngsten Produkts einer Collection (Aktualität der Quelle).
+- ``/data/browse/1.0.0/collections`` - list of all collections (ID, title,
+  number of products). This tells whether a collection in the catalog
+  (still) exists and which further collections supported by an existing
+  driver are newly available ("discovered").
+- ``/data/search-products/1.0.0/os`` - returns, among other things, the
+  timestamp of a collection's newest product (source freshness).
 
-Das Ergebnis wird getrennt von der Konfiguration in
-``<Datenverzeichnis>/source_sync.json`` abgelegt, damit der in der UI
-editierbare Katalog nicht mit Laufzeit-Metadaten vermischt wird.
+The result is stored separately from the configuration in
+``<data dir>/source_sync.json`` so the catalog editable in the UI is not
+mixed with runtime metadata.
 """
 
 from __future__ import annotations
@@ -35,7 +35,7 @@ API_BASE_ENV = "HA_SATELLITE_EUMETSAT_API"
 DEFAULT_API_BASE = "https://api.eumetsat.int"
 REQUEST_TIMEOUT = 20
 
-# Welche Collections ein vorhandener Treiber verarbeiten kann (Titel-Muster).
+# Which collections an existing driver can handle (title patterns).
 DISCOVERY_RULES: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("msg_seviri", re.compile(r"^(Rapid Scan )?High Rate SEVIRI Level 1\.5 Image Data - MSG")),
     ("mtg_fci", re.compile(r"^FCI Level 1c .*Image Data - MTG")),
@@ -88,7 +88,7 @@ class SourceSync:
             self._state_path.parent.mkdir(parents=True, exist_ok=True)
             self._state_path.write_text(json.dumps(state, indent=2), encoding="utf-8")
         except OSError as exc:
-            logger.warning("Abgleich-Ergebnis konnte nicht gespeichert werden: %s", exc)
+            logger.warning("Could not save sync result: %s", exc)
 
     def state(self) -> dict:
         with self._state_lock:
@@ -99,9 +99,9 @@ class SourceSync:
         return datetime.fromisoformat(value) if value else None
 
     def run(self) -> dict:
-        """Führt den Abgleich aus. Fehler landen im Ergebnis, nie als Exception."""
+        """Run the sync. Errors end up in the result, never as an exception."""
         if not self._run_lock.acquire(blocking=False):
-            logger.info("Quellen-Abgleich läuft bereits")
+            logger.info("Source sync already running")
             return self.state()
         try:
             return self._run()
@@ -112,12 +112,12 @@ class SourceSync:
         now = datetime.now(timezone.utc).isoformat()
         catalog = self._config_store.get().sources.catalog
         base = api_base()
-        logger.info("Quellen-Abgleich mit %s gestartet (%d Katalogeinträge)", base, len(catalog))
+        logger.info("Source sync with %s started (%d catalog entries)", base, len(catalog))
         previous = self.state()
         try:
             listing = _get_json(f"{base}/data/browse/1.0.0/collections?format=json")
         except Exception as exc:
-            logger.error("Quellen-Abgleich fehlgeschlagen: %s", exc)
+            logger.error("Source sync failed: %s", exc)
             state = {**previous, "last_run_at": now, "error": str(exc)}
             with self._state_lock:
                 self._state = state
@@ -148,7 +148,7 @@ class SourceSync:
         self._save(state)
         ok = sum(1 for s in sources.values() if s["status"] == "ok")
         logger.info(
-            "Quellen-Abgleich fertig: %d/%d verfügbar, %d neu entdeckt",
+            "Source sync finished: %d/%d available, %d newly discovered",
             ok, len(sources), len(discovered),
         )
         return self.state()
@@ -157,19 +157,19 @@ class SourceSync:
         result = {"checked_at": now, "title": None, "latest_product_at": None,
                   "status": "ok", "message": None}
         if not entry.collection:
-            result.update(status="local", message="Keine Collection hinterlegt")
+            result.update(status="local", message="No collection configured")
             return result
         link = collections.get(entry.collection)
         if link is None:
-            result.update(status="missing", message="Collection im Data Store nicht gefunden")
-            logger.warning("Quelle %s: Collection %s nicht (mehr) verfügbar", entry.id, entry.collection)
+            result.update(status="missing", message="Collection not found in the Data Store")
+            logger.warning("Source %s: collection %s not (or no longer) available", entry.id, entry.collection)
             return result
         result["title"] = link.get("datasetTitle")
         try:
             result["latest_product_at"] = _latest_product_at(entry.collection)
         except Exception as exc:
-            result.update(status="error", message=f"Suche fehlgeschlagen: {exc}")
-            logger.warning("Quelle %s: Abfrage des letzten Produkts fehlgeschlagen: %s", entry.id, exc)
+            result.update(status="error", message=f"Search failed: {exc}")
+            logger.warning("Source %s: querying the latest product failed: %s", entry.id, exc)
         return result
 
     def forget_discovered(self, collection: str) -> None:
@@ -182,7 +182,7 @@ class SourceSync:
         self._save(state)
 
     def definition_for(self, collection: str, existing_ids: set[str]) -> SourceDefinition | None:
-        """Katalogeintrag (deaktiviert) für eine entdeckte Collection bauen."""
+        """Build a (disabled) catalog entry for a discovered collection."""
         for item in self.state().get("discovered", []):
             if item["collection"] != collection:
                 continue

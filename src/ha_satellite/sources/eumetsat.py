@@ -1,10 +1,9 @@
-"""Zugriff auf den EUMETSAT Data Store (Suche + Download via ``eumdac``).
+"""Access to the EUMETSAT Data Store (search + download via ``eumdac``).
 
-Pro Collection wird nur das jeweils neueste Produkt vorgehalten. Da alle
-Regionen dieselbe Szene nutzen (z. B. den Rapid Scan über Europa), wird
-jedes Produkt genau einmal heruntergeladen und von allen Regionen
-gerendert - bei ~100 MB pro Slot ist das der entscheidende Hebel für das
-Datenvolumen.
+Only the newest product is kept per collection. Since all regions use the
+same scene (e.g. the Rapid Scan over Europe), each product is downloaded
+exactly once and rendered for all regions - at ~100 MB per slot this is
+the key lever for data volume.
 """
 
 from __future__ import annotations
@@ -20,13 +19,13 @@ from ha_satellite.config import EumetsatCredentials
 
 logger = logging.getLogger(__name__)
 
-# Suchfenster für "neuestes Produkt". Der Rapid Scan liefert alle 5 Minuten,
-# Full Disc alle 15 Minuten - 2 Stunden decken auch Lücken im Betrieb ab.
+# Search window for "newest product". Rapid Scan delivers every 5 minutes,
+# Full Disc every 15 minutes - 2 hours also cover operational gaps.
 SEARCH_WINDOW = timedelta(hours=2)
 
 
 class DataStoreError(Exception):
-    """Fehler beim Zugriff auf den Data Store (Auth, Suche, Download)."""
+    """Error accessing the Data Store (auth, search, download)."""
 
 
 @dataclass(frozen=True)
@@ -41,16 +40,16 @@ def _as_utc(value: datetime) -> datetime:
 
 
 class ProductCache:
-    """Hält das neueste Produkt je Collection auf der Platte vor."""
+    """Keeps the newest product per collection on disk."""
 
     def __init__(self, cache_dir: Path) -> None:
         self._cache_dir = Path(cache_dir)
         self._lock = threading.Lock()
-        # Zuletzt bereitgestelltes Produkt je Collection (Rendern ohne Netz).
+        # Most recently provided product per collection (rendering without network).
         self._current: dict[str, Product] = {}
 
     def cached(self, collection_id: str) -> Product | None:
-        """Zuletzt heruntergeladenes Produkt, ohne den Data Store zu fragen."""
+        """Most recently downloaded product, without querying the Data Store."""
         product = self._current.get(collection_id)
         return product if product is not None and product.path.exists() else None
 
@@ -62,9 +61,9 @@ class ProductCache:
     ) -> Product:
         if not credentials.consumer_key or not credentials.consumer_secret:
             raise DataStoreError(
-                "Keine EUMETSAT-Zugangsdaten hinterlegt (Web-UI oder Umgebungsvariablen)"
+                "No EUMETSAT credentials configured (web UI or environment variables)"
             )
-        import eumdac  # teuer im Import, nur bei echtem Bedarf laden
+        import eumdac  # expensive import, only load when actually needed
 
         with self._lock:
             try:
@@ -79,12 +78,12 @@ class ProductCache:
                 )
                 newest = next(iter(results), None)
             except Exception as exc:
-                raise DataStoreError(f"Data-Store-Suche fehlgeschlagen: {exc}") from exc
+                raise DataStoreError(f"Data Store search failed: {exc}") from exc
 
             if newest is None:
                 raise DataStoreError(
-                    f"Kein Produkt in {collection_id} innerhalb der letzten "
-                    f"{int(SEARCH_WINDOW.total_seconds() // 3600)} Stunden"
+                    f"No product in {collection_id} within the last "
+                    f"{int(SEARCH_WINDOW.total_seconds() // 3600)} hours"
                 )
 
             product_id = str(newest)
@@ -98,9 +97,9 @@ class ProductCache:
             entry = next((e for e in newest.entries if e.endswith(entry_suffix)), None)
             if entry is None:
                 raise DataStoreError(
-                    f"Produkt {product_id} enthält keine Datei '*{entry_suffix}'"
+                    f"Product {product_id} contains no file '*{entry_suffix}'"
                 )
-            logger.info("Lade %s (%s) herunter", product_id, collection_id)
+            logger.info("Downloading %s (%s)", product_id, collection_id)
             target_dir.mkdir(parents=True, exist_ok=True)
             partial = target.with_suffix(target.suffix + ".part")
             try:
@@ -109,10 +108,10 @@ class ProductCache:
                 partial.rename(target)
             except Exception as exc:
                 partial.unlink(missing_ok=True)
-                raise DataStoreError(f"Download von {product_id} fehlgeschlagen: {exc}") from exc
+                raise DataStoreError(f"Download of {product_id} failed: {exc}") from exc
 
-            # Nur das neueste und das vorherige Produkt behalten: ein gerade
-            # laufender Render-Vorgang kann das vorherige noch lesen.
+            # Keep only the newest and the previous product: a render that is
+            # currently running may still be reading the previous one.
             previous = self._current.get(collection_id)
             keep = {target, previous.path if previous else None}
             for old in target_dir.iterdir():

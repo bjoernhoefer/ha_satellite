@@ -1,107 +1,162 @@
 # ha_satellite
 
-Containerisierter Dienst, der EUMETSAT-Satellitenbilder herunterlädt, zu
-Bildausschnitten rendert und sie **Home Assistant** als Kamera-Entitäten
-bereitstellt (Standbild, Historie, MJPEG-Loop, GIF/MP4-Animation).
+Containerised service that downloads EUMETSAT satellite imagery, renders it
+into regional crops and exposes it to **Home Assistant** as camera entities
+(still image, history, MJPEG loop, GIF/MP4 animation).
 
-> **Status:** Phase 3. `msg_seviri` liefert echte Bilder aus MSG SEVIRI
-> (Rapid Scan alle 5 Minuten bzw. 0°), `mtg_fci` aus MTG FCI (1 km, mit
-> Rohdaten-Archiv zum nachträglichen Rendern), beides gerendert mit Satpy;
-> `data_tailor` liefert noch Platzhalterbilder
-> (siehe [HISTORY.md](HISTORY.md) und [AGENTS.md](AGENTS.md)).
+> **Status:** Version 1.0.0 (first public release). `msg_seviri` delivers
+> real images from MSG SEVIRI (Rapid Scan every 5 minutes or 0°), `mtg_fci`
+> from MTG FCI (1 km, with a raw-data archive for rendering after the fact),
+> both rendered with Satpy; `data_tailor` still delivers placeholder images
+> (see [CHANGELOG.md](CHANGELOG.md), [HISTORY.md](HISTORY.md) and
+> [AGENTS.md](AGENTS.md)).
 
-## Schnellstart
+## Quick start
 
 ```bash
 git clone https://github.com/bjoernhoefer/ha_satellite.git
 cd ha_satellite
-cp .env.example .env   # optional: EUMETSAT-Zugangsdaten per Env setzen
+cp .env.example .env   # optional: EUMETSAT credentials, data directory, Watchtower interval
 docker compose up -d --build
 ```
 
-Danach:
+Then:
 
-- Web-UI: http://\<host\>:6060/
-- Status-API: http://\<host\>:6060/api/status
-- Beispiel-Kamera (Wien): http://\<host\>:6060/regions/wien/mjpeg
-- Live-Ansicht im Browser (auch am Handy): http://\<host\>:6060/live/wien
+- Web UI: http://\<host\>:6060/
+- Status API: http://\<host\>:6060/api/status
+- Version: http://\<host\>:6060/api/version
+- Example camera (Vienna): http://\<host\>:6060/regions/wien/mjpeg
+- Live view in the browser (also on phones): http://\<host\>:6060/live/wien
 
-Die EUMETSAT-Zugangsdaten (Consumer Key + Secret) können entweder in der
-Web-UI eingegeben (wird nach `/data/config.yaml` persistiert) oder per
-Umgebungsvariable (`EUMETSAT_CONSUMER_KEY` / `EUMETSAT_CONSUMER_SECRET`,
-siehe `.env.example`) gesetzt werden. Die Env-Variablen haben Vorrang.
+The EUMETSAT credentials (consumer key + secret) can either be entered in
+the web UI (persisted to `<data>/config.yaml`) or set via environment
+variables (`EUMETSAT_CONSUMER_KEY` / `EUMETSAT_CONSUMER_SECRET`, see
+`.env.example`). Environment variables take precedence.
 
-## Deployment mit vorgebautem Image
+## Deployment with the prebuilt image
 
-Auf dem Zielhost wird kein Quellcode benötigt — nur die
-`docker-compose.yml`. Da das Repository privat ist, ist auch das
-GHCR-Paket privat und der Host braucht einmalig einen Login mit einem
-Personal Access Token (Scope `read:packages`):
+The target host needs no source code — only `docker-compose.yml` (and
+optionally `.env`). The image is published publicly to
+`ghcr.io/bjoernhoefer/ha_satellite`, so no registry login is required:
 
 ```bash
-echo '<PAT>' | docker login ghcr.io -u <github-user> --password-stdin
-
 mkdir -p ~/ha_satellite && cd ~/ha_satellite
 curl -sO https://raw.githubusercontent.com/bjoernhoefer/ha_satellite/main/docker-compose.yml
+curl -s -o .env https://raw.githubusercontent.com/bjoernhoefer/ha_satellite/main/.env.example
 docker compose up -d
 ```
 
-Beim Deployment ohne Quellcode sollte der `build:`-Block aus der
-`docker-compose.yml` entfernt und stattdessen `pull_policy: always`
-gesetzt werden, damit Compose nicht lokal zu bauen versucht.
+When deploying without source code, remove the `build:` block from
+`docker-compose.yml` (or set `pull_policy: always`) so Compose does not try
+to build locally.
 
-## Funktionsumfang
+### `.env` variables for Compose
 
-- **Quellen-Katalog**: welche Quellen zur Verfügung stehen, ist in der UI
-  einstellbar (Tabelle mit Aktiv-Schalter + einklappbarer JSON-Editor).
-  Treiber: `msg_seviri` (Rapid Scan Europa aus dem EUMETSAT Data Store +
-  lokales Satpy-Rendering, Default; ein Download pro Aufnahme für alle
-  Regionen, ~100 MB, d. h. bei 15 min Intervall ~9 GB/Tag, bei 5 min
-  ~28 GB/Tag), `data_tailor` (serverseitiger Zuschnitt bei EUMETSAT),
-  `mtg_fci` (MTG FCI, ~1 km: nur die Europa-Chunks, ~180 MB je Aufnahme).
-  Ein automatischer Abgleich mit dem
-  EUMETSAT Data Store prüft Verfügbarkeit/Aktualität und schlägt neue
-  Collections vor.
-- **Regionen**: Name, Mittelpunkt (Lat/Lon), Umkreis in km (daraus wird die
-  Bounding-Box berechnet), Ausgabegröße, Komposit, Quelle. Vorkonfiguriert:
-  `wien` und `mallorca` mit dem Komposit `natural_color_hrv_with_night_ir`
-  (tagsüber Echtfarben, mit dem HRV-Kanal auf ~1 km geschärft, nachts
-  IR-Wolken; weitere siehe AGENTS.md).
-- **FCI-Rohdaten-Archiv**: Ist eine `mtg_fci`-Quelle aktiv, werden die
-  Rohdaten (Europa + alle Regionen) für 12 h aufbewahrt (einstellbar).
-  Über „🛰 FCI-Archiv“ lässt sich jede Region – auch eine neu angelegte –
-  zu jedem archivierten Zeitpunkt und in jedem Bildtyp rendern.
-- **Historie**: Rollierender Ringpuffer pro Region unter
-  `<Speicherort>/{region}/`, Dauer in der UI einstellbar (Default 60
-  Minuten), zusätzlich Speicher-Limit (MB) als Notbremse. Alte Frames und
-  Waisen werden automatisch aufgeräumt.
-- **Speicherort** der Bilder in der UI wählbar (z. B. `/mnt/data/ha_satellite`,
-  `docker-compose.yml` hängt dafür `/mnt` ein), inkl. Verschieben vorhandener
-  Bilder und Warnung bei System-Disk oder nicht persistentem Pfad.
-- **Web-API** (siehe [AGENTS.md](AGENTS.md) für Details):
-  `GET/POST /api/config`, `GET /api/status`, `GET /healthz`,
-  `GET /regions/{region}/latest.png` (bzw. `latest.jpg`), `GET /regions/{region}/frames/{i}.png`,
+| Variable | Default | Purpose |
+|---|---|---|
+| `HOST_DATA_DIR` | `./data` | Host directory mounted to `/data` |
+| `HA_SATELLITE_TAG` | `latest` | Image tag (pin e.g. `1.0` to stay on a minor line) |
+| `HA_SATELLITE_PORT` | `6060` | Published web port |
+| `WATCHTOWER_POLL_INTERVAL` | `3600` | Watchtower check interval in seconds |
+| `TZ` | | Time zone |
+| `EUMETSAT_CONSUMER_KEY` / `EUMETSAT_CONSUMER_SECRET` | | Optional credentials (override the UI) |
+
+### Configuration persistence
+
+All state (configuration, logs, product cache, source sync results and — by
+default — the rendered frames) lives in a **host directory** that is
+bind-mounted to `/data` in the container. Its path is set via
+`HOST_DATA_DIR` in `.env` (default: `./data` next to
+`docker-compose.yml`). The configuration is stored in `<data>/config.yaml`.
+
+Because the container itself is stateless, the configuration survives image
+updates, `docker compose pull` / `up -d` and container recreation.
+**Backup** = copy that directory (e.g. `tar czf ha_satellite-backup.tgz data/`).
+
+### Automatic updates (Watchtower)
+
+`docker-compose.yml` contains an optional `watchtower` service
+([containrrr/watchtower](https://containrrr.dev/watchtower/)). It only
+updates containers labelled `com.centurylinklabs.watchtower.enable=true`
+(the `ha_satellite` service carries this label; other containers on the
+host are left alone), checks every `WATCHTOWER_POLL_INTERVAL` seconds
+(default `3600`) and removes old images (`--cleanup`). It is opt-in via a
+Compose profile: `docker compose --profile watchtower up -d`.
+
+If the host **already runs Watchtower**, do not start a second one - the
+existing instance updates `ha_satellite` too. If the package is private,
+it needs the registry login: mount the host's `~/.docker/config.json` into
+it as `/config.json:ro` (after `docker login ghcr.io` on the host).
+
+GitHub Actions (`.github/workflows/build.yml`) builds a multi-arch image
+(`linux/amd64`, `linux/arm64`) and publishes it to GHCR on every push to
+`main` and on every release tag. Once the GHCR package is public, no
+credentials are needed at all.
+
+### Versioning and releases
+
+ha_satellite uses [semantic versioning](https://semver.org/). The version is
+defined in `src/ha_satellite/__init__.py` (`__version__`) and in
+`pyproject.toml` (both must match; current: **1.0.0**). It is shown in the
+web UI footer and returned by `GET /api/version`.
+
+Releases are git tags `vX.Y.Z`; CI builds them into the image tags `X.Y.Z`,
+`X.Y` and `latest`. Select the tag with `HA_SATELLITE_TAG` in `.env`
+(default `latest`; pin e.g. `1.0` to stay on a minor line). Changes are listed in [CHANGELOG.md](CHANGELOG.md).
+
+## Features
+
+- **Source catalogue**: the available sources are configurable in the UI
+  (table with enable switches + collapsible JSON editor). Drivers:
+  `msg_seviri` (Rapid Scan Europe from the EUMETSAT Data Store + local Satpy
+  rendering, default; one download per scan shared by all regions, ~100 MB,
+  i.e. ~9 GB/day at a 15 min interval, ~28 GB/day at 5 min), `data_tailor`
+  (server-side cropping at EUMETSAT), `mtg_fci` (MTG FCI, ~1 km: only the
+  European chunks, ~180 MB per scan). An automatic sync with the EUMETSAT
+  Data Store checks availability/freshness and suggests new collections.
+- **Regions**: name, centre (lat/lon), radius in km (the bounding box is
+  derived from it), output size, composite, source. Preconfigured examples:
+  `wien` (Vienna) and `mallorca` with the composite
+  `natural_color_hrv_with_night_ir` (true colour by day, sharpened to ~1 km
+  with the HRV channel, IR clouds at night; more in AGENTS.md).
+- **FCI raw-data archive**: while an `mtg_fci` source is active, the raw data
+  (Europe + all regions) is kept for 12 h (configurable). Via the
+  "🛰 FCI archive" button any region — including newly created ones — can
+  be rendered at any archived time in any image type.
+- **History**: rolling ring buffer per region under
+  `<storage location>/{region}/`, duration configurable in the UI (default
+  60 minutes), plus a storage limit (MB) as an emergency brake. Old frames
+  and orphans are cleaned up automatically.
+- **Storage location** of the frames selectable in the UI (e.g.
+  `/mnt/data/ha_satellite`; `docker-compose.yml` mounts `/mnt` for this),
+  including moving existing frames and a warning for the system disk or
+  non-persistent paths.
+- **Web API** (details in [AGENTS.md](AGENTS.md)):
+  `GET/POST /api/config`, `GET /api/status`, `GET /api/version`,
+  `GET /healthz`, `GET /regions/{region}/latest.png` (or `latest.jpg`),
+  `GET /regions/{region}/frames/{i}.png`,
   `GET /regions/{region}/animation.gif`, `GET /regions/{region}/animation.mp4`,
   `GET /regions/{region}/mjpeg`.
-- **Web-UI** unter `/` (auch fürs Handy): Vorschaubilder und Historie
-  anklickbar → Vollbild-Betrachter (Blättern per Pfeiltasten/Wischen,
-  Zeitraffer), Live-Stream im Browser, Quellen, Speicherort, Zugangsdaten
-  (Secret maskiert), Takt je Quelle, Status und **Live-Logs** ganz unten.
+- **Web UI** at `/` (phone-friendly): previews and history are clickable →
+  fullscreen viewer (arrow keys/swipe, timelapse), live stream in the
+  browser, sources, storage location, credentials (secret masked), cycle
+  per source, status, **live logs** at the bottom and the version in the
+  footer.
 
-## Home Assistant einbinden
+## Home Assistant integration
 
-Fertige, kopierbare YAML-Schnipsel für Wien und Porto Cristo (via
-WireGuard) stehen in [docs/homeassistant.md](docs/homeassistant.md).
+Ready-to-copy YAML snippets are in [docs/homeassistant.md](docs/homeassistant.md).
 
-## Entwicklung
+## Development
 
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev,ui]"
-playwright install chromium   # für die UI-Klicktests
+playwright install chromium   # for the UI click tests
 pytest -q
 uvicorn ha_satellite.main:app --reload --port 6060
 ```
 
-Details zu Architektur, Deployment und Betriebsregeln: [AGENTS.md](AGENTS.md).
-Chronik und Fallstricke: [HISTORY.md](HISTORY.md).
+Architecture, deployment and operating rules: [AGENTS.md](AGENTS.md).
+Chronicle and pitfalls: [HISTORY.md](HISTORY.md).
+Release notes: [CHANGELOG.md](CHANGELOG.md).

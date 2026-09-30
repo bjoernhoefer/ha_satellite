@@ -1,4 +1,4 @@
-"""FastAPI-Anwendung: Konfigurations-UI, REST-API und Bild-Endpunkte."""
+"""FastAPI application: configuration UI, REST API and image endpoints."""
 
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ from fastapi.responses import (
 )
 from fastapi.templating import Jinja2Templates
 
-from ha_satellite import logbuffer, media, storage
+from ha_satellite import __version__, logbuffer, media, storage
 from ha_satellite.buffer import BufferManager
 from ha_satellite.config import (
     COMPOSITES,
@@ -77,8 +77,8 @@ templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     logger.info(
-        "ha_satellite startet: Daten in %s, Frames in %s (UID %d / GID %d)",
-        DATA_DIR, buffer_manager.base_dir, os.getuid(), os.getgid(),
+        "ha_satellite %s starting: data in %s, frames in %s (UID %d / GID %d)",
+        __version__, DATA_DIR, buffer_manager.base_dir, os.getuid(), os.getgid(),
     )
     try:
         storage.ensure_writable(buffer_manager.base_dir)
@@ -91,13 +91,13 @@ async def lifespan(_app: FastAPI):
         scheduler.shutdown()
 
 
-app = FastAPI(title="ha_satellite", lifespan=lifespan)
+app = FastAPI(title="ha_satellite", version=__version__, lifespan=lifespan)
 
 
 def _get_region_or_404(config: AppConfig, region_name: str):
     region = config.region(region_name)
     if region is None:
-        raise HTTPException(status_code=404, detail=f"Unbekannte Region: {region_name}")
+        raise HTTPException(status_code=404, detail=f"Unknown region: {region_name}")
     return region
 
 
@@ -125,13 +125,14 @@ async def index(request: Request):
             "driver_of": {e.id: e.driver for e in config.sources.catalog},
             "fci_composites": FCI_COMPOSITES,
             "placeholder_drivers": PLACEHOLDER_DRIVERS,
+            "version": __version__,
         },
     )
 
 
 @app.get("/live/{region_name}")
 async def live_redirect(region_name: str):
-    """Merkbare Adresse für den Live-Stream im Browser."""
+    """Memorable address for the live stream in the browser."""
     _get_region_or_404(config_store.get(), region_name)
     return RedirectResponse(url=f"/#live={region_name}")
 
@@ -142,10 +143,9 @@ async def get_config():
 
 
 def _deep_merge(base: dict, overrides: dict) -> dict:
-    """Rekursives Merge: verschachtelte Dicts werden Feld für Feld
-    zusammengeführt statt komplett ersetzt (z. B. ``eumetsat`` oder
-    einzelne ``sources``-Felder), Listen (z. B. ``regions``) werden als
-    Ganzes übernommen, sofern angegeben."""
+    """Recursive merge: nested dicts are merged field by field instead of
+    being replaced entirely (e.g. ``eumetsat`` or individual ``sources``
+    fields); lists (e.g. ``regions``) are taken over as a whole if given."""
     result = dict(base)
     for key, value in overrides.items():
         if isinstance(value, dict) and isinstance(result.get(key), dict):
@@ -156,7 +156,7 @@ def _deep_merge(base: dict, overrides: dict) -> dict:
 
 
 def _is_masked_echo(value: object, stored_secret: str) -> bool:
-    """Erkennt, ob ein Client das maskierte Secret unverändert zurückschickt."""
+    """Detects whether a client sends the masked secret back unchanged."""
     if not isinstance(value, str) or not value:
         return False
     return value == EumetsatCredentials(consumer_secret=stored_secret).masked().consumer_secret
@@ -169,8 +169,8 @@ async def post_config(payload: dict):
     if isinstance(credentials, dict):
         credentials = dict(credentials)
         secret = credentials.get("consumer_secret")
-        # Leeres oder maskiertes Secret heißt "unverändert lassen" - sonst
-        # würde jedes Speichern ohne Neueingabe das echte Secret zerstören.
+        # An empty or masked secret means "keep unchanged" - otherwise every
+        # save without re-entering it would destroy the real secret.
         if secret is None or secret == "" or _is_masked_echo(secret, stored.eumetsat.consumer_secret):
             credentials.pop("consumer_secret", None)
         payload = {**payload, "eumetsat": credentials}
@@ -181,12 +181,12 @@ async def post_config(payload: dict):
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     await _save_config(stored, new_config, move_existing=False)
     changed = sorted(key for key in payload if key in AppConfig.model_fields)
-    logger.info("Konfiguration gespeichert (%s)", ", ".join(changed) or "keine Änderung")
+    logger.info("Configuration saved (%s)", ", ".join(changed) or "no change")
     return JSONResponse(config_store.get().masked().model_dump())
 
 
 async def _save_config(old: AppConfig, new: AppConfig, move_existing: bool) -> int:
-    """Speichert die Konfiguration; wechselt bei Bedarf den Speicherort."""
+    """Saves the configuration; switches the storage location if needed."""
     old_dir, new_dir = frames_dir_for(old), frames_dir_for(new)
     moved = 0
     if old_dir != new_dir or buffer_manager.base_dir != new_dir:
@@ -198,10 +198,10 @@ async def _save_config(old: AppConfig, new: AppConfig, move_existing: bool) -> i
         try:
             moved = await run_in_threadpool(_relocate)
         except (storage.StorageError, TimeoutError, OSError) as exc:
-            logger.error("Speicherort-Wechsel nach %s fehlgeschlagen: %s", new_dir, exc)
+            logger.error("Switching storage location to %s failed: %s", new_dir, exc)
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         logger.info(
-            "Speicherort gewechselt: %s -> %s (%d Frames verschoben)", old_dir, new_dir, moved
+            "Storage location changed: %s -> %s (%d frames moved)", old_dir, new_dir, moved
         )
     config_store.update(new)
     scheduler.reload()
@@ -232,7 +232,7 @@ async def get_storage():
 
 @app.post("/api/storage")
 async def post_storage(payload: dict):
-    """Speicherort (und Historien-Limits) setzen, Frames optional verschieben."""
+    """Set the storage location (and history limits), optionally move frames."""
     stored = config_store.stored()
     data = stored.model_dump()
     frames_dir = str(payload.get("frames_dir", data["storage"]["frames_dir"]) or "").strip()
@@ -250,7 +250,7 @@ async def post_storage(payload: dict):
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     moved = await _save_config(stored, new_config, move_existing=bool(payload.get("move_existing", True)))
-    # Kürzere Aufbewahrung wirkt sofort, nicht erst beim nächsten Download.
+    # A shorter retention takes effect immediately, not only at the next download.
     await run_in_threadpool(
         get_archive(archive_root(new_config)).prune_all, new_config.archive.retention_hours
     )
@@ -286,7 +286,7 @@ def _archive_summary(config: AppConfig) -> dict:
 
 @app.get("/api/archive")
 async def get_archive_info():
-    """FCI-Rohdaten-Archiv: Aufbewahrung, Chunks, Slots und Belegung."""
+    """FCI raw data archive: retention, chunks, slots and disk usage."""
     return JSONResponse(await run_in_threadpool(_archive_summary, config_store.get()))
 
 
@@ -298,7 +298,7 @@ def _archive_context(region_name: str):
     region = _get_region_or_404(config, region_name)
     entry = fci_source_for(config, region)
     if entry is None:
-        raise HTTPException(status_code=404, detail="Keine MTG-FCI-Quelle im Katalog")
+        raise HTTPException(status_code=404, detail="No MTG FCI source in the catalog")
     archive = get_archive(archive_root(config))
     return config, region, entry, archive
 
@@ -312,11 +312,11 @@ def _default_archive_composite(config: AppConfig, region) -> str:
 
 @app.get("/api/regions/{region_name}/archive")
 async def list_archive(region_name: str, composite: str | None = None):
-    """Archivierte FCI-Slots, aus denen die Region gerendert werden kann."""
+    """Archived FCI slots from which the region can be rendered."""
     config, region, entry, archive = _archive_context(region_name)
     composite = composite or _default_archive_composite(config, region)
     if not _COMPOSITE_RE.match(composite):
-        raise HTTPException(status_code=400, detail="Ungültiger Kompositname")
+        raise HTTPException(status_code=400, detail="Invalid composite name")
     needed = chunks_for_region(region)
 
     def _collect() -> list[dict]:
@@ -344,29 +344,29 @@ async def list_archive(region_name: str, composite: str | None = None):
     }
 
 
-# Wartezeit auf den Render-Lock (ein planmäßiger Lauf inkl. Download).
+# Time to wait for the render lock (one scheduled run incl. download).
 ARCHIVE_RENDER_LOCK_TIMEOUT = 600
 
 
 @app.get("/regions/{region_name}/archive/{slot_name}.png")
 async def archive_png(region_name: str, slot_name: str, composite: str | None = None):
-    """Rendert eine Region aus einem archivierten FCI-Slot (mit Cache)."""
+    """Renders a region from an archived FCI slot (cached)."""
     config, region, entry, archive = _archive_context(region_name)
     composite = composite or _default_archive_composite(config, region)
     if not _COMPOSITE_RE.match(composite):
-        raise HTTPException(status_code=400, detail="Ungültiger Kompositname")
+        raise HTTPException(status_code=400, detail="Invalid composite name")
     slot = archive.slot(entry.collection or "", slot_name)
     if slot is None:
-        raise HTTPException(status_code=404, detail="Slot nicht (mehr) im Archiv")
+        raise HTTPException(status_code=404, detail="Slot not (or no longer) in the archive")
     cache = render_cache_path(slot, region, composite)
 
     def _render() -> bytes:
         if cache.exists():
             return cache.read_bytes()
         with scheduler.exclusive(timeout=ARCHIVE_RENDER_LOCK_TIMEOUT):
-            if cache.exists():  # während des Wartens von einer anderen Anfrage erzeugt
+            if cache.exists():  # created by another request while waiting
                 return cache.read_bytes()
-            logger.info("Archiv-Render %s / %s / %s gestartet", region.name, slot.name, composite)
+            logger.info("Archive render %s / %s / %s started", region.name, slot.name, composite)
             frame = render_fci_slot(slot, region, composite)
         cache.parent.mkdir(parents=True, exist_ok=True)
         partial = cache.with_name(cache.name + ".part")
@@ -377,12 +377,12 @@ async def archive_png(region_name: str, slot_name: str, composite: str | None = 
     try:
         png = await run_in_threadpool(_render)
     except RenderError as exc:
-        logger.error("Archiv-Render %s / %s fehlgeschlagen: %s", region.name, slot_name, exc)
+        logger.error("Archive render %s / %s failed: %s", region.name, slot_name, exc)
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     except TimeoutError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except FileNotFoundError as exc:
-        raise HTTPException(status_code=404, detail="Slot wurde inzwischen entfernt") from exc
+        raise HTTPException(status_code=404, detail="Slot has been removed in the meantime") from exc
     return Response(
         content=png, media_type="image/png",
         headers={"Cache-Control": "public, max-age=31536000, immutable"},
@@ -413,13 +413,13 @@ async def adopt_source(payload: dict):
         str(collection or ""), {entry.id for entry in stored.sources.catalog}
     )
     if definition is None:
-        raise HTTPException(status_code=404, detail=f"Collection {collection} wurde nicht entdeckt")
+        raise HTTPException(status_code=404, detail=f"Collection {collection} was not discovered")
     data = stored.model_dump()
     data["sources"]["catalog"].append(definition.model_dump())
     new_config = AppConfig(**data)
     await _save_config(stored, new_config, move_existing=False)
     source_sync.forget_discovered(definition.collection or "")
-    logger.info("Quelle %s (%s) in den Katalog übernommen", definition.id, definition.collection)
+    logger.info("Source %s (%s) added to the catalog", definition.id, definition.collection)
     return definition.model_dump()
 
 
@@ -437,6 +437,11 @@ async def get_status():
     return JSONResponse(status_store.all())
 
 
+@app.get("/api/version")
+async def get_version():
+    return {"version": __version__}
+
+
 @app.get("/healthz")
 async def healthz():
     return {"status": "ok"}
@@ -447,13 +452,13 @@ async def refresh_region(region_name: str):
     config = config_store.get()
     _get_region_or_404(config, region_name)
     scheduler.trigger_now(region_name)
-    logger.info("Manuelle Aktualisierung für %s angefordert", region_name)
+    logger.info("Manual refresh requested for %s", region_name)
     return {"status": "scheduled", "region": region_name}
 
 
 @app.get("/api/regions/{region_name}/frames")
 async def list_frames(region_name: str):
-    """Historie: alle Frames im Puffer, neuester zuerst."""
+    """History: all frames in the buffer, newest first."""
     buffer = _buffer_for(region_name)
     return {
         "region": region_name,
@@ -475,11 +480,10 @@ async def list_frames(region_name: str):
 
 @app.get("/regions/{region_name}/history/{filename}")
 async def history_frame(region_name: str, filename: str, w: int | None = None):
-    """Frame per (stabilem) Dateinamen.
+    """Frame by (stable) file name.
 
-    ``<name>.png`` liefert das Original, ``<name>.jpg`` das gecachte JPEG in
-    voller Größe (deutlich kleiner, schneller im Betrachter); ``?w=240``
-    ein JPEG-Vorschaubild.
+    ``<name>.png`` returns the original, ``<name>.jpg`` the cached full-size
+    JPEG (much smaller, faster in the viewer); ``?w=240`` a JPEG thumbnail.
     """
     buffer = _buffer_for(region_name)
     as_jpeg = filename.endswith(".jpg")
@@ -488,7 +492,7 @@ async def history_frame(region_name: str, filename: str, w: int | None = None):
     frame = buffer.by_filename(filename)
     path = frame.path(buffer.region_dir) if frame else None
     if path is None or not path.exists():
-        raise HTTPException(status_code=404, detail="Frame nicht (mehr) vorhanden")
+        raise HTTPException(status_code=404, detail="Frame not (or no longer) available")
     headers = {"Cache-Control": "public, max-age=31536000, immutable"}
     if w or as_jpeg:
         width = max(32, min(w, 1600)) if w else None
@@ -502,7 +506,7 @@ async def latest_png(region_name: str):
     buffer = _buffer_for(region_name)
     frame = buffer.latest()
     if frame is None:
-        raise HTTPException(status_code=404, detail="Noch keine Frames vorhanden")
+        raise HTTPException(status_code=404, detail="No frames available yet")
     return Response(
         content=frame.path(buffer.region_dir).read_bytes(),
         media_type="image/png",
@@ -512,15 +516,15 @@ async def latest_png(region_name: str):
 
 @app.get("/regions/{region_name}/latest.jpg")
 async def latest_jpg(region_name: str):
-    """Neuestes Einzelbild als gecachtes JPEG (schneller als das PNG)."""
+    """Latest single image as cached JPEG (faster than the PNG)."""
     buffer = _buffer_for(region_name)
     frame = buffer.latest()
     if frame is None:
-        raise HTTPException(status_code=404, detail="Noch keine Frames vorhanden")
+        raise HTTPException(status_code=404, detail="No frames available yet")
     try:
         data = await run_in_threadpool(media.jpeg, buffer, frame)
     except FileNotFoundError as exc:
-        raise HTTPException(status_code=404, detail="Frame nicht (mehr) vorhanden") from exc
+        raise HTTPException(status_code=404, detail="Frame not (or no longer) available") from exc
     return Response(content=data, media_type="image/jpeg", headers={"Cache-Control": "no-cache"})
 
 
@@ -529,7 +533,7 @@ async def frame_png(region_name: str, index: int):
     buffer = _buffer_for(region_name)
     frame = buffer.get(index)
     if frame is None:
-        raise HTTPException(status_code=404, detail="Frame-Index nicht vorhanden")
+        raise HTTPException(status_code=404, detail="Frame index not available")
     return Response(content=frame.path(buffer.region_dir).read_bytes(), media_type="image/png")
 
 
@@ -539,7 +543,7 @@ async def animation_gif(region_name: str):
     fps = config_store.get().server.mjpeg_fps
     payload = await run_in_threadpool(media.animation, buffer, "gif", fps)
     if payload is None:
-        raise HTTPException(status_code=404, detail="Noch keine Frames vorhanden")
+        raise HTTPException(status_code=404, detail="No frames available yet")
     return Response(content=payload, media_type="image/gif")
 
 
@@ -549,12 +553,12 @@ async def animation_mp4(region_name: str):
     fps = config_store.get().server.mjpeg_fps
     try:
         payload = await run_in_threadpool(media.animation, buffer, "mp4", fps)
-    except ImportError as exc:  # pragma: no cover - abhängig von optionaler Dependency
+    except ImportError as exc:  # pragma: no cover - depends on optional dependency
         raise HTTPException(
-            status_code=501, detail="MP4-Export benötigt das Paket imageio-ffmpeg"
+            status_code=501, detail="MP4 export requires the imageio-ffmpeg package"
         ) from exc
     if payload is None:
-        raise HTTPException(status_code=404, detail="Noch keine Frames vorhanden")
+        raise HTTPException(status_code=404, detail="No frames available yet")
     return Response(content=payload, media_type="video/mp4")
 
 
@@ -566,8 +570,8 @@ async def mjpeg(region_name: str):
 
     async def _generate():
         while True:
-            # Pro Durchlauf neu holen: neue Frames und ein zwischenzeitlich
-            # gewechselter Speicherort werden so ohne Reconnect übernommen.
+            # Re-fetch on every pass: new frames and a storage location changed
+            # in the meantime are picked up without a reconnect.
             try:
                 buffer = _buffer_for(region_name)
             except HTTPException:
@@ -576,7 +580,7 @@ async def mjpeg(region_name: str):
             if not frames:
                 await asyncio.sleep(delay)
                 continue
-            for frame in reversed(frames):  # älteste zuerst abspielen, dann loopen
+            for frame in reversed(frames):  # play oldest first, then loop
                 try:
                     jpeg_bytes = await run_in_threadpool(media.jpeg, buffer, frame)
                 except FileNotFoundError:

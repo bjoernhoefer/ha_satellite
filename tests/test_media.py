@@ -1,4 +1,4 @@
-"""Tests für den Cache abgeleiteter Medien (Vorschaubilder, Animationen)."""
+"""Tests for the derived media cache (thumbnails, animations)."""
 
 from __future__ import annotations
 
@@ -35,11 +35,11 @@ def test_jpeg_is_cached_and_removed_with_its_frame(tmp_path, monkeypatch):
     path = media.jpeg_path(buffer, oldest, 32)
     assert path.exists()
 
-    # Zweiter Aufruf liest nur die Datei.
+    # Second call only reads the file.
     monkeypatch.setattr(media, "_to_jpeg", lambda *a: (_ for _ in ()).throw(AssertionError))
     assert media.jpeg(buffer, oldest, 32) == thumb
 
-    # Frame fällt aus dem Ringpuffer -> Vorschaubild wird mit aufgeräumt.
+    # Frame drops out of the ring buffer -> thumbnail is cleaned up too.
     buffer.add_frame(_png((0, 0, 200)), timestamp=T0 + timedelta(minutes=30))
     assert buffer.by_filename(oldest.filename) is None
     assert not path.exists()
@@ -64,10 +64,10 @@ def test_animation_is_cached_until_frames_change(tmp_path, monkeypatch):
     buffer.add_frame(_png((0, 200, 0)), timestamp=T0 + timedelta(minutes=30))
     media.animation(buffer, "gif", 2.0)
     assert calls == [3, 3]
-    # Nur die aktuelle Animation bleibt liegen.
+    # Only the current animation remains.
     assert len(list(media.cache_dir(buffer).glob("animation-*.gif"))) == 1
 
-    # Andere Bildrate -> neue Animation.
+    # Different frame rate -> new animation.
     media.animation(buffer, "gif", 4.0)
     assert calls == [3, 3, 3]
 
@@ -110,7 +110,7 @@ def test_scheduler_prewarms_after_new_frame(tmp_path, monkeypatch):
     monkeypatch.setattr("ha_satellite.scheduler.get_source", lambda name: PngSource())
     scheduler._run_region("wien")
     job = scheduler._scheduler.get_job("media-wien")
-    assert job is not None  # eigener Job, blockiert den Render-Lauf nicht
+    assert job is not None  # separate job, does not block the render run
     job.func(*job.args)
     buffer = buffers.get("wien", 12, 500)
     assert media.jpeg_path(buffer, buffer.latest(), media.THUMB_WIDTH).exists()
