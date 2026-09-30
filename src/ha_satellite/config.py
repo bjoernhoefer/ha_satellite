@@ -312,15 +312,24 @@ class StorageConfig(BaseModel):
 
 
 class ArchiveConfig(BaseModel):
-    """Raw data archive of MTG FCI chunks (render on demand).
+    """Raw data archive of MTG FCI chunks + archive of pre-rendered images.
 
     Downloads chunks ``chunk_min``..``chunk_max`` (default: Europe) plus
     all chunks needed by a configured region.
+
+    With ``render_all`` every enabled source is downloaded at its own cycle
+    and, after each new capture, every region is rendered in **every** image
+    type of that source ("download all sources"). The results are stored as
+    PNG + JPEG in the render archive and browsed there without re-rendering.
     """
 
     retention_hours: int = Field(default=12, ge=0, le=168)
     chunk_min: int = Field(default=32, ge=1, le=FCI_CHUNK_COUNT)
     chunk_max: int = Field(default=FCI_CHUNK_COUNT, ge=1, le=FCI_CHUNK_COUNT)
+    # Download all enabled sources and render all image types per region.
+    render_all: bool = False
+    render_retention_hours: int = Field(default=24, ge=0, le=720)
+    render_max_storage_mb: int = Field(default=2000, gt=0)
 
     @model_validator(mode="after")
     def _ordered(self) -> "ArchiveConfig":

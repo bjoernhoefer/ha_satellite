@@ -34,7 +34,6 @@ from ha_satellite.sources.fci_archive import (
     chunk_of,
     chunks_for_region,
     format_chunks,
-    render_cache_path,
     wanted_chunks,
 )
 
@@ -298,50 +297,74 @@ def write_fci_slot(frames_dir, name="20260926T142000Z", chunks=range(32, 41), ca
     for c in chunks:
         (slot_dir / _entry(c)).write_bytes(b"x")
     if cached:
-        config = default_config()
-        slot = FciArchive(frames_dir / "_archive").slot(COLLECTION, name)
-        for (region, composite), png in cached.items():
-            path = render_cache_path(slot, config.region(region), composite)
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_bytes(png)
+        from ha_satellite.archive import RenderArchive
+
+        archive = RenderArchive(frames_dir / "_renders")
+        for key, png in cached.items():
+            region, composite = key if len(key) == 2 else key[:2]
+            source = key[2] if len(key) > 2 else "mtg_fci"
+            archive.store(region, source, composite, end, png)
     return slot_dir
 
 
 def test_archive_api_lists_slots_and_serves_cached_renders(live_server):
+    """The archive lists rendered images and still renders raw FCI slots on request."""
     frames_dir = live_server.data_dir / "frames"
     write_fci_slot(frames_dir, "20260926T141000Z", chunks=[36])  # Vienna incomplete
     write_fci_slot(frames_dir)
+    # Make the FCI source selectable in the archive.
+    config = yaml.safe_load(live_server.config_file.read_text())
+    for entry in config["sources"]["catalog"]:
+        entry["enabled"] = entry["id"] in ("dummy", "mtg_fci")
+    httpx.post(f"{live_server.url}/api/config", json={"sources": config["sources"]})
 
     info = httpx.get(f"{live_server.url}/api/archive").json()
     assert info["retention_hours"] == 12
     assert info["chunks_text"] == "32–40"
     assert info["collections"]["EO:EUM:DAT:0662"]["slots"] == 2
 
-    listing = httpx.get(f"{live_server.url}/api/regions/wien/archive").json()
+    listing = httpx.get(f"{live_server.url}/api/regions/wien/archive?source=mtg_fci").json()
+    assert listing["source"] == "mtg_fci"
     assert listing["composite"] == DEFAULT_FCI_COMPOSITE
-    assert listing["chunks"] == [36, 37]
-    assert [(s["name"], s["available"]) for s in listing["slots"]] == [
-        ("20260926T142000Z", True), ("20260926T141000Z", False),
-    ]
+    # Only the complete slot can be rendered; nothing is cached yet.
+    assert [(s["name"], s["cached"]) for s in listing["images"]] == [("20260926T142000Z", False)]
+    assert {s["id"] for s in listing["sources"]} >= {"dummy", "mtg_fci"}
 
-    # Bereits gerenderte Bilder kommen aus dem Cache (ohne Satpy).
-    config = AppConfig(**yaml.safe_load(live_server.config_file.read_text()))
-    archive = FciArchive(frames_dir / "_archive")
-    slot = archive.slot(COLLECTION, "20260926T142000Z")
-    cache = render_cache_path(slot, config.region("wien"), "cloudtop")
-    cache.parent.mkdir(parents=True)
-    cache.write_bytes(b"\x89PNG cached")
-    response = httpx.get(f"{live_server.url}/regions/wien/archive/20260926T142000Z.png?composite=cloudtop")
-    assert response.status_code == 200 and response.content == b"\x89PNG cached"
-    listing = httpx.get(f"{live_server.url}/api/regions/wien/archive?composite=cloudtop").json()
-    assert listing["slots"][0]["cached"] is True
+    # An already rendered image is served from the archive (without Satpy).
+    from ha_satellite.archive import RenderArchive
 
-    assert httpx.get(f"{live_server.url}/regions/wien/archive/20260101T000000Z.png").status_code == 404
-    assert httpx.get(f"{live_server.url}/regions/wien/archive/20260926T142000Z.png?composite=a/b").status_code in (400, 404)
-    assert httpx.get(f"{live_server.url}/regions/wien/archive/20260926T142000Z.png?composite=x;y").status_code == 400
-    # Vienna lacks chunk 37 in the older slot -> clear error instead of a crash.
-    response = httpx.get(f"{live_server.url}/regions/wien/archive/20260926T141000Z.png", timeout=30)
-    assert response.status_code == 502 and "missing 37" in response.json()["detail"]
+    archive = RenderArchive(frames_dir / "_renders")
+    archive.store("wien", "mtg_fci", "cloudtop", SENSING, _tiny_png())
+    response = httpx.get(
+        f"{live_server.url}/regions/wien/archive/mtg_fci/cloudtop/"
+        f"{SENSING.strftime('%Y%m%dT%H%M%SZ')}.png"
+    )
+    assert response.status_code == 200 and response.content == _tiny_png()
+    jpeg = httpx.get(
+        f"{live_server.url}/regions/wien/archive/mtg_fci/cloudtop/"
+        f"{SENSING.strftime('%Y%m%dT%H%M%SZ')}.jpg"
+    )
+    assert jpeg.status_code == 200 and jpeg.headers["content-type"] == "image/jpeg"
+    listing = httpx.get(f"{live_server.url}/api/regions/wien/archive?source=mtg_fci&composite=cloudtop").json()
+    assert listing["images"][0]["cached"] is True
+
+    base = f"{live_server.url}/regions/wien/archive/mtg_fci"
+    assert httpx.get(f"{base}/cloudtop/20260101T000000Z.png").status_code == 404
+    assert httpx.get(f"{base}/a%2Fb/20260926T142000Z.png").status_code in (400, 404)
+    assert httpx.get(f"{base}/x;y/20260926T142000Z.png").status_code == 400
+    # Vienna lacks chunk 37 in the older slot -> not offered at all.
+    names = [s["name"] for s in listing["images"]]
+    assert "20260926T141000Z" not in names
+
+
+def _tiny_png() -> bytes:
+    import io
+
+    from PIL import Image
+
+    out = io.BytesIO()
+    Image.new("RGB", (8, 8), "red").save(out, format="PNG")
+    return out.getvalue()
 
 
 def test_storage_api_sets_archive_settings_and_prunes(live_server):
@@ -353,9 +376,31 @@ def test_storage_api_sets_archive_settings_and_prunes(live_server):
     })
     assert response.status_code == 200, response.text
     stored = yaml.safe_load(live_server.config_file.read_text())["archive"]
-    assert stored == {"retention_hours": 1, "chunk_min": 30, "chunk_max": 40}
+    assert stored == {
+        "retention_hours": 1, "chunk_min": 30, "chunk_max": 40,
+        "render_all": False, "render_retention_hours": 24, "render_max_storage_mb": 2000,
+    }
     remaining = sorted(p.name for p in (frames_dir / "_archive" / "EO_EUM_DAT_0662").iterdir())
     assert remaining == ["20260926T142000Z"]
 
     bad = httpx.post(f"{live_server.url}/api/storage", json={"archive_chunk_min": 40, "archive_chunk_max": 30})
     assert bad.status_code == 400
+
+    # Settings of the rendered-image archive, including retention pruning.
+    from ha_satellite.archive import RenderArchive
+
+    renders = RenderArchive(frames_dir / "_renders")
+    renders.store("wien", "dummy", "cloudtop", datetime(2026, 9, 20, tzinfo=timezone.utc), _tiny_png())
+    renders.store("wien", "dummy", "cloudtop", datetime.now(timezone.utc), _tiny_png())
+    response = httpx.post(f"{live_server.url}/api/storage", json={
+        "archive_render_all": True, "archive_render_retention_hours": 6,
+        "archive_render_max_storage_mb": 500,
+    })
+    assert response.status_code == 200, response.text
+    stored = yaml.safe_load(live_server.config_file.read_text())["archive"]
+    assert stored["render_all"] is True
+    assert stored["render_retention_hours"] == 6
+    assert stored["render_max_storage_mb"] == 500
+    assert len(renders.images("wien", "dummy", "cloudtop")) == 1
+    summary = response.json()["archive"]
+    assert summary["render_all"] is True and summary["renders"]["images"] == 1

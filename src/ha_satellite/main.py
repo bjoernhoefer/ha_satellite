@@ -22,10 +22,10 @@ from fastapi.responses import (
 from fastapi.templating import Jinja2Templates
 
 from ha_satellite import __version__, logbuffer, media, storage
+from ha_satellite.archive import RenderArchive, get_render_archive
 from ha_satellite.buffer import BufferManager
 from ha_satellite.config import (
     COMPOSITES,
-    FCI_COMPOSITES,
     PLACEHOLDER_DRIVERS,
     VALID_DRIVERS,
     AppConfig,
@@ -40,14 +40,13 @@ from ha_satellite.scheduler import RenderScheduler
 from ha_satellite.sources import (
     RenderError,
     archive_root,
-    fci_source_for,
+    render_archive_root,
     render_fci_slot,
 )
 from ha_satellite.sources.fci_archive import (
     chunks_for_region,
     format_chunks,
     get_archive,
-    render_cache_path,
     wanted_chunks,
 )
 from ha_satellite.source_sync import SourceSync
@@ -123,7 +122,6 @@ async def index(request: Request):
             "composites_by_driver": {d: composites_for(d) for d in VALID_DRIVERS},
             "default_composites": {d: default_composite_for(d) for d in VALID_DRIVERS},
             "driver_of": {e.id: e.driver for e in config.sources.catalog},
-            "fci_composites": FCI_COMPOSITES,
             "placeholder_drivers": PLACEHOLDER_DRIVERS,
             "version": __version__,
         },
@@ -242,7 +240,8 @@ async def post_storage(payload: dict):
     for key in ("history_minutes", "max_storage_mb"):
         if payload.get(key) is not None:
             data["history"][key] = payload[key]
-    for key in ("retention_hours", "chunk_min", "chunk_max"):
+    for key in ("retention_hours", "chunk_min", "chunk_max", "render_all",
+                "render_retention_hours", "render_max_storage_mb"):
         if payload.get(f"archive_{key}") is not None:
             data["archive"][key] = payload[f"archive_{key}"]
     try:
@@ -254,7 +253,20 @@ async def post_storage(payload: dict):
     await run_in_threadpool(
         get_archive(archive_root(new_config)).prune_all, new_config.archive.retention_hours
     )
-    return {"current": str(frames_dir_for(new_config)), "moved_frames": moved}
+    await run_in_threadpool(
+        _render_archive(new_config).prune,
+        new_config.archive.render_retention_hours,
+        new_config.archive.render_max_storage_mb,
+    )
+    return {
+        "current": str(frames_dir_for(new_config)),
+        "moved_frames": moved,
+        "archive": await run_in_threadpool(_archive_summary, new_config),
+    }
+
+
+def _render_archive(config: AppConfig) -> "RenderArchive":
+    return get_render_archive(render_archive_root(config))
 
 
 def _archive_summary(config: AppConfig) -> dict:
@@ -281,6 +293,11 @@ def _archive_summary(config: AppConfig) -> dict:
         ],
         "collections": collections,
         "status": archive.status(),
+        "render_all": config.archive.render_all,
+        "render_retention_hours": config.archive.render_retention_hours,
+        "render_max_storage_mb": config.archive.render_max_storage_mb,
+        "archived_sources": [e.id for e in config.sources.catalog if e.enabled],
+        "renders": _render_archive(config).summary(),
     }
 
 
@@ -293,89 +310,173 @@ async def get_archive_info():
 _COMPOSITE_RE = re.compile(r"^[A-Za-z0-9_]+$")
 
 
-def _archive_context(region_name: str):
+@app.get("/api/regions/{region_name}/archive")
+async def list_archive(
+    region_name: str, source: str | None = None, composite: str | None = None
+):
+    """Archive of a region: available sources, image types and images.
+
+    Everything listed here is already rendered (PNG + JPEG) - browsing is as
+    fast as the normal viewer. For MTG FCI, raw data slots that have not been
+    rendered yet are listed as well; they are rendered on request.
+    """
     config = config_store.get()
     region = _get_region_or_404(config, region_name)
-    entry = fci_source_for(config, region)
-    if entry is None:
-        raise HTTPException(status_code=404, detail="No MTG FCI source in the catalog")
-    archive = get_archive(archive_root(config))
-    return config, region, entry, archive
-
-
-def _default_archive_composite(config: AppConfig, region) -> str:
-    own = config.sources.get(region.source)
-    if own is not None and own.driver == "mtg_fci":
-        return resolve_fci_composite(region.composite)
-    return default_composite_for("mtg_fci")
-
-
-@app.get("/api/regions/{region_name}/archive")
-async def list_archive(region_name: str, composite: str | None = None):
-    """Archived FCI slots from which the region can be rendered."""
-    config, region, entry, archive = _archive_context(region_name)
-    composite = composite or _default_archive_composite(config, region)
-    if not _COMPOSITE_RE.match(composite):
+    archive = _render_archive(config)
+    sources = await run_in_threadpool(_archive_sources, config, region_name)
+    if not sources:
+        return {
+            "region": region_name, "source": None, "composite": None,
+            "sources": [], "composites": {}, "images": [], "slots": [],
+            "retention_hours": config.archive.render_retention_hours,
+        }
+    source = source if any(s["id"] == source for s in sources) else sources[0]["id"]
+    entry = config.sources.get(source)
+    composites = next(s["composites"] for s in sources if s["id"] == source)
+    explicit_composite = bool(composite and composite in composites)
+    if not explicit_composite:
+        composite = _default_archive_composite(config, region, entry)
+        if composite not in composites:
+            composite = next(iter(composites), "")
+    if composite and not _COMPOSITE_RE.match(composite):
         raise HTTPException(status_code=400, detail="Invalid composite name")
-    needed = chunks_for_region(region)
+
+    def _archived_names() -> list[str]:
+        return archive.combinations(region_name).get(source, [])
+
+    if not explicit_composite and not await run_in_threadpool(
+        archive.images, region_name, source, composite
+    ):
+        # Open on an image type that actually has archived images.
+        stored_names = await run_in_threadpool(_archived_names)
+        if stored_names:
+            composite = stored_names[0]
 
     def _collect() -> list[dict]:
-        items = []
-        for slot in archive.slots(entry.collection or ""):
-            available = bool(needed) and needed <= set(slot.chunks)
-            items.append({
-                "name": slot.name,
-                "created_at": slot.sensing_end.isoformat(),
-                "available": available,
-                "cached": render_cache_path(slot, region, composite).exists(),
-                "url": f"/regions/{region_name}/archive/{slot.name}.png?composite={composite}",
-            })
+        items = [
+            image.as_dict(region_name)
+            for image in archive.images(region_name, source, composite)
+        ]
+        known = {item["name"] for item in items}
+        items.extend(_pending_fci_slots(config, region, entry, composite, known))
+        items.sort(key=lambda i: i["created_at"], reverse=True)
         return items
 
+    images = await run_in_threadpool(_collect)
     return {
         "region": region_name,
-        "source": entry.id,
-        "collection": entry.collection,
+        "source": source,
         "composite": composite,
-        "composites": FCI_COMPOSITES,
-        "chunks": sorted(needed),
-        "retention_hours": config.archive.retention_hours,
-        "slots": await run_in_threadpool(_collect),
+        "sources": sources,
+        "composites": composites,
+        "retention_hours": config.archive.render_retention_hours,
+        "images": images,
+        # Backwards-compatible alias of the previous FCI-only archive API.
+        "slots": images,
     }
+
+
+def _archive_sources(config: AppConfig, region_name: str) -> list[dict]:
+    """Sources offered in the archive: enabled ones plus already archived ones."""
+    stored = _render_archive(config).combinations(region_name)
+    result: list[dict] = []
+    for entry in config.sources.catalog:
+        composites = dict(composites_for(entry.driver))
+        for name in stored.get(entry.id, []):
+            composites.setdefault(name, name)
+        has_data = entry.id in stored or bool(
+            entry.driver == "mtg_fci"
+            and get_archive(archive_root(config)).slots(entry.collection or "")
+        )
+        if not entry.enabled and not has_data:
+            continue
+        result.append({
+            "id": entry.id,
+            "label": entry.label or entry.id,
+            "driver": entry.driver,
+            "composites": composites,
+            "has_data": has_data,
+        })
+    # Sources with images first, so the viewer opens on something useful.
+    result.sort(key=lambda s: not s["has_data"])
+    return result
+
+
+def _default_archive_composite(config: AppConfig, region, entry) -> str:
+    if entry is not None and entry.id == region.source:
+        return (
+            resolve_fci_composite(region.composite)
+            if entry.driver == "mtg_fci"
+            else region.composite
+        )
+    return default_composite_for(entry.driver if entry else None)
+
+
+def _pending_fci_slots(config, region, entry, composite: str, known: set[str]) -> list[dict]:
+    """FCI raw data slots without a rendered image (rendered on request)."""
+    if entry is None or entry.driver != "mtg_fci":
+        return []
+    needed = chunks_for_region(region)
+    items = []
+    for slot in get_archive(archive_root(config)).slots(entry.collection or ""):
+        if slot.name in known or not needed or not needed <= set(slot.chunks):
+            continue
+        base = f"/regions/{region.name}/archive/{entry.id}/{composite}/{slot.name}"
+        items.append({
+            "name": slot.name,
+            "created_at": slot.sensing_end.isoformat(),
+            "source": entry.id,
+            "composite": composite,
+            "available": True,
+            "cached": False,
+            "url": f"{base}.png",
+            "jpeg_url": f"{base}.png",
+        })
+    return items
 
 
 # Time to wait for the render lock (one scheduled run incl. download).
 ARCHIVE_RENDER_LOCK_TIMEOUT = 600
 
 
-@app.get("/regions/{region_name}/archive/{slot_name}.png")
-async def archive_png(region_name: str, slot_name: str, composite: str | None = None):
-    """Renders a region from an archived FCI slot (cached)."""
-    config, region, entry, archive = _archive_context(region_name)
-    composite = composite or _default_archive_composite(config, region)
+@app.get("/regions/{region_name}/archive/{source}/{composite}/{slot_name}.{ext}")
+async def archive_image(
+    region_name: str, source: str, composite: str, slot_name: str, ext: str
+):
+    """Archived image; MTG FCI raw slots are rendered on request and stored."""
+    if ext not in ("png", "jpg"):
+        raise HTTPException(status_code=404, detail="Unknown format")
+    config = config_store.get()
+    region = _get_region_or_404(config, region_name)
     if not _COMPOSITE_RE.match(composite):
         raise HTTPException(status_code=400, detail="Invalid composite name")
-    slot = archive.slot(entry.collection or "", slot_name)
+    archive = _render_archive(config)
+    path = archive.path_for(region_name, source, composite, slot_name, ext)
+    if path is None:
+        raise HTTPException(status_code=400, detail="Invalid archive address")
+    headers = {"Cache-Control": "public, max-age=31536000, immutable"}
+    media_type = "image/png" if ext == "png" else "image/jpeg"
+    if path.exists():
+        return Response(content=path.read_bytes(), media_type=media_type, headers=headers)
+
+    entry = config.sources.get(source)
+    if entry is None or entry.driver != "mtg_fci":
+        raise HTTPException(status_code=404, detail="Image not (or no longer) in the archive")
+    slot = get_archive(archive_root(config)).slot(entry.collection or "", slot_name)
     if slot is None:
         raise HTTPException(status_code=404, detail="Slot not (or no longer) in the archive")
-    cache = render_cache_path(slot, region, composite)
 
     def _render() -> bytes:
-        if cache.exists():
-            return cache.read_bytes()
         with scheduler.exclusive(timeout=ARCHIVE_RENDER_LOCK_TIMEOUT):
-            if cache.exists():  # created by another request while waiting
-                return cache.read_bytes()
+            if path.exists():  # created by another request while waiting
+                return path.read_bytes()
             logger.info("Archive render %s / %s / %s started", region.name, slot.name, composite)
             frame = render_fci_slot(slot, region, composite)
-        cache.parent.mkdir(parents=True, exist_ok=True)
-        partial = cache.with_name(cache.name + ".part")
-        partial.write_bytes(frame.png)
-        partial.rename(cache)
-        return frame.png
+        archive.store(region_name, source, composite, frame.sensing_time, frame.png)
+        return path.read_bytes() if path.exists() else frame.png
 
     try:
-        png = await run_in_threadpool(_render)
+        payload = await run_in_threadpool(_render)
     except RenderError as exc:
         logger.error("Archive render %s / %s failed: %s", region.name, slot_name, exc)
         raise HTTPException(status_code=502, detail=str(exc)) from exc
@@ -383,10 +484,14 @@ async def archive_png(region_name: str, slot_name: str, composite: str | None = 
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail="Slot has been removed in the meantime") from exc
-    return Response(
-        content=png, media_type="image/png",
-        headers={"Cache-Control": "public, max-age=31536000, immutable"},
-    )
+    return Response(content=payload, media_type=media_type, headers=headers)
+
+
+@app.post("/api/archive/render")
+async def archive_render_now():
+    """Archive the newest capture of every enabled source, in all image types."""
+    count = await run_in_threadpool(scheduler.archive_all_now)
+    return {"status": "scheduled", "sources": count}
 
 
 @app.get("/api/sources")

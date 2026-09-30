@@ -194,6 +194,36 @@ class DataTailorSource(Source):
         return self._dummy(region)
 
 
+def render_with(
+    entry: "SourceDefinition",
+    region: RegionConfig,
+    composite: str,
+    config: AppConfig,
+) -> RenderedFrame:
+    """Render a region with an explicit source and image type.
+
+    Used by the archive ("download all sources"): the same locally stored
+    product is rendered once per image type, independent of the region's
+    own configuration.
+    """
+    from ha_satellite.config import resolve_fci_composite
+
+    if entry.driver == "mtg_fci":
+        composite = resolve_fci_composite(composite)
+    variant = region.model_copy(update={"source": entry.id, "composite": composite})
+    return get_source(entry.driver).render(variant, config, None)
+
+
+def archive_composites(entry: "SourceDefinition") -> list[str]:
+    """Image types archived for a source (all choices of its driver)."""
+    from ha_satellite.config import composites_for, resolve_fci_composite
+
+    names = list(composites_for(entry.driver))
+    if entry.driver == "mtg_fci":
+        names = list(dict.fromkeys(resolve_fci_composite(n) for n in names))
+    return names
+
+
 def frames_root(config: AppConfig) -> Path:
     return Path(config.storage.frames_dir) if config.storage.frames_dir else data_dir() / "frames"
 
@@ -204,15 +234,10 @@ def archive_root(config: AppConfig) -> Path:
     return frames_root(config) / ARCHIVE_SUBDIR
 
 
-def fci_source_for(config: AppConfig, region: RegionConfig | None = None):
-    """FCI catalog entry for a region: its own source if FCI,
-    otherwise the first enabled (or first) FCI entry."""
-    if region is not None:
-        own = config.sources.get(region.source)
-        if own is not None and own.driver == "mtg_fci":
-            return own
-    entries = [e for e in config.sources.catalog if e.driver == "mtg_fci"]
-    return next((e for e in entries if e.enabled), entries[0] if entries else None)
+def render_archive_root(config: AppConfig) -> Path:
+    from ha_satellite.archive import RENDERS_SUBDIR
+
+    return frames_root(config) / RENDERS_SUBDIR
 
 
 def render_fci_slot(slot, region: RegionConfig, composite: str) -> RenderedFrame:
