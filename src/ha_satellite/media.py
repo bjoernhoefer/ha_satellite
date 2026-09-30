@@ -57,7 +57,7 @@ def jpeg_path(buffer: RingBuffer, frame: Frame, width: int | None = None) -> Pat
     return cache_dir(buffer) / f"{Path(frame.filename).stem}-{suffix}.jpg"
 
 
-def _to_jpeg(png_bytes: bytes, width: int | None) -> bytes:
+def to_jpeg(png_bytes: bytes, width: int | None = None) -> bytes:
     with Image.open(io.BytesIO(png_bytes)) as img:
         img = img.convert("RGB")
         if width:
@@ -75,7 +75,7 @@ def jpeg(buffer: RingBuffer, frame: Frame, width: int | None = None) -> bytes:
     with _lock_for(path):
         if path.exists():
             return path.read_bytes()
-        data = _to_jpeg(frame.path(buffer.region_dir).read_bytes(), width)
+        data = to_jpeg(frame.path(buffer.region_dir).read_bytes(), width)
         if buffer.by_filename(frame.filename) is not None:  # not deleted in the meantime
             _write_atomic(path, data)
         return data

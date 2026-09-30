@@ -124,6 +124,31 @@ resampling: each channel is cropped with its own window, loading uses
 and 0° (full disk). Reference values on a Raspberry Pi 5: ~8–9 s and
 ~400–450 MB peak RSS per region and run.
 
+### Archive of all sources ("download all sources")
+
+`archive.render_all` (UI: "Download all sources") makes **every** enabled
+source download at its own cycle — even when no region uses it — and, after
+each new scan, renders **every region in every image type** of that source's
+driver. The images are stored by `archive.py` as PNG **and** JPEG under
+`<storage location>/_renders/<region>/<source>/<composite>/<scan>.png`.
+Browsing is therefore as fast as the normal viewer; nothing is rendered on
+demand. Cleanup by age (`archive.render_retention_hours`, default 24 h) and
+by a storage limit (`archive.render_max_storage_mb`, default 2000 MB, oldest
+first); regions that no longer exist are dropped, and a region whose cut-out
+changed (position, radius, size, borders — see `region_signature`) loses its
+archived images because they no longer match.
+
+Rendering runs strictly serialized under the **global render lock**, one
+image at a time (memory!), in the scheduler jobs `archive-<source>`; an
+immediate run over all sources is `POST /api/archive/render` (button
+"Archive all now"). Combinations that already exist are skipped, so a
+restart or a second run costs nothing.
+
+The per-region button "🗄 Archive" opens the archive viewer with a source
+and an image type select, JPEG/PNG format selection and time-lapse. MTG FCI
+raw scans that have not been rendered yet are still listed and rendered on
+request (the result lands in the archive).
+
 ### Country border overlay
 
 Per region, `borders: true` (default, checkbox "Draw country borders") makes
@@ -335,10 +360,11 @@ FCI archive stays PNG.
 | `POST /api/sources/sync` | Sync with the EUMETSAT Data Store now |
 | `POST /api/sources/adopt` | Adopt a discovered collection (`{"collection": ...}`) into the catalogue |
 | `GET /api/storage` | Current storage location, usage, candidates with free space/warnings |
-| `POST /api/storage` | Set storage location/history/archive (`frames_dir`, `move_existing`, `history_minutes`, `max_storage_mb`, `archive_retention_hours`, `archive_chunk_min`, `archive_chunk_max`) |
-| `GET /api/archive` | FCI raw-data archive: retention, loaded chunks, slots/usage per collection, last error |
-| `GET /api/regions/{region}/archive` | Archived FCI slots for the region (`?composite=`), with image URL and cache status |
-| `GET /regions/{region}/archive/{slot}.png` | Render region from an FCI slot (`?composite=`, cached) |
+| `POST /api/storage` | Set storage location/history/archive (`frames_dir`, `move_existing`, `history_minutes`, `max_storage_mb`, `archive_retention_hours`, `archive_chunk_min`, `archive_chunk_max`, `archive_render_all`, `archive_render_retention_hours`, `archive_render_max_storage_mb`) |
+| `GET /api/archive` | Archive: FCI raw data (retention, chunks, slots/usage, last error) and pre-rendered images (`renders`, `render_all`, retention, limit) |
+| `GET /api/regions/{region}/archive` | Archive of a region: sources, image types, images (`?source=&composite=`; `slots` = alias of `images`) |
+| `GET /regions/{region}/archive/{source}/{composite}/{slot}.{png\|jpg}` | Archived image; unrendered FCI raw slots are rendered on request and stored |
+| `POST /api/archive/render` | Archive all enabled sources now (all regions, all image types) |
 | `GET /api/logs` | Log entries (`?after=<id>`, `?format=text`) |
 | `GET /live/{region}` | Memorable address: opens the live stream in the browser |
 | `GET /healthz` | Liveness |
@@ -383,7 +409,9 @@ MJPEG/MP4/GIF, desktop + phone), live stream in the browser incl. deep link
 validation), enable sources, sync + adopt, change storage location incl.
 move, no horizontal scrolling on phones, change image type/source per
 region (re-renders without another click), toggle country borders per
-region (desktop + phone), show cycle per source and change it via JSON
+region (desktop + phone), archive viewer (source and image type select,
+paging, format switch, deep link `#archive=…&s=…&c=…&f=…`, desktop +
+phone), archive settings and "Archive all now", show cycle per source and change it via JSON
 (desktop + phone), placeholder sources marked, API links follow the
 selected region and are clickable, version shown in the footer.
 Selectors use `data-testid` exclusively — markup and styling may change

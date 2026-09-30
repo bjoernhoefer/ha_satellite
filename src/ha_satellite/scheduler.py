@@ -38,9 +38,18 @@ from typing import TYPE_CHECKING
 from apscheduler.schedulers.background import BackgroundScheduler
 
 from ha_satellite import media
+from ha_satellite.archive import get_render_archive, region_signature
 from ha_satellite.buffer import BufferManager
 from ha_satellite.config import DOWNLOAD_DRIVERS, AppConfig, ConfigStore
-from ha_satellite.sources import SOURCE_REGISTRY, NoNewData, RenderError, get_source
+from ha_satellite.sources import (
+    SOURCE_REGISTRY,
+    NoNewData,
+    RenderError,
+    archive_composites,
+    get_source,
+    render_archive_root,
+    render_with,
+)
 from ha_satellite.status import StatusStore
 
 if TYPE_CHECKING:
@@ -51,6 +60,7 @@ logger = logging.getLogger(__name__)
 JOB_ID_PREFIX = "render-"
 DOWNLOAD_JOB_PREFIX = "download-"
 MEDIA_JOB_PREFIX = "media-"
+ARCHIVE_JOB_PREFIX = "archive-"
 SYNC_JOB_ID = "source-sync"
 # Download (~100 MB) + rendering one region stays well below this.
 LOCK_TIMEOUT_SECONDS = 15 * 60
@@ -142,14 +152,25 @@ class RenderScheduler:
         return driver in DOWNLOAD_DRIVERS and cls is not None and cls.downloads
 
     def download_sources(self, config: AppConfig) -> list[str]:
-        """Sources with their own download job: active and in use (or archive)."""
+        """Sources with their own download job.
+
+        Normally only sources a region actually uses (plus raw data
+        archives). With ``archive.render_all`` **every** enabled source with
+        a download driver runs at its own cycle, so the archive holds all
+        sources in all image types.
+        """
         used = {region.source for region in config.regions}
+        render_all = config.archive.render_all and bool(config.regions)
         return [
             entry.id
             for entry in config.sources.catalog
             if entry.enabled
             and self._downloads_for(entry.driver)
-            and (entry.id in used or SOURCE_REGISTRY[entry.driver].archive_always)
+            and (
+                render_all
+                or entry.id in used
+                or SOURCE_REGISTRY[entry.driver].archive_always
+            )
         ]
 
     def _reschedule(self) -> None:
@@ -307,6 +328,8 @@ class RenderScheduler:
             )
             for name in regions:
                 self._queue_render(name)
+            if config.archive.render_all:
+                self._queue_archive(source_id, sensing)
         else:
             logger.debug("Download %s: no new capture yet", source_id)
         return new
@@ -350,6 +373,114 @@ class RenderScheduler:
             id=f"manual-{region_name}-{next(self._job_counter)}",
             max_instances=1,
         )
+
+    # -- Archive ("download all sources") --------------------------------------
+    def _queue_archive(self, source_id: str, sensing: datetime) -> None:
+        self._scheduler.add_job(
+            self.archive_capture,
+            args=[source_id, sensing],
+            id=f"{ARCHIVE_JOB_PREFIX}{source_id}-{next(self._job_counter)}",
+            misfire_grace_time=None,
+        )
+
+    def archive_sources(self, config: AppConfig) -> list[str]:
+        """Enabled sources that are archived (all image types per region)."""
+        return [entry.id for entry in config.sources.catalog if entry.enabled]
+
+    def archive_all_now(self) -> int:
+        """Archive the newest capture of every enabled source (UI button)."""
+        config = self._config_store.get()
+        sources = self.archive_sources(config)
+        for source_id in sources:
+            state = self._downloads.get(source_id)
+            sensing = state.last_sensing if state else None
+            self._scheduler.add_job(
+                self._archive_source,
+                args=[source_id, sensing],
+                id=f"{ARCHIVE_JOB_PREFIX}manual-{source_id}-{next(self._job_counter)}",
+                misfire_grace_time=None,
+            )
+        logger.info("Archive run requested for %s", ", ".join(sources) or "no source")
+        return len(sources)
+
+    def _archive_source(self, source_id: str, sensing: datetime | None) -> None:
+        """Fetch the capture first if it is not known yet, then archive it."""
+        config = self._config_store.get()
+        entry = config.sources.get(source_id)
+        if entry is None or not entry.enabled:
+            return
+        if not self._downloads_for(entry.driver):
+            # Placeholder sources have no capture time of their own.
+            self.archive_capture(source_id, datetime.now(timezone.utc))
+            return
+        if sensing is None:
+            self.download(source_id)
+            state = self._downloads.get(source_id)
+            sensing = state.last_sensing if state else None
+            if sensing is None:
+                return
+            # A fresh download already queued the archive run when render_all is on.
+            if config.archive.render_all:
+                return
+        self.archive_capture(source_id, sensing)
+
+    def archive_capture(self, source_id: str, sensing: datetime) -> int:
+        """Render every region in every image type of the source (one at a time).
+
+        Runs under the global render lock like any other render, so it never
+        competes with the scheduled runs for memory.
+        """
+        config = self._config_store.get()
+        entry = config.sources.get(source_id)
+        if entry is None or not entry.enabled or not config.regions:
+            return 0
+        archive = get_render_archive(render_archive_root(config))
+        composites = archive_composites(entry)
+        stored = 0
+        for region in config.regions:
+            archive.sync_region(region.name, region_signature(region))
+            for composite in composites:
+                if archive.has(region.name, source_id, composite, sensing):
+                    continue
+                if not self._render_lock.acquire(timeout=LOCK_TIMEOUT_SECONDS):
+                    logger.warning("Archive %s: render lock busy, skipping", source_id)
+                    return stored
+                started = time.monotonic()
+                try:
+                    rendered = render_with(entry, region, composite, config)
+                except NoNewData:
+                    continue
+                except RenderError as exc:
+                    logger.error(
+                        "Archive %s / %s / %s failed: %s",
+                        region.name, source_id, composite, exc,
+                    )
+                    continue
+                except Exception:  # pragma: no cover - defensive
+                    logger.exception(
+                        "Archive %s / %s / %s: unexpected error",
+                        region.name, source_id, composite,
+                    )
+                    continue
+                finally:
+                    self._render_lock.release()
+                image = archive.store(
+                    region.name, source_id, composite, rendered.sensing_time, rendered.png
+                )
+                if image is not None:
+                    stored += 1
+                    logger.info(
+                        "Archived %s / %s / %s %s in %.1f s (%d KB)",
+                        region.name, source_id, composite, image.slot,
+                        time.monotonic() - started, len(rendered.png) // 1024,
+                    )
+        if stored:
+            archive.forget({r.name for r in config.regions})
+            archive.prune(
+                config.archive.render_retention_hours,
+                config.archive.render_max_storage_mb,
+            )
+        return stored
 
     def _next_run_for(self, config: AppConfig, source_id: str) -> datetime:
         state = self._downloads.get(source_id)
@@ -432,6 +563,9 @@ class RenderScheduler:
                 replace_existing=True,
                 misfire_grace_time=None,
             )
+            # Sources without a download job (placeholders) archive here.
+            if config.archive.render_all and region.source not in self.download_sources(config):
+                self._queue_archive(region.source, datetime.now(timezone.utc))
 
     def _prewarm(self, region_name: str, buffer, fps: float) -> None:
         try:

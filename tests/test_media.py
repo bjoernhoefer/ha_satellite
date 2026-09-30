@@ -36,7 +36,7 @@ def test_jpeg_is_cached_and_removed_with_its_frame(tmp_path, monkeypatch):
     assert path.exists()
 
     # Second call only reads the file.
-    monkeypatch.setattr(media, "_to_jpeg", lambda *a: (_ for _ in ()).throw(AssertionError))
+    monkeypatch.setattr(media, "to_jpeg", lambda *a: (_ for _ in ()).throw(AssertionError))
     assert media.jpeg(buffer, oldest, 32) == thumb
 
     # Frame drops out of the ring buffer -> thumbnail is cleaned up too.

@@ -53,13 +53,9 @@ def test_region_draws_borders_by_default():
     assert RegionConfig(name="x", lat=48.2, lon=16.4, radius_km=100).borders is True
 
 
-def test_archive_cache_path_depends_on_borders(tmp_path):
-    from datetime import datetime, timezone
+def test_archive_signature_depends_on_borders():
+    from ha_satellite.archive import region_signature
 
-    from ha_satellite.sources.fci_archive import Slot, render_cache_path
-
-    now = datetime(2026, 9, 26, 14, 20, tzinfo=timezone.utc)
-    slot = Slot("20260926T142000Z", "EO:EUM:DAT:0662", "p", now, now, tmp_path)
     region = RegionConfig(name="wien", lat=48.2, lon=16.4, radius_km=100)
     without = region.model_copy(update={"borders": False})
-    assert render_cache_path(slot, region, "cloudtop") != render_cache_path(slot, without, "cloudtop")
+    assert region_signature(region) != region_signature(without)

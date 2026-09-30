@@ -364,10 +364,12 @@ def test_viewer_format_switches_between_jpeg_and_png(ui, live_server):
     expect(image).to_have_attribute("src", re.compile(r"\.jpg$"))
     assert "f=" not in ui.url
 
-    # Archive (FCI raw data): PNG only, no format selection.
+    # The archive offers JPEG and PNG as well (both are pre-rendered).
     ui.keyboard.press("Escape")
     ui.get_by_test_id("archive-wien").click()
-    expect(fmt).to_be_hidden()
+    expect(fmt).to_be_visible()
+    expect(fmt).to_have_value("jpg")
+    assert [o.strip() for o in fmt.locator("option").all_inner_texts()][:2]
 
 
 def test_live_format_mp4_and_gif(ui, live_server):
@@ -790,56 +792,137 @@ def test_switching_to_fci_offers_fci_composites(ui, live_server):
     expect(select.locator("option", has_text="HRV").first).to_be_attached()
 
 
-def test_archive_viewer_browses_slots_and_composites(ui, live_server):
-    from test_fci import write_fci_slot
+def _archive_images(live_server, region="wien", source="dummy",
+                    composite="cloudtop", colors=("red", "green")):
+    """Put pre-rendered images into the archive (as the scheduler would)."""
+    from datetime import datetime, timedelta, timezone
 
-    frames = live_server.data_dir / "frames"
-    write_fci_slot(frames, "20260926T141000Z", cached={("wien", "natural_color_with_night_cloudtop"): _png("red")})
-    write_fci_slot(frames, "20260926T142000Z", cached={
-        ("wien", "natural_color_with_night_cloudtop"): _png("green"),
-        ("wien", "cloudtop"): _png("blue"),
-    })
+    from ha_satellite.archive import RenderArchive
+
+    archive = RenderArchive(live_server.data_dir / "frames" / "_renders")
+    base = datetime(2026, 9, 26, 14, 10, tzinfo=timezone.utc)
+    for index, color in enumerate(colors):
+        archive.store(region, source, composite, base + timedelta(minutes=10 * index), _png(color))
+    return archive
+
+
+def test_archive_viewer_browses_sources_and_image_types(ui, live_server):
+    archive = _archive_images(live_server)
+    archive.store("wien", "dummy", "airmass", __import__("datetime").datetime(
+        2026, 9, 26, 14, 20, tzinfo=__import__("datetime").timezone.utc), _png("blue"))
+    ui.reload()
+
     ui.get_by_test_id("archive-wien").click()
     viewer = ui.get_by_test_id("viewer")
     expect(viewer).to_be_visible()
+    image = ui.get_by_test_id("viewer-image")
+    ui.get_by_test_id("viewer-composite").select_option("cloudtop")
     expect(ui.get_by_test_id("viewer-position")).to_have_text("2 / 2")
-    expect(ui.get_by_test_id("viewer-image")).to_have_attribute("src", re.compile(r"/archive/20260926T142000Z\.png"))
+    expect(image).to_have_attribute("src", re.compile(r"/archive/dummy/cloudtop/20260926T142000Z\.jpg"))
     _image_loaded(ui, "viewer-image")
-    expect(ui.get_by_test_id("viewer-caption")).to_contain_text("MTG FCI")
-    expect(ui.get_by_test_id("viewer-play")).to_be_hidden()
+    expect(ui.get_by_test_id("viewer-caption")).to_contain_text("Cloud tops")
+    # Pre-rendered images can be played back like the normal history.
+    expect(ui.get_by_test_id("viewer-play")).to_be_visible()
     expect(ui.get_by_test_id("viewer-loading")).to_be_hidden()
     assert "archive=wien" in ui.url
 
     ui.get_by_test_id("viewer-prev").click()
     expect(ui.get_by_test_id("viewer-position")).to_have_text("1 / 2")
-    expect(ui.get_by_test_id("viewer-image")).to_have_attribute("src", re.compile(r"20260926T141000Z"))
+    expect(image).to_have_attribute("src", re.compile(r"20260926T141000Z"))
 
-    ui.get_by_test_id("viewer-next").click()
-    ui.get_by_test_id("viewer-composite").select_option("cloudtop")
-    expect(ui.get_by_test_id("viewer-image")).to_have_attribute("src", re.compile(r"142000Z\.png\?composite=cloudtop"))
+    # The source can be chosen in the archive.
+    source = ui.get_by_test_id("viewer-source")
+    expect(source).to_be_visible()
+    expect(source).to_have_value("dummy")
+
+    # ... and so can the image type.
+    ui.get_by_test_id("viewer-composite").select_option("airmass")
+    expect(image).to_have_attribute("src", re.compile(r"/archive/dummy/airmass/20260926T142000Z"))
     _image_loaded(ui, "viewer-image")
-    assert "c=cloudtop" in ui.url
+    assert "c=airmass" in ui.url
+
+    # Format selection works here too (both are pre-rendered).
+    ui.get_by_test_id("viewer-format").select_option("png")
+    expect(image).to_have_attribute("src", re.compile(r"\.png$"))
+    _image_loaded(ui, "viewer-image")
 
     ui.get_by_test_id("viewer-mode").click()  # back to the normal history
+    expect(ui.get_by_test_id("viewer-source")).to_be_hidden()
     expect(ui.get_by_test_id("viewer-composite")).to_be_hidden()
     ui.get_by_test_id("viewer-close").click()
     expect(viewer).to_be_hidden()
 
 
+def test_archive_viewer_on_the_phone(mobile_page, live_server):
+    _archive_images(live_server)
+    mobile_page.goto(live_server.url + "/")
+    mobile_page.get_by_test_id("archive-wien").tap()
+    expect(mobile_page.get_by_test_id("viewer")).to_be_visible()
+    expect(mobile_page.get_by_test_id("viewer-source")).to_be_visible()
+    _image_loaded(mobile_page, "viewer-image")
+    expect(mobile_page.get_by_test_id("viewer-position")).to_have_text("2 / 2")
+    mobile_page.get_by_test_id("viewer-prev").tap()
+    expect(mobile_page.get_by_test_id("viewer-position")).to_have_text("1 / 2")
+    assert mobile_page.evaluate("document.documentElement.scrollWidth <= window.innerWidth + 1")
+    mobile_page.go_back()
+    expect(mobile_page.get_by_test_id("viewer")).to_be_hidden()
+
+
+def test_archive_deep_link_restores_source_and_image_type(ui, live_server):
+    _archive_images(live_server, composite="airmass")
+    ui.goto(ui.url.split("#")[0] + "#archive=wien&s=dummy&c=airmass&f=png")
+    expect(ui.get_by_test_id("viewer")).to_be_visible()
+    expect(ui.get_by_test_id("viewer-composite")).to_have_value("airmass")
+    expect(ui.get_by_test_id("viewer-format")).to_have_value("png")
+    expect(ui.get_by_test_id("viewer-image")).to_have_attribute(
+        "src", re.compile(r"/archive/dummy/airmass/\d{8}T\d{6}Z\.png")
+    )
+    _image_loaded(ui, "viewer-image")
+
+
 def test_archive_viewer_without_data_explains_why(ui):
     ui.get_by_test_id("archive-mallorca").click()
-    expect(ui.get_by_test_id("viewer")).to_contain_text("No FCI raw data in the archive")
+    expect(ui.get_by_test_id("viewer")).to_contain_text("Nothing archived yet")
 
 
 def test_archive_settings_are_saved(ui, live_server):
     expect(ui.get_by_test_id("archive-summary")).to_contain_text("No MTG FCI source active")
     expect(ui.get_by_test_id("archive-summary")).to_contain_text("32–40")
+    expect(ui.get_by_test_id("renders-summary")).to_contain_text("Off")
     ui.get_by_test_id("archive-retention").fill("6")
     ui.get_by_test_id("archive-chunk-min").fill("30")
+    ui.get_by_test_id("archive-render-all").check()
+    ui.get_by_test_id("archive-render-retention").fill("8")
+    ui.get_by_test_id("archive-render-storage").fill("500")
     ui.get_by_test_id("save-storage").click()
     expect(ui.get_by_test_id("storage-message")).to_contain_text("Saved")
-    assert _stored(live_server)["archive"] == {"retention_hours": 6, "chunk_min": 30, "chunk_max": 40}
+    assert _stored(live_server)["archive"] == {
+        "retention_hours": 6, "chunk_min": 30, "chunk_max": 40,
+        "render_all": True, "render_retention_hours": 8, "render_max_storage_mb": 500,
+    }
     expect(ui.get_by_test_id("archive-summary")).to_contain_text("30–40")
+    expect(ui.get_by_test_id("renders-summary")).to_contain_text("Active for")
+    expect(ui.get_by_test_id("renders-summary")).to_contain_text("8 h")
+
+
+def test_archive_all_now_renders_every_image_type(ui, live_server):
+    ui.get_by_test_id("archive-render-now").click()
+    expect(ui.get_by_test_id("archive-render-message")).to_contain_text("Archiving")
+
+    renders = live_server.data_dir / "frames" / "_renders" / "wien" / "dummy"
+    for _ in range(60):
+        if renders.is_dir() and len(list(renders.iterdir())) > 1:
+            break
+        ui.wait_for_timeout(500)
+    types = sorted(p.name for p in renders.iterdir() if p.is_dir())
+    assert len(types) > 1, types
+
+    ui.reload()
+    ui.get_by_test_id("archive-wien").click()
+    expect(ui.get_by_test_id("viewer-source")).to_have_value("dummy")
+    options = ui.get_by_test_id("viewer-composite").locator("option")
+    expect(options).to_have_count(len(types))
+    _image_loaded(ui, "viewer-image")
 
 
 # --- Version / language -----------------------------------------------------

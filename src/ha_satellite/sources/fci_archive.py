@@ -14,7 +14,6 @@ rows of the 2 km grid (5568 rows) determine the chunk.
 
 from __future__ import annotations
 
-import hashlib
 import json
 import logging
 import math
@@ -30,14 +29,12 @@ from ha_satellite.config import (
     AppConfig,
     EumetsatCredentials,
     RegionConfig,
-    resolve_fci_composite,
 )
 
 logger = logging.getLogger(__name__)
 
 ARCHIVE_SUBDIR = "_archive"
 META_FILENAME = "meta.json"
-RENDERS_SUBDIR = "renders"
 SLOT_FORMAT = "%Y%m%dT%H%M%SZ"
 SEARCH_WINDOW = timedelta(hours=2)
 
@@ -338,15 +335,6 @@ class FciArchive:
         if not self.root.is_dir():
             return []
         return sorted(d.name.replace("_", ":") for d in self.root.iterdir() if d.is_dir())
-
-
-def render_cache_path(slot: Slot, region: RegionConfig, composite: str) -> Path:
-    """Cache file for an on-demand rendered image (removed together with the slot)."""
-    geometry = f"{region.lat}|{region.lon}|{region.radius_km}|{region.width}|{region.height}"
-    if region.borders:
-        geometry += "|borders"
-    digest = hashlib.sha1(geometry.encode()).hexdigest()[:10]
-    return slot.path / RENDERS_SUBDIR / f"{region.name}-{resolve_fci_composite(composite)}-{digest}.png"
 
 
 _archives: dict[Path, FciArchive] = {}

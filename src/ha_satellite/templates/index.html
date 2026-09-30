@@ -142,8 +142,8 @@
           <button type="button" class="open-play" data-region="{{ region.name }}"
                   data-testid="play-{{ region.name }}">▶ Time-lapse</button>
           <button type="button" class="open-archive" data-region="{{ region.name }}"
-                  title="Render from the MTG FCI raw data archive (any time and image type)"
-                  data-testid="archive-{{ region.name }}">🛰 FCI archive</button>
+                  title="Browse the archive: every source in every image type"
+                  data-testid="archive-{{ region.name }}">🗄 Archive</button>
         </div>
         <label for="region-source-{{ region.name }}">Source</label>
         <select id="region-source-{{ region.name }}" class="region-source" data-region="{{ region.name }}"
@@ -261,11 +261,39 @@
                  value="{{ config.history.max_storage_mb }}">
         </div>
       </div>
+      <h3 style="font-size:1rem;margin-top:1rem">Archive of all sources</h3>
+      <p class="muted">Downloads <strong>every enabled source</strong> in its own cycle (MSG SEVIRI
+        Rapid Scan 5 min, 0° 15 min, MTG FCI 10 min) and renders every region in
+        <strong>all image types</strong> of that source right away. The results are stored as PNG and JPEG,
+        so the “🗄 Archive” button at a region browses them as fast as the normal viewer –
+        nothing is rendered while browsing.</p>
+      <p class="muted" data-testid="renders-summary">…</p>
+      <label class="inline">
+        <input type="checkbox" id="archive-render-all" data-testid="archive-render-all"
+               {% if config.archive.render_all %}checked{% endif %}>
+        Download all sources and render all image types
+      </label>
+      <div class="grid2">
+        <div>
+          <label for="archive-render-retention">Archive retention (hours)</label>
+          <input id="archive-render-retention" type="number" min="0" max="720" step="1"
+                 data-testid="archive-render-retention" value="{{ config.archive.render_retention_hours }}">
+        </div>
+        <div>
+          <label for="archive-render-storage">Archive storage limit (MB)</label>
+          <input id="archive-render-storage" type="number" min="1" step="1"
+                 data-testid="archive-render-storage" value="{{ config.archive.render_max_storage_mb }}">
+        </div>
+      </div>
+      <div class="row">
+        <button type="button" data-testid="archive-render-now">Archive all sources now</button>
+        <span class="message" data-testid="archive-render-message" role="status"></span>
+      </div>
       <h3 style="font-size:1rem;margin-top:1rem">MTG FCI raw data archive</h3>
       <p class="muted">If an MTG FCI source is active, only the stripes (“chunks”, 1 = south …
         40 = north) needed by the range below and all regions are downloaded per scan (Europe ≈ 32–40, ~180 MB per scan)
-        and kept here. Regions and image types can be rendered from them afterwards
-        (“🛰 FCI archive” at the region) – also for newly created regions.</p>
+        and kept here. Regions and image types can still be rendered from them afterwards
+        (in the archive viewer) – also for newly created regions.</p>
       <p class="muted" data-testid="archive-summary">…</p>
       <div class="grid2">
         <div>
@@ -400,11 +428,8 @@
         <option value="1000">1 fps</option><option value="500" selected>2 fps</option>
         <option value="250">4 fps</option><option value="125">8 fps</option>
       </select>
-      <select id="viewer-composite" data-testid="viewer-composite" title="Image type (FCI archive)" hidden>
-        {% for name, label in fci_composites.items() %}
-        <option value="{{ name }}">{{ label }}</option>
-        {% endfor %}
-      </select>
+      <select id="viewer-source" data-testid="viewer-source" title="Source (archive)" hidden></select>
+      <select id="viewer-composite" data-testid="viewer-composite" title="Image type (archive)" hidden></select>
       <select id="viewer-format" data-testid="viewer-format" title="Format"></select>
       <button type="button" id="viewer-mode" data-testid="viewer-mode">● Live</button>
     </div>
@@ -848,7 +873,35 @@
         if (st.last_error) parts.push("Error (" + collection + "): " + st.last_error);
       }
       byTestId("archive-summary").textContent = parts.join(" ");
+      renderRendersSummary(a);
     }
+    function renderRendersSummary(a) {
+      const r = a.renders || {};
+      const parts = [];
+      parts.push(a.render_all
+        ? "Active for " + (a.archived_sources || []).join(", ") + "."
+        : "Off – only the configured image type per region is stored.");
+      parts.push((r.images || 0) + " archived image(s), " + fmtBytes(r.used_bytes || 0)
+        + " of " + a.render_max_storage_mb + " MB, kept for " + a.render_retention_hours + " h.");
+      for (const [region, info] of Object.entries(r.regions || {})) {
+        parts.push(region + ": " + info.images + " image(s) in " + info.combinations
+          + " combination(s) (" + fmtTime(info.oldest, true) + " – " + fmtTime(info.newest, true) + ").");
+      }
+      byTestId("renders-summary").textContent = parts.join(" ");
+    }
+    byTestId("archive-render-now").addEventListener("click", async (event) => {
+      const message = byTestId("archive-render-message");
+      event.target.disabled = true;
+      showMessage(message, "Starting …", true);
+      try {
+        const result = await postJson("/api/archive/render", {});
+        showMessage(message, "Archiving " + result.sources + " source(s) – this runs in the background.", true);
+      } catch (err) {
+        showMessage(message, "Failed: " + err.message, false);
+      } finally {
+        event.target.disabled = false;
+      }
+    });
     document.getElementById("storage-path").addEventListener("input", (ev) => { ev.target.dataset.touched = "1"; });
     document.getElementById("storage-form").addEventListener("submit", async (event) => {
       event.preventDefault();
@@ -865,6 +918,9 @@
           archive_retention_hours: parseInt(document.getElementById("archive-retention").value, 10),
           archive_chunk_min: parseInt(document.getElementById("archive-chunk-min").value, 10),
           archive_chunk_max: parseInt(document.getElementById("archive-chunk-max").value, 10),
+          archive_render_all: document.getElementById("archive-render-all").checked,
+          archive_render_retention_hours: parseInt(document.getElementById("archive-render-retention").value, 10),
+          archive_render_max_storage_mb: parseInt(document.getElementById("archive-render-storage").value, 10),
         });
         delete document.getElementById("storage-path").dataset.touched;
         showMessage(message, "Saved. Storage location: " + result.current + " (" + result.moved_frames + " images moved).", true);
@@ -913,9 +969,10 @@
     /* ---------- Fullscreen viewer ---------- */
     const viewer = document.getElementById("viewer");
     const viewerImg = document.getElementById("viewer-img");
-    const vs = { open: false, mode: "frames", region: null, index: 0, frames: [], playing: false, timer: null, pushed: false, composite: null };
+    const vs = { open: false, mode: "frames", region: null, index: 0, frames: [], playing: false, timer: null, pushed: false, composite: null, source: null, sources: [] };
     const viewerLoading = document.getElementById("viewer-loading");
     const viewerComposite = byTestId("viewer-composite");
+    const viewerSource = byTestId("viewer-source");
     const frameSelect = byTestId("viewer-frame");
     const stage = document.getElementById("viewer-stage");
     const viewerVideo = document.getElementById("viewer-video");
@@ -925,6 +982,7 @@
        live as MJPEG stream or as pre-generated animation (MP4/GIF). */
     const FORMATS = {
       frames: [["jpg", "JPEG · fast"], ["png", "PNG · Original"]],
+      archive: [["jpg", "JPEG · fast"], ["png", "PNG · Original"]],
       live: [["mjpeg", "MJPEG stream"], ["mp4", "MP4 video"], ["gif", "GIF animation"]],
     };
     const FORMAT_KEY = "ha_satellite.viewer.format.";
@@ -934,14 +992,15 @@
       try { value = localStorage.getItem(FORMAT_KEY + mode); } catch (err) { /* private mode */ }
       return validFormat(mode, value) ? value : FORMATS[mode][0][0];
     }
-    const formatPref = { frames: loadFormat("frames"), live: loadFormat("live") };
+    const formatPref = { frames: loadFormat("frames"), archive: loadFormat("archive"), live: loadFormat("live") };
     function setFormat(mode, value) {
       if (!validFormat(mode, value)) return;
       formatPref[mode] = value;
       try { localStorage.setItem(FORMAT_KEY + mode, value); } catch (err) { /* private mode */ }
     }
     function frameUrl(frame) {
-      return vs.mode === "frames" && formatPref.frames === "jpg" && frame.jpeg_url ? frame.jpeg_url : frame.url;
+      const pref = formatPref[vs.mode];
+      return vs.mode !== "live" && pref === "jpg" && frame.jpeg_url ? frame.jpeg_url : frame.url;
     }
     function syncFormatSelect() {
       const options = FORMATS[vs.mode];
@@ -1037,7 +1096,9 @@
       if (vs.mode === "live") return "live=" + encodeURIComponent(vs.region)
         + (formatPref.live !== FORMATS.live[0][0] ? "&f=" + formatPref.live : "");
       if (vs.mode === "archive") return "archive=" + encodeURIComponent(vs.region) + "&i=" + vs.index
-        + (vs.composite ? "&c=" + encodeURIComponent(vs.composite) : "");
+        + (vs.source ? "&s=" + encodeURIComponent(vs.source) : "")
+        + (vs.composite ? "&c=" + encodeURIComponent(vs.composite) : "")
+        + (formatPref.archive !== FORMATS.archive[0][0] ? "&f=" + formatPref.archive : "");
       return "view=" + encodeURIComponent(vs.region) + "&i=" + vs.index
         + (formatPref.frames !== FORMATS.frames[0][0] ? "&f=" + formatPref.frames : "");
     }
@@ -1061,17 +1122,18 @@
     function renderViewer() {
       const live = vs.mode === "live";
       const archive = vs.mode === "archive";
-      document.getElementById("viewer-region").textContent = vs.region + (archive ? " · FCI archive" : "");
+      document.getElementById("viewer-region").textContent = vs.region + (archive ? " · Archive" : "");
       document.getElementById("viewer-live-badge").hidden = !live;
       byTestId("viewer-mode").textContent = live || archive ? "History" : "● Live";
       for (const id of ["viewer-prev", "viewer-next", "viewer-position", "viewer-frame"]) byTestId(id).hidden = live;
-      // Archive images are rendered on demand (~10 s) - no time-lapse.
-      for (const id of ["viewer-play", "viewer-speed"]) byTestId(id).hidden = live || archive;
+      // Archive images are pre-rendered: time-lapse works just like the history.
+      for (const id of ["viewer-play", "viewer-speed"]) byTestId(id).hidden = live;
       viewerComposite.hidden = !archive;
+      viewerSource.hidden = !archive;
       syncFormatSelect();
       const empty = document.getElementById("viewer-empty");
       empty.textContent = archive
-        ? "No FCI raw data in the archive – enable an MTG FCI source under “Sources”."
+        ? "Nothing archived yet – enable “Download all sources” under “Storage location & history”."
         : "No images available";
       if (live) {
         viewerLoading.hidden = true;
@@ -1124,25 +1186,49 @@
       }
       viewerImg.alt = vs.region + " " + frame.created_at;
       byTestId("viewer-caption").textContent = fmtTime(frame.created_at, true) + (vs.index === 0 ? " · latest image" : "")
-        + (archive ? "" : " · " + (formatPref.frames === "png" || !frame.jpeg_url ? "PNG" : "JPEG"))
-        + (archive ? " · MTG FCI · " + (viewerComposite.selectedOptions[0] || {}).textContent : "");
+        + " · " + (formatPref[vs.mode] === "png" || !frame.jpeg_url ? "PNG" : "JPEG")
+        + (archive ? " · " + (viewerSource.selectedOptions[0] || {}).textContent
+                   + " · " + (viewerComposite.selectedOptions[0] || {}).textContent : "");
       byTestId("viewer-position").textContent = (vs.frames.length - vs.index) + " / " + vs.frames.length;
       byTestId("viewer-prev").disabled = vs.index >= vs.frames.length - 1;
       byTestId("viewer-next").disabled = vs.index <= 0;
       if (!vs.playing) setHash(stateHash());
     }
 
-    async function loadArchive(region, composite) {
-        const query = composite ? "?composite=" + encodeURIComponent(composite) : "";
+    async function loadArchive(region, source, composite) {
+        const params = new URLSearchParams();
+        if (source) params.set("source", source);
+        if (composite) params.set("composite", composite);
+        const query = params.toString() ? "?" + params.toString() : "";
         try {
           const data = await api("/api/regions/" + encodeURIComponent(region) + "/archive" + query);
-          return { composite: data.composite, frames: data.slots.filter((s) => s.available) };
+          return { source: data.source, composite: data.composite, sources: data.sources,
+                   composites: data.composites, frames: (data.images || []).filter((s) => s.available) };
         } catch (err) {
-          return { composite, frames: [], error: err.message };
+          return { source, composite, sources: [], composites: {}, frames: [], error: err.message };
         }
     }
+    function syncArchiveSelects(data) {
+      const key = (data.sources || []).map((s) => s.id).join("|");
+      if (viewerSource.dataset.key !== key) {
+        viewerSource.dataset.key = key;
+        viewerSource.replaceChildren(...(data.sources || []).map((s) =>
+          el("option", { value: s.id, text: s.label })));
+      }
+      if (data.source) viewerSource.value = data.source;
+      const names = Object.keys(data.composites || {});
+      const ckey = data.source + "|" + names.join("|");
+      if (viewerComposite.dataset.key !== ckey) {
+        viewerComposite.dataset.key = ckey;
+        viewerComposite.replaceChildren(...names.map((name) =>
+          el("option", { value: name, text: data.composites[name] })));
+      }
+      if (data.composite) viewerComposite.value = data.composite;
+      viewerSource.disabled = !(data.sources || []).length;
+      viewerComposite.disabled = !names.length;
+    }
 
-    async function openViewer({ mode, region, index = 0, play = false, composite = null }, fromHash = false) {
+    async function openViewer({ mode, region, index = 0, play = false, composite = null, source = null }, fromHash = false) {
       stopPlaying();
       if (!vs.open || vs.region !== region) resetZoom();
       vs.mode = mode; vs.region = region; vs.index = index;
@@ -1160,15 +1246,18 @@
       if (mode === "archive") {
         vs.frames = [];
         vs.composite = composite;
+        vs.source = source;
         renderViewer();
-        const data = await loadArchive(region, composite);
+        const data = await loadArchive(region, source, composite);
         if (vs.mode !== "archive" || vs.region !== region || !vs.open) return;
         vs.composite = data.composite;
-        if (data.composite) viewerComposite.value = data.composite;
+        vs.source = data.source;
+        syncArchiveSelects(data);
         vs.frames = data.frames;
         vs.index = Math.min(vs.index, Math.max(vs.frames.length - 1, 0));
         renderViewer();
         if (data.error) byTestId("viewer-caption").textContent = "Archive not available: " + data.error;
+        else if (play) startPlaying();
       } else if (mode === "frames") {
         vs.frames = framesCache[region] || [];
         renderViewer();
@@ -1218,7 +1307,10 @@
     byTestId("viewer-mode").addEventListener("click", () =>
       openViewer({ mode: vs.mode === "frames" ? "live" : "frames", region: vs.region, index: 0 }));
     viewerComposite.addEventListener("change", () =>
-      openViewer({ mode: "archive", region: vs.region, index: vs.index, composite: viewerComposite.value }));
+      openViewer({ mode: "archive", region: vs.region, index: vs.index,
+                   source: viewerSource.value, composite: viewerComposite.value }));
+    viewerSource.addEventListener("change", () =>
+      openViewer({ mode: "archive", region: vs.region, index: 0, source: viewerSource.value }));
     viewerImg.addEventListener("load", () => { viewerLoading.hidden = true; applyZoom(); });
     viewerVideo.addEventListener("loadedmetadata", applyZoom);
     viewerVideo.addEventListener("error", () => {
@@ -1261,7 +1353,8 @@
 
     document.addEventListener("keydown", (ev) => {
       if (!vs.open) return;
-      if (ev.target === frameSelect || ev.target === viewerComposite || ev.target === formatSelect
+      if (ev.target === frameSelect || ev.target === viewerComposite || ev.target === viewerSource
+          || ev.target === formatSelect
           || ev.target === byTestId("viewer-speed")) {
         if (ev.key === "Escape") closeViewer();
         return;  // arrow keys then belong to the select
@@ -1366,8 +1459,9 @@
       const archive = params.get("archive");
       const format = params.get("f");
       if (format && live) setFormat("live", format);
+      else if (format && archive) setFormat("archive", format);
       else if (format && view) setFormat("frames", format);
-      if (archive && REGIONS.includes(archive)) openViewer({ mode: "archive", region: archive,
+      if (archive && REGIONS.includes(archive)) openViewer({ mode: "archive", region: archive, source: params.get("s"),
         index: parseInt(params.get("i") || "0", 10) || 0, composite: params.get("c") }, true);
       else if (live && REGIONS.includes(live)) openViewer({ mode: "live", region: live }, true);
       else if (view && REGIONS.includes(view)) openViewer({ mode: "frames", region: view, index: parseInt(params.get("i") || "0", 10) || 0 }, true);
@@ -1381,7 +1475,7 @@
       ["status", "/api/status", "Last/next run, frame count, errors per region"],
       ["sources", "/api/sources", "Source catalog + result of the last sync"],
       ["storage", "/api/storage", "Storage location, usage, candidates"],
-      ["archive-info", "/api/archive", "MTG FCI raw data archive: retention, chunks, usage"],
+      ["archive-info", "/api/archive", "Archive: raw data, rendered images, retention, usage"],
       ["logs", "/api/logs", "Log entries (JSON)"],
       ["logs-text", "/api/logs?format=text", "Log entries as text"],
       ["version", "/api/version", "App version"],
@@ -1396,7 +1490,7 @@
       ["gif", "/regions/{r}/animation.gif", "History animation (GIF)"],
       ["mp4", "/regions/{r}/animation.mp4", "History animation (MP4)"],
       ["mjpeg", "/regions/{r}/mjpeg", "MJPEG stream (Home Assistant camera)"],
-      ["archive", "/api/regions/{r}/archive", "FCI archive: available scans (JSON, image URLs with ?composite=…)"],
+      ["archive", "/api/regions/{r}/archive", "Archive: sources, image types and images (JSON)"],
     ];
     const API_POST = [
       ["/api/config", "Save configuration"],
