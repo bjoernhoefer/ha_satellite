@@ -1,40 +1,51 @@
 services:
   ha_satellite:
-    image: ghcr.io/bjoernhoefer/ha_satellite:latest
+    image: ghcr.io/bjoernhoefer/ha_satellite:${HA_SATELLITE_TAG:-latest}
     container_name: ha_satellite
     build:
       context: .
       dockerfile: docker/Dockerfile
     restart: unless-stopped
     ports:
-      - "6060:6060"
+      - "${HA_SATELLITE_PORT:-6060}:6060"
     volumes:
-      # Konfiguration, Logs und (standardmäßig) die Bilder.
-      - ./data:/data
-      # Weitere Datenträger des Hosts (z. B. /mnt/data, /mnt/data2). Der
-      # Speicherort der Bilder wird in der Web-UI gewählt ("Speicherort &
-      # Historie") - nur Pfade unterhalb eingehängter Volumes sind dauerhaft.
-      # Sollen erst nach dem Containerstart eingehängte Datenträger sichtbar
-      # werden, stattdessen "/mnt:/mnt:rslave" verwenden.
+      # Configuration (config.yaml), logs, cache and (by default) the frames.
+      # Lives on the host, so it survives image updates and container
+      # re-creation. Back it up by copying this directory.
+      - ${HOST_DATA_DIR:-./data}:/data
+      # Additional host disks (e.g. /mnt/data). The frame storage location
+      # is chosen in the web UI ("Storage & history") - only paths below
+      # mounted volumes are persistent. Use "/mnt:/mnt:rslave" if disks are
+      # mounted after the container starts.
       - /mnt:/mnt
     environment:
-      # UID/GID, mit der der Dienst schreibt - muss zum Besitzer des
-      # Bilderverzeichnisses auf dem Host passen (siehe `id` auf dem Host).
+      # UID/GID used for writing - must match the owner of the data
+      # directories on the host (see `id` on the host).
       - PUID=${PUID:-1000}
       - PGID=${PGID:-1000}
-      # Optional: überschreibt die in der UI gespeicherten Zugangsdaten.
+      # Optional: overrides the credentials stored via the UI.
       - EUMETSAT_CONSUMER_KEY=${EUMETSAT_CONSUMER_KEY:-}
       - EUMETSAT_CONSUMER_SECRET=${EUMETSAT_CONSUMER_SECRET:-}
-    # Healthcheck ist im Image definiert (docker/Dockerfile).
-    # Der Pi 5 teilt sich die Ressourcen mit dem grafana-Container -
-    # konservatives Limit, damit Rendering nicht Grafana ausbremst.
-    # `mem_limit`/`cpus` wirken auch im normalen (Nicht-Swarm-)
-    # `docker compose up`; der `deploy.resources.limits`-Block ist
-    # zusätzlich für den Fall eines Swarm-Deployments dokumentiert.
-    mem_limit: 768m
-    cpus: 1.5
-    deploy:
-      resources:
-        limits:
-          memory: 768M
-          cpus: "1.5"
+    labels:
+      # Opt in to automatic updates by the watchtower service below.
+      - com.centurylinklabs.watchtower.enable=true
+    # Healthcheck is defined in the image (docker/Dockerfile).
+    # Conservative limits so rendering does not starve other services on
+    # small hosts such as a Raspberry Pi.
+    mem_limit: ${HA_SATELLITE_MEM_LIMIT:-768m}
+    cpus: ${HA_SATELLITE_CPUS:-1.5}
+
+  # Automatically pulls a newly published image and restarts ha_satellite.
+  # Only containers labelled com.centurylinklabs.watchtower.enable=true are
+  # touched. Remove this service if you prefer manual updates.
+  watchtower:
+    image: containrrr/watchtower:latest
+    container_name: ha_satellite_watchtower
+    restart: unless-stopped
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - WATCHTOWER_LABEL_ENABLE=true
+      - WATCHTOWER_CLEANUP=true
+      - WATCHTOWER_POLL_INTERVAL=${WATCHTOWER_POLL_INTERVAL:-3600}
+      - TZ=${TZ:-UTC}

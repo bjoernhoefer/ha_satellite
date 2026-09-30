@@ -1,11 +1,11 @@
-"""Konfigurations-Handling: YAML-Persistenz in /data mit Env-Var-Override.
+"""Configuration handling: YAML persistence in /data with env var override.
 
-Die Konfiguration wird als YAML-Datei gespeichert (Standardpfad
-``/data/config.yaml``, überschreibbar über die Umgebungsvariable
-``HA_SATELLITE_CONFIG``). EUMETSAT-Zugangsdaten können zusätzlich per
-Umgebungsvariable (``EUMETSAT_CONSUMER_KEY`` / ``EUMETSAT_CONSUMER_SECRET``)
-gesetzt werden; diese haben Vorrang vor den in der Datei gespeicherten
-Werten, werden aber nicht in die Datei zurückgeschrieben.
+The configuration is stored as a YAML file (default path
+``/data/config.yaml``, overridable via the ``HA_SATELLITE_CONFIG``
+environment variable). EUMETSAT credentials can additionally be set via
+environment variables (``EUMETSAT_CONSUMER_KEY`` / ``EUMETSAT_CONSUMER_SECRET``);
+these take precedence over the values stored in the file but are never
+written back to it.
 """
 
 from __future__ import annotations
@@ -26,47 +26,47 @@ DEFAULT_CONFIG_PATH = "/data/config.yaml"
 ENV_CONSUMER_KEY = "EUMETSAT_CONSUMER_KEY"
 ENV_CONSUMER_SECRET = "EUMETSAT_CONSUMER_SECRET"
 
-# Implementierungen ("Treiber") in sources/__init__.py. Welche konkreten
-# Quellen zur Verfügung stehen, legt der Quellen-Katalog (sources.catalog)
-# fest - mehrere Katalogeinträge dürfen denselben Treiber nutzen (z. B.
-# msg_seviri für 0°, Rapid Scan und IODC). "dummy" ist eine reine Testquelle.
+# Implementations ("drivers") in sources/__init__.py. Which concrete
+# sources are available is defined by the source catalog (sources.catalog) -
+# several catalog entries may use the same driver (e.g. msg_seviri for 0°,
+# Rapid Scan and IODC). "dummy" is a pure test source.
 VALID_DRIVERS = ("msg_seviri", "data_tailor", "mtg_fci", "dummy")
-# Rückwärtskompatibler Alias.
+# Backwards-compatible alias.
 VALID_SOURCES = VALID_DRIVERS
 
-# Tagsüber Echtfarben (mit dem ~1-km-HRV-Kanal geschärft), nachts
-# Infrarot-Wolken; definiert in satpy_config/composites/seviri.yaml. Das
-# naheliegende "natural_color_with_night_ir" lädt zur Laufzeit
-# NASA-Hintergrundkarten nach (Hash-Fehler, siehe HISTORY.md).
+# Natural color by day (sharpened with the ~1 km HRV channel), infrared
+# clouds at night; defined in satpy_config/composites/seviri.yaml. The
+# obvious "natural_color_with_night_ir" downloads NASA background maps at
+# runtime (hash error, see HISTORY.md).
 DEFAULT_COMPOSITE = "natural_color_hrv_with_night_ir"
 
-# Auswahl in der Web-UI (Name -> Beschreibung); per JSON/API sind auch
-# andere Satpy-Komposite möglich.
+# Choices in the web UI (name -> description); other Satpy composites are
+# possible via JSON/API.
 COMPOSITES: dict[str, str] = {
-    "natural_color_hrv_with_night_ir": "Echtfarben HRV-geschärft (~1 km), nachts IR – beste Qualität",
-    "natural_color_hrv": "Echtfarben HRV-geschärft (~1 km), nur Tag",
-    "natural_color_raw_with_night_ir": "Echtfarben (~3 km), nachts IR",
-    "natural_color": "Echtfarben (~3 km), nachts schwarz",
-    "hrv_clouds": "HRV-Wolken (~1 km, Tag)",
-    "cloudtop": "Wolkenobergrenzen (IR)",
-    "colorized_ir_clouds": "IR-Wolken eingefärbt",
-    "convection": "Konvektion",
-    "airmass": "Luftmassen",
+    "natural_color_hrv_with_night_ir": "Natural color, HRV-sharpened (~1 km), IR at night – best quality",
+    "natural_color_hrv": "Natural color, HRV-sharpened (~1 km), daytime only",
+    "natural_color_raw_with_night_ir": "Natural color (~3 km), IR at night",
+    "natural_color": "Natural color (~3 km), black at night",
+    "hrv_clouds": "HRV clouds (~1 km, daytime)",
+    "cloudtop": "Cloud tops (IR)",
+    "colorized_ir_clouds": "Colorized IR clouds",
+    "convection": "Convection",
+    "airmass": "Air mass",
 }
 
-# MTG FCI (1 km sichtbar / 2 km IR). Tagsüber Echtfarben, nachts
-# IR-Wolken; definiert in satpy_config/composites/visir.yaml. true_color
-# und airmass sprengen auf dem Pi 5 das Speicherlimit (bis 1,7 GB).
+# MTG FCI (1 km visible / 2 km IR). Natural color by day, IR clouds at
+# night; defined in satpy_config/composites/visir.yaml. true_color and
+# airmass exceed the memory limit on a Raspberry Pi 5 (up to 1.7 GB).
 DEFAULT_FCI_COMPOSITE = "natural_color_with_night_cloudtop"
 FCI_COMPOSITES: dict[str, str] = {
-    "natural_color_with_night_cloudtop": "Echtfarben (~1 km), nachts IR – beste Qualität",
-    "natural_color": "Echtfarben (~1 km), nachts schwarz",
-    "hrv_clouds": "Wolken hochaufgelöst (~1 km, Tag)",
-    "cloudtop": "Wolkenobergrenzen (IR, ~2 km)",
-    "colorized_ir_clouds": "IR-Wolken eingefärbt",
+    "natural_color_with_night_cloudtop": "Natural color (~1 km), IR at night – best quality",
+    "natural_color": "Natural color (~1 km), black at night",
+    "hrv_clouds": "High-resolution clouds (~1 km, daytime)",
+    "cloudtop": "Cloud tops (IR, ~2 km)",
+    "colorized_ir_clouds": "Colorized IR clouds",
 }
-# SEVIRI-spezifische Namen, die für FCI auf ein Gegenstück abgebildet
-# werden (Quellenwechsel ohne Kompositwechsel funktioniert so weiter).
+# SEVIRI-specific names mapped to an FCI counterpart (so switching the
+# source without switching the composite keeps working).
 FCI_COMPOSITE_ALIASES: dict[str, str] = {
     "natural_color_hrv_with_night_ir": DEFAULT_FCI_COMPOSITE,
     "natural_color_raw_with_night_ir": DEFAULT_FCI_COMPOSITE,
@@ -88,19 +88,19 @@ def resolve_fci_composite(name: str) -> str:
     return FCI_COMPOSITE_ALIASES.get(name, name)
 
 
-# Treiber, die noch keine echten Bilder liefern (Platzhalter-Frames).
+# Drivers that do not deliver real images yet (placeholder frames).
 PLACEHOLDER_DRIVERS = ("data_tailor", "dummy")
 
 DEFAULT_FCI_COLLECTION = "EO:EUM:DAT:0662"
-# FCI liefert die Vollscheibe in 40 Streifen ("Chunks", Süd -> Nord).
+# FCI delivers the full disk in 40 stripes ("chunks", south -> north).
 FCI_CHUNK_COUNT = 40
 
-# MSG SEVIRI Rapid Scan (Europa, alle 5 Minuten, Meteosat-11).
+# MSG SEVIRI Rapid Scan (Europe, every 5 minutes, Meteosat-11).
 DEFAULT_MSG_COLLECTION = "EO:EUM:DAT:MSG:MSG15-RSS"
 
-# Aufnahmetakt (Minuten) bekannter Collections: so oft erscheint ein neues
-# Produkt, in diesem Takt wird heruntergeladen. Eigener Wert je
-# Katalogeintrag über ``cycle_minutes``.
+# Capture cycle (minutes) of known collections: how often a new product
+# appears, and the download cycle. Override per catalog entry via
+# ``cycle_minutes``.
 COLLECTION_CYCLES: dict[str, int] = {
     DEFAULT_MSG_COLLECTION: 5,
     "EO:EUM:DAT:MSG:HRSEVIRI": 15,
@@ -108,10 +108,10 @@ COLLECTION_CYCLES: dict[str, int] = {
     DEFAULT_FCI_COLLECTION: 10,
 }
 DRIVER_CYCLES: dict[str, int] = {"msg_seviri": 15, "mtg_fci": 10}
-# Treiber, die Produkte selbst herunterladen (eigener Download-Job je Quelle).
+# Drivers that download products themselves (own download job per source).
 DOWNLOAD_DRIVERS = ("msg_seviri", "mtg_fci")
 
-# Standard-Frames im Ringpuffer: entspricht (per Vorgabe) 60 Minuten Historie.
+# Default frames in the ring buffer: corresponds (by default) to 60 minutes of history.
 DEFAULT_HISTORY_MINUTES = 60
 
 
@@ -124,7 +124,7 @@ class EumetsatCredentials(BaseModel):
     consumer_secret: str = ""
 
     def masked(self) -> "EumetsatCredentials":
-        """Gibt eine Kopie mit maskiertem Secret zurück (für die UI/API)."""
+        """Return a copy with the secret masked (for the UI/API)."""
         secret = self.consumer_secret
         if not secret:
             masked_secret = ""
@@ -143,10 +143,10 @@ class RegionConfig(BaseModel):
     width: int = 800
     height: int = 800
     composite: str = DEFAULT_COMPOSITE
-    # Verweist auf die ``id`` eines Eintrags im Quellen-Katalog.
+    # Refers to the ``id`` of an entry in the source catalog.
     source: str = "msg_seviri"
     max_frames: int | None = None
-    # Landesgrenzen ins Bild zeichnen (Natural Earth 1:10m, siehe overlay.py).
+    # Draw country borders into the image (Natural Earth 1:10m, see overlay.py).
     borders: bool = True
 
     @field_validator("name")
@@ -154,7 +154,7 @@ class RegionConfig(BaseModel):
     def _validate_name(cls, value: str) -> str:
         if not value or value.startswith("_") or "/" in value or value in (".", ".."):
             raise ValueError(
-                f"Ungültiger Regionsname '{value}' (nicht leer, ohne '/', darf nicht mit '_' beginnen)"
+                f"Invalid region name '{value}' (must not be empty, contain '/' or start with '_')"
             )
         return value
 
@@ -171,7 +171,7 @@ class RegionConfig(BaseModel):
 
 
 class SourceDefinition(BaseModel):
-    """Eintrag im Quellen-Katalog (in der UI als JSON editierbar)."""
+    """Entry in the source catalog (editable as JSON in the UI)."""
 
     id: str = Field(min_length=1, pattern=r"^[A-Za-z0-9_.-]+$")
     driver: str
@@ -179,8 +179,8 @@ class SourceDefinition(BaseModel):
     collection: str | None = None
     enabled: bool = True
     description: str = ""
-    # Aufnahmetakt in Minuten; leer = bekannter Takt der Collection bzw. des
-    # Treibers (siehe COLLECTION_CYCLES), sonst das allgemeine Abrufintervall.
+    # Capture cycle in minutes; empty = known cycle of the collection or
+    # driver (see COLLECTION_CYCLES), otherwise the general poll interval.
     cycle_minutes: int | None = Field(default=None, gt=0)
 
     def known_cycle(self) -> int | None:
@@ -195,7 +195,7 @@ class SourceDefinition(BaseModel):
     def _validate_driver(cls, value: str) -> str:
         if value not in VALID_DRIVERS:
             raise ValueError(
-                f"Unbekannter Treiber '{value}'. Erlaubt: {', '.join(VALID_DRIVERS)}"
+                f"Unknown driver '{value}'. Allowed: {', '.join(VALID_DRIVERS)}"
             )
         return value
 
@@ -205,7 +205,7 @@ def default_catalog() -> list[SourceDefinition]:
         SourceDefinition(
             id="msg_seviri",
             driver="msg_seviri",
-            label="MSG SEVIRI Rapid Scan (Europa, 5 min)",
+            label="MSG SEVIRI Rapid Scan (Europe, 5 min)",
             collection=DEFAULT_MSG_COLLECTION,
             enabled=True,
         ),
@@ -219,7 +219,7 @@ def default_catalog() -> list[SourceDefinition]:
         SourceDefinition(
             id="data_tailor",
             driver="data_tailor",
-            label="MSG SEVIRI via Data Tailor (serverseitiger Zuschnitt)",
+            label="MSG SEVIRI via Data Tailor (server-side cropping)",
             collection="EO:EUM:DAT:MSG:HRSEVIRI",
             enabled=False,
         ),
@@ -233,7 +233,7 @@ def default_catalog() -> list[SourceDefinition]:
         SourceDefinition(
             id="dummy",
             driver="dummy",
-            label="Testquelle (Platzhalterbilder)",
+            label="Test source (placeholder images)",
             enabled=False,
         ),
     ]
@@ -242,14 +242,14 @@ def default_catalog() -> list[SourceDefinition]:
 class SourcesConfig(BaseModel):
     catalog: list[SourceDefinition] = Field(default_factory=default_catalog)
     poll_interval_minutes: int = Field(default=15, gt=0)
-    # Abgleich des Katalogs mit dem EUMETSAT Data Store; 0 = aus.
+    # Sync of the catalog with the EUMETSAT Data Store; 0 = off.
     auto_sync_hours: int = Field(default=24, ge=0)
 
     @model_validator(mode="before")
     @classmethod
     def _migrate_active_list(cls, data: Any) -> Any:
-        """Alte Konfigurationen hatten ``active: [..]`` und ``msg_collection``
-        statt eines Katalogs."""
+        """Old configurations had ``active: [..]`` and ``msg_collection``
+        instead of a catalog."""
         if isinstance(data, dict) and ("active" in data or "msg_collection" in data):
             data = dict(data)
             active = data.pop("active", None)
@@ -269,7 +269,7 @@ class SourcesConfig(BaseModel):
         seen: set[str] = set()
         for entry in self.catalog:
             if entry.id in seen:
-                raise ValueError(f"Quellen-ID '{entry.id}' ist im Katalog doppelt vergeben")
+                raise ValueError(f"Source ID '{entry.id}' is used more than once in the catalog")
             seen.add(entry.id)
         return self
 
@@ -288,7 +288,7 @@ class SourcesConfig(BaseModel):
         return entry.collection if entry and entry.collection else default
 
     def cycle_for(self, source_id: str) -> int:
-        """Takt (Minuten), in dem die Quelle neue Aufnahmen liefert."""
+        """Cycle (minutes) at which the source delivers new captures."""
         entry = self.get(source_id)
         return (entry.known_cycle() if entry else None) or self.poll_interval_minutes
 
@@ -299,7 +299,7 @@ class HistoryConfig(BaseModel):
 
 
 class StorageConfig(BaseModel):
-    # Leer = Standard (<Datenverzeichnis>/frames, also im /data-Volume).
+    # Empty = default (<data dir>/frames, i.e. inside the /data volume).
     frames_dir: str = ""
 
     @field_validator("frames_dir")
@@ -307,15 +307,15 @@ class StorageConfig(BaseModel):
     def _validate_frames_dir(cls, value: str) -> str:
         value = value.strip()
         if value and not value.startswith("/"):
-            raise ValueError("Der Speicherort muss ein absoluter Pfad sein (z. B. /mnt/data/ha_satellite)")
+            raise ValueError("The storage location must be an absolute path (e.g. /mnt/data/ha_satellite)")
         return value.rstrip("/") or ("/" if value else "")
 
 
 class ArchiveConfig(BaseModel):
-    """Rohdaten-Archiv der MTG-FCI-Chunks (Rendern bei Bedarf).
+    """Raw data archive of MTG FCI chunks (render on demand).
 
-    Heruntergeladen werden die Chunks ``chunk_min``..``chunk_max`` (Vorgabe:
-    Europa) plus alle, die eine konfigurierte Region benötigt.
+    Downloads chunks ``chunk_min``..``chunk_max`` (default: Europe) plus
+    all chunks needed by a configured region.
     """
 
     retention_hours: int = Field(default=12, ge=0, le=168)
@@ -325,7 +325,7 @@ class ArchiveConfig(BaseModel):
     @model_validator(mode="after")
     def _ordered(self) -> "ArchiveConfig":
         if self.chunk_min > self.chunk_max:
-            raise ValueError("Chunk-Bereich: 'von' darf nicht größer als 'bis' sein")
+            raise ValueError("Chunk range: 'from' must not be greater than 'to'")
         return self
 
 
@@ -348,8 +348,8 @@ class AppConfig(BaseModel):
         for region in self.regions:
             if region.source not in known:
                 raise ValueError(
-                    f"Region '{region.name}' verweist auf unbekannte Quelle '{region.source}'. "
-                    f"Im Katalog: {', '.join(known) or '-'}"
+                    f"Region '{region.name}' refers to unknown source '{region.source}'. "
+                    f"In catalog: {', '.join(known) or '-'}"
                 )
         return self
 
@@ -371,7 +371,7 @@ class AppConfig(BaseModel):
 
 
 def default_config() -> AppConfig:
-    """Standardkonfiguration mit vorkonfigurierten Regionen Wien und Mallorca."""
+    """Default configuration with two preconfigured example regions."""
     return AppConfig(
         regions=[
             RegionConfig(
@@ -395,11 +395,11 @@ def default_config() -> AppConfig:
 
 
 def env_overrides() -> dict[str, str]:
-    """Liefert die per Umgebung gesetzten Zugangsdaten.
+    """Return the credentials set via environment.
 
-    Leere Werte zählen nicht als Override: `docker compose` setzt bei
-    ``${VAR:-}`` eine leere Variable, die sonst die in der UI gespeicherten
-    Zugangsdaten überdecken würde.
+    Empty values do not count as an override: `docker compose` sets an empty
+    variable for ``${VAR:-}``, which would otherwise mask the credentials
+    saved in the UI.
     """
     overrides: dict[str, str] = {}
     for field, env_name in (
@@ -422,7 +422,7 @@ def _apply_env_overrides(config: AppConfig) -> AppConfig:
 
 
 def load_config(path: Path | None = None) -> AppConfig:
-    """Lädt die Konfiguration aus der YAML-Datei (oder liefert die Vorgabe)."""
+    """Load the configuration from the YAML file (or return the default)."""
     resolved = path or config_path()
     if resolved.exists():
         raw: dict[str, Any] = yaml.safe_load(resolved.read_text(encoding="utf-8")) or {}
@@ -433,7 +433,7 @@ def load_config(path: Path | None = None) -> AppConfig:
 
 
 def save_config(config: AppConfig, path: Path | None = None) -> None:
-    """Speichert die Konfiguration als YAML-Datei (legt Verzeichnis ggf. an)."""
+    """Save the configuration as a YAML file (creating the directory if needed)."""
     resolved = path or config_path()
     resolved.parent.mkdir(parents=True, exist_ok=True)
     resolved.write_text(
@@ -443,12 +443,12 @@ def save_config(config: AppConfig, path: Path | None = None) -> None:
 
 
 class ConfigStore:
-    """Thread-sicherer In-Memory-Zugriff auf die persistierte Konfiguration.
+    """Thread-safe in-memory access to the persisted configuration.
 
-    Hält zwei Sichten: ``stored()`` ist exakt das, was in der YAML-Datei
-    steht, ``get()`` ist die effektive Konfiguration inkl. Env-Override.
-    Änderungen müssen immer auf ``stored()`` aufsetzen, sonst würden per
-    Umgebung gesetzte Zugangsdaten in die Datei geschrieben.
+    Holds two views: ``stored()`` is exactly what is in the YAML file,
+    ``get()`` is the effective configuration including env overrides.
+    Changes must always build on ``stored()``, otherwise credentials set via
+    the environment would be written to the file.
     """
 
     def __init__(self, path: Path | None = None) -> None:

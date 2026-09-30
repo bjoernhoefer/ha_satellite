@@ -22,7 +22,7 @@ def test_max_frames_enforced(tmp_path: Path):
         filenames.append(frame.filename)
 
     assert len(buf) == 3
-    # Die ältesten zwei Dateien müssen gelöscht worden sein.
+    # The two oldest files must have been deleted.
     region_dir = tmp_path / "wien"
     remaining = {p.name for p in region_dir.glob("*.png")}
     assert remaining == set(filenames[-3:])
@@ -43,11 +43,11 @@ def test_get_index_zero_is_latest(tmp_path: Path):
 
 
 def test_storage_limit_enforced(tmp_path: Path):
-    big_payload = b"0" * (1024 * 100)  # 100 KB je Frame
+    big_payload = b"0" * (1024 * 100)  # 100 KB per frame
     buf = RingBuffer(region_dir=tmp_path / "wien", max_frames=100, max_storage_mb=0.25)
     for _ in range(10):
         buf.add_frame(big_payload)
-    # 0.25 MB Limit / 100 KB pro Frame => höchstens 2-3 Frames bleiben übrig
+    # 0.25 MB limit / 100 KB per frame => at most 2-3 frames remain
     assert len(buf) <= 3
     total_size = sum(p.stat().st_size for p in (tmp_path / "wien").glob("*.png"))
     assert total_size <= 0.25 * 1024 * 1024
@@ -58,11 +58,11 @@ def test_orphan_files_removed_on_reload(tmp_path: Path):
     buf = RingBuffer(region_dir=region_dir, max_frames=5, max_storage_mb=100)
     buf.add_frame(_png_bytes())
 
-    # Simuliert eine verwaiste Datei, die nicht im Index steht.
+    # Simulate an orphaned file that is not in the index.
     (region_dir / "orphan.png").write_bytes(_png_bytes())
     assert (region_dir / "orphan.png").exists()
 
-    # Ein neuer RingBuffer über dasselbe Verzeichnis muss beim Laden aufräumen.
+    # A new RingBuffer on the same directory must clean up on load.
     buf2 = RingBuffer(region_dir=region_dir, max_frames=5, max_storage_mb=100)
     buf2._remove_orphans()
     assert not (region_dir / "orphan.png").exists()
@@ -73,12 +73,12 @@ def test_orphan_files_removed_automatically_on_add_frame(tmp_path: Path):
     buf = RingBuffer(region_dir=region_dir, max_frames=5, max_storage_mb=100)
     buf.add_frame(_png_bytes())
 
-    # Simuliert eine verwaiste Datei, die nicht im Index steht.
+    # Simulate an orphaned file that is not in the index.
     (region_dir / "orphan.png").write_bytes(_png_bytes())
     assert (region_dir / "orphan.png").exists()
 
-    # Der reguläre add_frame-Pfad (über _cleanup()) muss die Waise ebenfalls
-    # entfernen, ohne dass _remove_orphans() manuell aufgerufen wird.
+    # The regular add_frame path (via _cleanup()) must remove the orphan too,
+    # without calling _remove_orphans() manually.
     buf.add_frame(_png_bytes())
     assert not (region_dir / "orphan.png").exists()
 
@@ -151,9 +151,9 @@ def test_frames_keep_origin_and_insertion_order(tmp_path):
     newer = datetime(2026, 9, 26, 13, 40, tzinfo=timezone.utc)
     older = datetime(2026, 9, 26, 13, 27, tzinfo=timezone.utc)
     buf.add_frame(b"rss", timestamp=newer, source="msg_seviri", composite="a")
-    # Quellenwechsel auf eine ältere Aufnahme: trotzdem neuester Frame.
+    # Source switch to an older capture: still the newest frame.
     buf.add_frame(b"0deg", timestamp=older, source="msg_seviri_0deg", composite="a")
-    # Gleicher Zeitstempel (anderes Komposit) überschreibt nichts.
+    # Same timestamp (different composite) overwrites nothing.
     buf.add_frame(b"0deg-b", timestamp=older, source="msg_seviri_0deg", composite="b")
 
     assert [f.source for f in buf.frames_newest_first()] == ["msg_seviri_0deg", "msg_seviri_0deg", "msg_seviri"]

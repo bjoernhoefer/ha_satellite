@@ -1,4 +1,4 @@
-"""API-Tests rund um das Speichern der EUMETSAT-Zugangsdaten."""
+"""API tests for saving EUMETSAT credentials."""
 
 from __future__ import annotations
 
@@ -46,7 +46,7 @@ def test_empty_or_masked_secret_keeps_existing_value(live_server):
 
 
 def test_empty_env_vars_do_not_override_saved_credentials(start_server):
-    # docker compose setzt bei ${VAR:-} eine *leere* Variable.
+    # docker compose sets an *empty* variable for ${VAR:-}.
     server = start_server(env={"EUMETSAT_CONSUMER_KEY": "", "EUMETSAT_CONSUMER_SECRET": ""})
     httpx.post(
         f"{server.url}/api/config",

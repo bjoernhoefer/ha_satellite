@@ -31,7 +31,7 @@ def test_region_bounding_box_uses_center_and_radius():
 
 
 def test_region_rejects_source_missing_from_catalog():
-    with pytest.raises(ValueError, match="unbekannte Quelle"):
+    with pytest.raises(ValueError, match="unknown source"):
         AppConfig(regions=[RegionConfig(name="t", lat=0, lon=0, radius_km=10, source="nope")])
 
 
@@ -44,9 +44,9 @@ def test_default_catalog_covers_all_drivers():
 
 
 def test_catalog_rejects_unknown_driver_and_duplicate_ids():
-    with pytest.raises(ValueError, match="Treiber"):
+    with pytest.raises(ValueError, match="driver"):
         SourceDefinition(id="x", driver="nope")
-    with pytest.raises(ValueError, match="doppelt"):
+    with pytest.raises(ValueError, match="more than once"):
         SourcesConfig(catalog=[{"id": "a", "driver": "dummy"}, {"id": "a", "driver": "dummy"}])
 
 
@@ -76,7 +76,7 @@ def test_legacy_active_list_is_migrated_to_catalog():
 
 
 def test_storage_path_must_be_absolute():
-    with pytest.raises(ValueError, match="absolut"):
+    with pytest.raises(ValueError, match="absolute"):
         StorageConfig(frames_dir="relative/path")
     assert StorageConfig(frames_dir="/mnt/data/ha_satellite/").frames_dir == "/mnt/data/ha_satellite"
     assert StorageConfig(frames_dir="").frames_dir == ""
@@ -92,7 +92,7 @@ def test_effective_max_frames_defaults_to_60_minutes():
 def test_history_minutes_controls_max_frames():
     config = default_config()
     config.history.history_minutes = 24 * 60
-    # Rapid Scan liefert alle 5 Minuten -> 288 Frames für 24 Stunden.
+    # Rapid Scan delivers every 5 minutes -> 288 frames for 24 hours.
     assert config.max_frames_for(config.regions[0]) == 288
 
 
@@ -102,11 +102,11 @@ def test_cycle_per_source_from_collection_driver_or_override():
     assert sources.cycle_for("msg_seviri") == 5  # Rapid Scan
     assert sources.cycle_for("msg_seviri_0deg") == 15
     assert sources.cycle_for("mtg_fci") == 10
-    # Ohne bekannten Takt: allgemeines Abrufintervall.
+    # Without a known cycle: general poll interval.
     sources.poll_interval_minutes = 7
     assert sources.cycle_for("dummy") == 7
-    assert sources.cycle_for("gibt-es-nicht") == 7
-    # Unbekannte Collection: Takt des Treibers; eigener Wert hat Vorrang.
+    assert sources.cycle_for("does-not-exist") == 7
+    # Unknown collection: driver's cycle; an explicit value takes precedence.
     fci = sources.get("mtg_fci")
     fci.collection = "EO:EUM:DAT:0999"
     assert sources.cycle_for("mtg_fci") == 10
@@ -163,7 +163,7 @@ def test_env_override_not_persisted_back_to_file(tmp_path: Path, monkeypatch: py
     store = ConfigStore(path)
     assert store.get().eumetsat.consumer_key == "from-env"
 
-    # Die Datei auf der Platte enthält weiterhin den ursprünglichen Wert.
+    # The file on disk still contains the original value.
     raw = path.read_text(encoding="utf-8")
     assert "from-file" in raw
     assert "from-env" not in raw

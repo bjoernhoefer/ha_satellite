@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ha_satellite"
-version = "0.1.0"
-description = "Satellitenbilder von EUMETSAT als Kamera-Entitäten für Home Assistant"
+version = "1.0.0"
+description = "EUMETSAT satellite images as camera entities for Home Assistant"
 readme = "README.md"
 requires-python = ">=3.12"
 license = { text = "MIT" }
@@ -21,14 +21,14 @@ dependencies = [
     "imageio>=2.34",
     "imageio-ffmpeg>=0.5",
     "numpy>=1.26",
-    # Phase 2: EUMETSAT-Download + Satpy-Rendering. Im Docker-Image kommen
-    # diese Pakete vorgebaut aus conda-forge (siehe docker/Dockerfile).
+    # EUMETSAT download + Satpy rendering. In the Docker image these packages
+    # come as prebuilt wheels (see docker/Dockerfile).
     "eumdac>=3.0",
     "satpy>=0.60",
     "pyresample>=1.34",
     "pyproj>=3.6",
     "dask[array]>=2024.1",
-    # Satpy-Reader fci_l1c_nc (MTG FCI) liest NetCDF4.
+    # Satpy reader fci_l1c_nc (MTG FCI) reads NetCDF4.
     "netCDF4>=1.6",
 ]
 
@@ -37,7 +37,7 @@ dev = [
     "pytest>=8.0",
     "httpx>=0.27",
 ]
-# Browser-Klicktests der Web-UI; zusätzlich `playwright install chromium`.
+# Browser click tests of the web UI; additionally run `playwright install chromium`.
 ui = [
     "pytest-playwright>=0.5",
 ]
@@ -51,5 +51,5 @@ ha_satellite = ["templates/*.html", "satpy_config/composites/*.yaml", "overlay_d
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 markers = [
-    "ui: Browser-Klicktests der Web-UI (benötigen das Extra [ui] und Chromium)",
+    "ui: browser click tests of the web UI (require the [ui] extra and Chromium)",
 ]

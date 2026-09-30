@@ -1,14 +1,14 @@
-"""Erzeugt ``src/ha_satellite/overlay_data/borders_10m.json.gz``.
+"""Generates ``src/ha_satellite/overlay_data/borders_10m.json.gz``.
 
-Quelle: Natural Earth 1:10m "Admin 0 - Boundary Lines" (Staatsgrenzen) und
-"Admin 1 - States, Provinces" Lines (Bundesländer, nur ``STATE_COUNTRIES``),
-gemeinfrei (https://www.naturalearthdata.com/about/terms-of-use/).
+Source: Natural Earth 1:10m "Admin 0 - Boundary Lines" (country borders) and
+"Admin 1 - States, Provinces" lines (states, only ``STATE_COUNTRIES``),
+public domain (https://www.naturalearthdata.com/about/terms-of-use/).
 
     python scripts/build_borders.py ne_10m_admin_0_boundary_lines_land.geojson \
         ne_10m_admin_1_states_provinces_lines.geojson
 
-Koordinaten werden auf 3 Nachkommastellen (~100 m) gerundet; aufeinander-
-folgende gleiche Punkte entfallen.
+Coordinates are rounded to 3 decimal places (~100 m); consecutive
+duplicate points are dropped.
 """
 
 import gzip
@@ -26,7 +26,7 @@ def _lines(geometry):
         yield from geometry["coordinates"]
 
 
-# Länder, deren innere Verwaltungsgrenzen (Bundesländer) mitkommen.
+# Countries whose internal administrative borders (states) are included.
 STATE_COUNTRIES = {"AUT"}
 
 
@@ -60,7 +60,7 @@ def main(countries: str, states: str) -> None:
         separators=(",", ":"),
     )
     TARGET.write_bytes(gzip.compress(payload.encode(), 9, mtime=0))
-    print(f"{len(lines)} + {len(state_lines)} Linien, {TARGET.stat().st_size // 1024} KB -> {TARGET}")
+    print(f"{len(lines)} + {len(state_lines)} lines, {TARGET.stat().st_size // 1024} KB -> {TARGET}")
 
 
 if __name__ == "__main__":

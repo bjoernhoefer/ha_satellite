@@ -1,7 +1,7 @@
-"""Tests für den MTG-FCI-Treiber: Chunk-Geometrie, Rohdaten-Archiv, Rendern.
+"""Tests for the MTG FCI driver: chunk geometry, raw data archive, rendering.
 
-``eumdac`` und der Satpy-Kindprozess sind gemockt; es wird nie gegen den
-echten Data Store gesprochen.
+``eumdac`` and the Satpy child process are mocked; the real Data Store is
+never contacted.
 """
 
 from __future__ import annotations
@@ -65,7 +65,7 @@ class FakeFciProduct:
     def open(self, entry: str):
         chunk = chunk_of(entry)
         if chunk == self.fail_on:
-            raise OSError("Verbindung abgebrochen")
+            raise OSError("connection aborted")
         self.opened.append(entry)
         return io.BytesIO(f"chunk{chunk}".encode())
 
@@ -102,12 +102,12 @@ def test_geos_projection_matches_pyproj():
 
 
 def test_chunks_for_region_known_locations():
-    # Auf dem Pi gegen echte Daten geprüft: Wien rendert vollständig aus 36-37.
+    # Verified against real data: Vienna renders completely from 36-37.
     assert chunks_for_region(_region()) == {36, 37}
     assert chunks_for_region(_region("mallorca", 39.6953, 3.0176)) == {34, 35}
     assert chunks_for_region(_region("oslo", 59.9, 10.7)) == {38, 39}
     assert chunks_for_region(_region("kapstadt", -33.9, 18.4)) == {7, 8, 9}
-    # Außerhalb der Vollscheibe (Satellit über 0°).
+    # Outside the full disk (satellite over 0°).
     assert chunks_for_region(_region("tokio", 35.7, 139.7)) == set()
 
 
@@ -131,7 +131,7 @@ def test_chunk_of_ignores_trail_and_other_files():
 
 
 def test_archive_config_validation():
-    with pytest.raises(ValueError, match="von"):
+    with pytest.raises(ValueError, match="(?i)chunk"):
         ArchiveConfig(chunk_min=39, chunk_max=33)
     with pytest.raises(ValueError):
         ArchiveConfig(chunk_min=0)
@@ -154,14 +154,14 @@ def test_sync_downloads_only_wanted_chunks_once(tmp_path, monkeypatch):
     slot = archive.sync(COLLECTION, CREDS, {36, 37, 41}, retention_hours=12)
     assert slot.name == "20260926T142000Z"
     assert slot.sensing_end == SENSING
-    assert slot.chunks == [36, 37]  # 41 = TRAIL wird nie geladen
+    assert slot.chunks == [36, 37]  # 41 = TRAIL is never downloaded
     assert slot.chunk_files()[36].read_bytes() == b"chunk36"
     assert len(product.opened) == 2
 
     again = archive.sync(COLLECTION, CREDS, {36, 37}, retention_hours=12)
     assert again == slot and len(product.opened) == 2
 
-    # Erweiterter Bereich: nur die fehlenden Chunks werden nachgeladen.
+    # Extended range: only the missing chunks are downloaded.
     archive.sync(COLLECTION, CREDS, {35, 36, 37}, retention_hours=12)
     assert len(product.opened) == 3
     assert [s.name for s in archive.slots(COLLECTION)] == [slot.name]
@@ -185,15 +185,15 @@ def test_sync_prunes_slots_older_than_retention(tmp_path, monkeypatch):
 def test_sync_failure_cleans_up_and_is_reported(tmp_path, monkeypatch):
     install_fake_eumdac(monkeypatch, [FakeFciProduct("FCI-A", SENSING, fail_on=36)])
     archive = FciArchive(tmp_path)
-    with pytest.raises(ArchiveError, match="abgebrochen"):
+    with pytest.raises(ArchiveError, match="aborted"):
         archive.sync(COLLECTION, CREDS, {36, 37}, retention_hours=12)
     assert archive.slots(COLLECTION) == []
     assert not list(tmp_path.rglob("*.part"))
-    assert "abgebrochen" in archive.status()[COLLECTION]["last_error"]
+    assert "aborted" in archive.status()[COLLECTION]["last_error"]
 
 
 def test_sync_requires_credentials(tmp_path):
-    with pytest.raises(ArchiveError, match="Zugangsdaten"):
+    with pytest.raises(ArchiveError, match="credentials"):
         FciArchive(tmp_path).sync(COLLECTION, EumetsatCredentials(), {36}, 12)
 
 
@@ -226,7 +226,7 @@ def test_mtg_fci_renders_only_region_chunks(tmp_path, monkeypatch):
     monkeypatch.setattr("ha_satellite.sources.satpy_render.render_in_subprocess", fake_render)
     config = _fci_config(tmp_path)
     region = config.region("wien")
-    region.composite = "natural_color_hrv_with_night_ir"  # SEVIRI-Name -> FCI-Gegenstück
+    region.composite = "natural_color_hrv_with_night_ir"  # SEVIRI name -> FCI counterpart
 
     frame = MtgFciSource().render(region, config)
     assert frame.png == b"PNG"
@@ -236,7 +236,7 @@ def test_mtg_fci_renders_only_region_chunks(tmp_path, monkeypatch):
     assert request.composite == DEFAULT_FCI_COMPOSITE
     assert [chunk_of(f) for f in request.filenames] == [36, 37]
 
-    # Europa-Bereich wurde vollständig archiviert, obwohl Wien nur 2 Chunks braucht.
+    # The Europe range was fully archived although Vienna needs only 2 chunks.
     slot = sources.fci_archive.get_archive(sources.archive_root(config)).slots("EO:EUM:DAT:0662")[0]
     assert slot.chunks == list(range(32, 41))
     assert slot.path.is_relative_to(tmp_path / "frames" / "_archive")
@@ -248,9 +248,9 @@ def test_mtg_fci_renders_only_region_chunks(tmp_path, monkeypatch):
 def test_render_fci_slot_reports_missing_chunks(tmp_path, monkeypatch):
     install_fake_eumdac(monkeypatch, [FakeFciProduct("FCI-A", SENSING)])
     slot = FciArchive(tmp_path).sync(COLLECTION, CREDS, {36}, 12)
-    with pytest.raises(RenderError, match="fehlt 37"):
+    with pytest.raises(RenderError, match="missing 37"):
         render_fci_slot(slot, _region(), DEFAULT_FCI_COMPOSITE)
-    with pytest.raises(RenderError, match="außerhalb"):
+    with pytest.raises(RenderError, match="outside"):
         render_fci_slot(slot, _region("tokio", 35.7, 139.7), DEFAULT_FCI_COMPOSITE)
 
 
@@ -288,7 +288,7 @@ def test_relocate_moves_archive_as_whole(tmp_path):
 
 # -- API ------------------------------------------------------------------------
 def write_fci_slot(frames_dir, name="20260926T142000Z", chunks=range(32, 41), cached=None):
-    """Legt einen archivierten FCI-Slot an; ``cached`` = {(Region, Komposit): PNG}."""
+    """Creates an archived FCI slot; ``cached`` = {(region, composite): PNG}."""
     slot_dir = frames_dir / "_archive" / "EO_EUM_DAT_0662" / name
     slot_dir.mkdir(parents=True)
     end = datetime.strptime(name, "%Y%m%dT%H%M%SZ").replace(tzinfo=timezone.utc)
@@ -309,7 +309,7 @@ def write_fci_slot(frames_dir, name="20260926T142000Z", chunks=range(32, 41), ca
 
 def test_archive_api_lists_slots_and_serves_cached_renders(live_server):
     frames_dir = live_server.data_dir / "frames"
-    write_fci_slot(frames_dir, "20260926T141000Z", chunks=[36])  # Wien unvollständig
+    write_fci_slot(frames_dir, "20260926T141000Z", chunks=[36])  # Vienna incomplete
     write_fci_slot(frames_dir)
 
     info = httpx.get(f"{live_server.url}/api/archive").json()
@@ -339,9 +339,9 @@ def test_archive_api_lists_slots_and_serves_cached_renders(live_server):
     assert httpx.get(f"{live_server.url}/regions/wien/archive/20260101T000000Z.png").status_code == 404
     assert httpx.get(f"{live_server.url}/regions/wien/archive/20260926T142000Z.png?composite=a/b").status_code in (400, 404)
     assert httpx.get(f"{live_server.url}/regions/wien/archive/20260926T142000Z.png?composite=x;y").status_code == 400
-    # Wien fehlt im älteren Slot Chunk 37 -> verständlicher Fehler statt Absturz.
+    # Vienna lacks chunk 37 in the older slot -> clear error instead of a crash.
     response = httpx.get(f"{live_server.url}/regions/wien/archive/20260926T141000Z.png", timeout=30)
-    assert response.status_code == 502 and "fehlt 37" in response.json()["detail"]
+    assert response.status_code == 502 and "missing 37" in response.json()["detail"]
 
 
 def test_storage_api_sets_archive_settings_and_prunes(live_server):

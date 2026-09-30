@@ -1,11 +1,10 @@
-"""Rollierender Ringpuffer für Frames pro Region.
+"""Rolling ring buffer for frames per region.
 
-Speichert PNG-Frames unter ``/data/frames/{region}/`` und pflegt einen
-Index (``_index.json``) mit der zeitlichen Reihenfolge. Beim Hinzufügen
-neuer Frames werden ältere Frames oberhalb der konfigurierten Anzahl
-sowie oberhalb eines Speicher-Limits (in MB) automatisch entfernt.
-Dateien auf der Platte, die nicht (mehr) im Index stehen ("Waisen"),
-werden ebenfalls aufgeräumt.
+Stores PNG frames under ``/data/frames/{region}/`` and maintains an
+index (``_index.json``) with their order. When new frames are added,
+older frames beyond the configured count or beyond a storage limit (in
+MB) are removed automatically. Files on disk that are not (or no longer)
+in the index ("orphans") are cleaned up as well.
 """
 
 from __future__ import annotations
@@ -19,7 +18,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 INDEX_FILENAME = "_index.json"
-# Abgeleitete Medien (Vorschaubilder, Animationen), siehe media.py.
+# Derived media (thumbnails, animations), see media.py.
 CACHE_DIRNAME = "_cache"
 
 logger = logging.getLogger(__name__)
@@ -29,8 +28,8 @@ logger = logging.getLogger(__name__)
 class Frame:
     filename: str
     created_at: str
-    # Herkunft (Katalog-ID der Quelle + Komposit). Nach einem Quellenwechsel
-    # zählt nur der neueste Frame derselben Herkunft als "bereits gerendert".
+    # Origin (catalog ID of the source + composite). After a source switch
+    # only the newest frame of the same origin counts as "already rendered".
     source: str | None = None
     composite: str | None = None
     borders: bool | None = None
@@ -51,7 +50,7 @@ class Frame:
 
 @dataclass
 class RingBuffer:
-    """Ringpuffer für eine einzelne Region."""
+    """Ring buffer for a single region."""
 
     region_dir: Path
     max_frames: int = 4
@@ -65,7 +64,7 @@ class RingBuffer:
         self._frames = self._load_index()
         self._cleanup()
 
-    # -- Persistenz -------------------------------------------------
+    # -- Persistence -------------------------------------------------
     def _index_path(self) -> Path:
         return self.region_dir / INDEX_FILENAME
 
@@ -79,14 +78,14 @@ class RingBuffer:
             return []
         known = {"filename", "created_at", "source", "composite", "borders"}
         frames = [Frame(**{k: v for k, v in entry.items() if k in known}) for entry in raw]
-        # Nur Frames behalten, deren Datei tatsächlich existiert.
+        # Keep only frames whose file actually exists.
         return [f for f in frames if f.path(self.region_dir).exists()]
 
     def _save_index(self) -> None:
         payload = [f.as_dict() for f in self._frames]
         self._index_path().write_text(json.dumps(payload), encoding="utf-8")
 
-    # -- Öffentliche API ----------------------------------------------
+    # -- Public API ------------------------------------------------
     def add_frame(
         self,
         data: bytes,
@@ -95,10 +94,10 @@ class RingBuffer:
         composite: str | None = None,
         borders: bool | None = None,
     ) -> Frame:
-        """Fügt einen neuen Frame (PNG-Bytes) als neuesten hinzu und räumt auf.
+        """Add a new frame (PNG bytes) as the newest one and clean up.
 
-        Die Reihenfolge ist die des Hinzufügens: nach einem Wechsel auf eine
-        Quelle mit älterer Aufnahme (z. B. Rapid Scan -> 0°) ist das neu
+        Order is insertion order: after switching to a source with an older
+        capture (e.g. Rapid Scan -> 0°) the newly
         gerenderte Bild trotzdem Frame 0.
         """
         with self._lock:
@@ -128,7 +127,7 @@ class RingBuffer:
             return self._frames[-1] if self._frames else None
 
     def get(self, index: int) -> Frame | None:
-        """Liefert Frame mit Index 0 = neuester Frame, aufsteigend = älter."""
+        """Return the frame at the index; 0 = newest, higher = older."""
         with self._lock:
             frames = self.frames_newest_first()
             if 0 <= index < len(frames):
@@ -146,7 +145,7 @@ class RingBuffer:
         with self._lock:
             return len(self._frames)
 
-    # -- Aufräumen ----------------------------------------------------
+    # -- Cleanup -------------------------------------------------------
     def _cleanup(self) -> None:
         self._enforce_max_frames()
         self._enforce_storage_limit()
@@ -169,8 +168,8 @@ class RingBuffer:
         for path in self.region_dir.iterdir():
             if path.is_file() and path.name not in known:
                 path.unlink(missing_ok=True)
-        # Vorschaubilder gelöschter Frames ("<stem>-w240.jpg"); Animationen
-        # verwaltet media.py selbst.
+        # Thumbnails of deleted frames ("<stem>-w240.jpg"); animations are
+        # managed by media.py itself.
         cache = self.region_dir / CACHE_DIRNAME
         if cache.is_dir():
             stems = {Path(f.filename).stem for f in self._frames}
@@ -190,7 +189,7 @@ class RingBuffer:
         (self.region_dir / filename).unlink(missing_ok=True)
 
     def update_limits(self, max_frames: int, max_storage_mb: float) -> None:
-        """Passt Max-Frames/Speicherlimit an und räumt danach direkt auf."""
+        """Update max frames / storage limit and clean up right away."""
         with self._lock:
             self.max_frames = max_frames
             self.max_storage_mb = max_storage_mb
@@ -199,7 +198,7 @@ class RingBuffer:
 
 
 class BufferManager:
-    """Verwaltet je einen RingBuffer pro Region."""
+    """Manages one RingBuffer per region."""
 
     def __init__(self, base_dir: Path) -> None:
         self.base_dir = Path(base_dir)
@@ -221,10 +220,10 @@ class BufferManager:
             return buf
 
     def relocate(self, new_base_dir: Path, move_existing: bool) -> int:
-        """Wechselt den Speicherort; verschiebt vorhandene Frames auf Wunsch.
+        """Change the storage location; optionally move existing frames.
 
-        Existiert eine Region am Ziel bereits, werden die Frames zusammengeführt
-        (Index nach Zeitstempel sortiert). Liefert die Zahl verschobener Frames.
+        If a region already exists at the target, frames are merged (index
+        sorted by timestamp). Returns the number of moved frames.
         """
         new_base_dir = Path(new_base_dir)
         with self._lock:
@@ -233,8 +232,8 @@ class BufferManager:
             if move_existing and old_base_dir.exists() and old_base_dir.resolve() != new_base_dir.resolve():
                 for region_dir in sorted(p for p in old_base_dir.iterdir() if p.is_dir()):
                     if region_dir.name.startswith("_"):
-                        # Interne Verzeichnisse (z. B. FCI-Rohdaten-Archiv)
-                        # haben keinen Frame-Index und werden als Ganzes verschoben.
+                        # Internal directories (e.g. FCI raw data archive) have
+                        # no frame index and are moved as a whole.
                         _move_internal_dir(region_dir, new_base_dir / region_dir.name)
                         continue
                     moved += _merge_region_dir(region_dir, new_base_dir / region_dir.name)
@@ -244,7 +243,7 @@ class BufferManager:
 
 
 def _move_internal_dir(source: Path, target: Path) -> None:
-    """Verschiebt Unterordner, die am Ziel noch fehlen; Rest wird verworfen."""
+    """Move subdirectories missing at the target; discard the rest."""
     target.mkdir(parents=True, exist_ok=True)
     for child in source.iterdir():
         destination = target / child.name
@@ -274,12 +273,12 @@ def _merge_region_dir(source: Path, target: Path) -> int:
             shutil.move(str(src_file), str(target / entry["filename"]))
             merged[entry["filename"]] = entry
             moved += 1
-    # Ohne vorhandene Frames am Ziel bleibt die Reihenfolge des Hinzufügens
-    # erhalten (sie weicht nach Quellenwechseln von der Zeitreihenfolge ab).
+    # Without existing frames at the target, insertion order is kept
+    # (it differs from chronological order after source switches).
     entries = list(merged.values())
     if len(entries) != moved:
         entries.sort(key=lambda e: e["created_at"])
     (target / INDEX_FILENAME).write_text(json.dumps(entries), encoding="utf-8")
     shutil.rmtree(source, ignore_errors=True)
-    logger.info("%d Frames von %s nach %s verschoben", moved, source, target)
+    logger.info("Moved %d frames from %s to %s", moved, source, target)
     return moved

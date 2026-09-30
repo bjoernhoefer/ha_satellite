@@ -1,12 +1,12 @@
-"""Landes- und Bundesländergrenzen als Overlay über ein gerendertes Regionsbild.
+"""Country and state borders as an overlay on a rendered region image.
 
-Staatsgrenzen weltweit, Bundesländergrenzen nur für Österreich
-(``STATE_COUNTRIES`` in ``scripts/build_borders.py``). Die Grenzlinien
-stammen aus Natural Earth 1:10m (gemeinfrei, erzeugt mit
-``scripts/build_borders.py``) und liegen gepackt im Paket. Projiziert wird
-in dieselbe Lambert-Azimutal-Projektion wie die Zielregion
-(``satpy_render.target_area``), dadurch passen Linien und Bild exakt
-übereinander - ohne pycoast und dessen ~150-MB-GSHHS-Datensatz.
+Country borders worldwide, state borders only for Austria
+(``STATE_COUNTRIES`` in ``scripts/build_borders.py``). The border lines
+come from Natural Earth 1:10m (public domain, generated with
+``scripts/build_borders.py``) and are shipped packed in the package. They
+are projected into the same Lambert azimuthal projection as the target
+region (``satpy_render.target_area``), so lines and image match exactly -
+without pycoast and its ~150 MB GSHHS dataset.
 """
 
 from __future__ import annotations
@@ -17,15 +17,15 @@ from functools import lru_cache
 from pathlib import Path
 
 BORDERS_FILE = Path(__file__).resolve().parent / "overlay_data" / "borders_10m.json.gz"
-# Geglättete Haarlinien: in SUPERSAMPLE-facher Größe gezeichnet und
-# verkleinert. Breite in Zielpixeln = Linienbreite / SUPERSAMPLE.
+# Anti-aliased hairlines: drawn at SUPERSAMPLE times the size and
+# downscaled. Width in target pixels = line width / SUPERSAMPLE.
 SUPERSAMPLE = 4
 BORDER_COLOR = (0, 0, 0, 255)
 BORDER_WIDTH = 4  # ~1 px
 STATE_COLOR = (0, 0, 0, 170)
-STATE_WIDTH = 3  # ~0,75 px
-# Punkte weiter als dieses Vielfache des Radius vom Mittelpunkt werden
-# verworfen (Linie wird dort aufgetrennt) - hält die Pixelwerte klein.
+STATE_WIDTH = 3  # ~0.75 px
+# Points farther from the center than this multiple of the radius are
+# dropped (the line is split there) - keeps pixel values small.
 _CLIP_FACTOR = 1.5
 
 
@@ -48,9 +48,9 @@ def _border_lines(kind: str = "lines"):
 def border_segments(
     lat: float, lon: float, radius_km: float, width: int, height: int, kind: str = "lines"
 ):
-    """Grenzlinien als Pixel-Polylinien [(x, y), ...] im Zielbild.
+    """Border lines as pixel polylines [(x, y), ...] in the target image.
 
-    ``kind``: ``"lines"`` = Staatsgrenzen, ``"state_lines"`` = Bundesländer.
+    ``kind``: ``"lines"`` = country borders, ``"state_lines"`` = states.
     """
     import numpy as np
     from pyproj import Transformer
@@ -81,7 +81,7 @@ def border_segments(
         inside = np.isfinite(x) & np.isfinite(y) & (np.abs(x) <= limit) & (np.abs(y) <= limit)
         cols = (x + radius_m) / (2 * radius_m) * width
         rows = (radius_m - y) / (2 * radius_m) * height
-        # Zusammenhängende Abschnitte innerhalb des Clip-Bereichs.
+        # Contiguous segments inside the clip area.
         start = None
         for i, ok in enumerate(np.append(inside, False)):
             if ok and start is None:
@@ -94,7 +94,7 @@ def border_segments(
 
 
 def draw_borders(image, lat: float, lon: float, radius_km: float):
-    """Zeichnet Bundesländer- und Staatsgrenzen als geglättete Haarlinien."""
+    """Draw state and country borders as anti-aliased hairlines."""
     from PIL import Image, ImageDraw
 
     width, height = image.size

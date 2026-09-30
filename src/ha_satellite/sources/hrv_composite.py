@@ -1,7 +1,7 @@
-"""Eigener Satpy-Compositor: Echtfarben mit HRV-Helligkeit geschärft.
+"""Custom Satpy compositor: natural color sharpened with HRV brightness.
 
-Wird ausschließlich über ``satpy_config/composites/seviri.yaml`` im
-Render-Kindprozess geladen (importiert Satpy direkt).
+Loaded exclusively via ``satpy_config/composites/seviri.yaml`` in the
+render child process (imports Satpy directly).
 """
 
 from __future__ import annotations
@@ -10,29 +10,28 @@ import numpy as np
 import xarray as xr
 from satpy.composites.core import GenericCompositor, IncompatibleAreas
 
-# Obergrenze des Schärfungsfaktors: über dunklem Meer ist HRV (enthält
-# blaues Streulicht) deutlich heller als VIS006/VIS008; 1.5 (Satpy-Default
-# bei RatioSharpenedRGB) ließ dort Wolken unscharf.
+# Upper bound of the sharpening factor: over dark sea HRV (which contains
+# blue scattered light) is much brighter than VIS006/VIS008; 1.5 (Satpy's
+# default for RatioSharpenedRGB) left clouds blurry there.
 MAX_RATIO = 3.0
 
 
 class HrvLuminanceSharpenedRGB(GenericCompositor):
-    """Skaliert alle drei Farbkanäle mit ``HRV / mean(VIS006, VIS008)``.
+    """Scales all three color channels by ``HRV / mean(VIS006, VIS008)``.
 
-    Der Nenner liegt im selben ~3-km-Raster wie die Farbkanäle, der Faktor
-    hebt deren Blockstruktur also auf und bringt die ~1-km-Details des HRV
-    ein, ohne den Farbton zu verändern (anders als ``RatioSharpenedRGB``,
-    das einen Kanal durch HRV ersetzt und über Meer einen Magentastich
-    erzeugt).
+    The denominator is on the same ~3 km grid as the color channels, so the
+    factor cancels their block structure and adds the ~1 km detail of HRV
+    without changing the hue (unlike ``RatioSharpenedRGB``, which replaces
+    one channel with HRV and produces a magenta tint over sea).
     """
 
     def __call__(self, datasets, optional_datasets=None, **info):
         if len(datasets) != 3:
-            raise ValueError(f"Erwartet 3 Datensätze, erhalten {len(datasets)}")
+            raise ValueError(f"Expected 3 datasets, got {len(datasets)}")
         optional_datasets = tuple(optional_datasets or ())
         shapes = {d.shape for d in (*datasets, *optional_datasets)}
         if len(shapes) > 1:
-            raise IncompatibleAreas("HRV-Schärfung erst nach dem Resampling möglich")
+            raise IncompatibleAreas("HRV sharpening is only possible after resampling")
         red, green, blue, *hrv = self.match_data_arrays((*datasets, *optional_datasets))
         if hrv:
             with np.errstate(divide="ignore", invalid="ignore"):

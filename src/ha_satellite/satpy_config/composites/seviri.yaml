@@ -1,11 +1,11 @@
-# Eigene SEVIRI-Komposite, ergänzen Satpys eingebaute Definitionen
-# (Einbindung über satpy.config "config_path", siehe satpy_render.py).
+# Custom SEVIRI composites, extending Satpy's built-in definitions
+# (loaded via satpy.config "config_path", see satpy_render.py).
 sensor_name: visir/seviri
 
 composites:
-  # Echtfarben (IR_016/VIS008/VIS006, ~3 km) mit dem HRV-Kanal (~1 km)
-  # geschärft, Farbton bleibt erhalten (siehe sources/hrv_composite.py).
-  # Nur nach dem Resampling berechenbar (unterschiedliche Grids).
+  # Natural color (IR_016/VIS008/VIS006, ~3 km) sharpened with the HRV
+  # channel (~1 km), hue is preserved (see sources/hrv_composite.py).
+  # Can only be computed after resampling (different grids).
   natural_color_hrv:
     compositor: !!python/name:ha_satellite.sources.hrv_composite.HrvLuminanceSharpenedRGB
     prerequisites:
@@ -20,7 +20,7 @@ composites:
         modifiers: [sunz_corrected]
     standard_name: natural_color
 
-  # Wie natural_color_raw_with_night_ir, tagsüber aber HRV-geschärft.
+  # Like natural_color_raw_with_night_ir, but HRV-sharpened during the day.
   natural_color_hrv_with_night_ir:
     compositor: !!python/name:satpy.composites.fill.DayNightCompositor
     standard_name: natural_color_with_night_ir

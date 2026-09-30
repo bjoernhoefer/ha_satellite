@@ -1,12 +1,12 @@
-"""Geometrie-Hilfsfunktionen für Regionen.
+"""Geometry helpers for regions.
 
-Berechnet aus Mittelpunkt (Lat/Lon) und Umkreis (km) eine einfache
-äquidistante Bounding-Box in Grad. Die Näherung nutzt die klassische
-"Grad pro Kilometer"-Umrechnung (1° Breite ≈ 111,32 km) und korrigiert
-die Längengrad-Ausdehnung mit dem Kosinus der Breite. Für die Zwecke
-dieses Projekts (Zuschnitt von Satellitenbildern auf einige hundert
-Kilometer) ist diese sphärische Näherung ausreichend genau und kommt
-ohne zusätzliche Abhängigkeiten (z. B. pyproj) aus.
+Computes a simple equidistant bounding box in degrees from a center point
+(lat/lon) and a radius (km). The approximation uses the classic
+"degrees per kilometer" conversion (1° latitude ≈ 111.32 km) and corrects
+the longitude extent with the cosine of the latitude. For this project's
+purpose (cropping satellite images to a few hundred kilometers) this
+spherical approximation is accurate enough and needs no extra
+dependencies (e.g. pyproj).
 """
 
 from __future__ import annotations
@@ -15,14 +15,14 @@ import math
 from dataclasses import dataclass
 
 KM_PER_DEGREE_LAT = 111.32
-# Kleinster Wert, unterhalb dessen wir cos(lat) nicht mehr als Divisor
-# verwenden (Vermeidung einer Division durch (nahezu) Null an den Polen).
+# Smallest value below which cos(lat) is no longer used as a divisor
+# (avoids division by (nearly) zero at the poles).
 _MIN_COS_LAT = 1e-6
 
 
 @dataclass(frozen=True)
 class BoundingBox:
-    """Bounding-Box in Grad, WGS84."""
+    """Bounding box in degrees, WGS84."""
 
     lat_min: float
     lon_min: float
@@ -34,22 +34,22 @@ class BoundingBox:
 
 
 def bounding_box(lat: float, lon: float, radius_km: float) -> BoundingBox:
-    """Berechnet eine Bounding-Box um (lat, lon) mit gegebenem Umkreis in km.
+    """Compute a bounding box around (lat, lon) with the given radius in km.
 
     Args:
-        lat: Breitengrad des Mittelpunkts in Grad (-90..90).
-        lon: Längengrad des Mittelpunkts in Grad (-180..180).
-        radius_km: Umkreis in Kilometern (muss > 0 sein).
+        lat: Latitude of the center in degrees (-90..90).
+        lon: Longitude of the center in degrees (-180..180).
+        radius_km: Radius in kilometers (must be > 0).
 
     Returns:
-        BoundingBox mit lat_min/lon_min/lat_max/lon_max in Grad.
+        BoundingBox with lat_min/lon_min/lat_max/lon_max in degrees.
     """
     if radius_km <= 0:
-        raise ValueError("radius_km muss größer als 0 sein")
+        raise ValueError("radius_km must be greater than 0")
     if not -90.0 <= lat <= 90.0:
-        raise ValueError("lat muss zwischen -90 und 90 liegen")
+        raise ValueError("lat must be between -90 and 90")
     if not -180.0 <= lon <= 180.0:
-        raise ValueError("lon muss zwischen -180 und 180 liegen")
+        raise ValueError("lon must be between -180 and 180")
 
     delta_lat = radius_km / KM_PER_DEGREE_LAT
     cos_lat = max(abs(math.cos(math.radians(lat))), _MIN_COS_LAT)

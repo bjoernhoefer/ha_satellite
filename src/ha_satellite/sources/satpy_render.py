@@ -1,9 +1,8 @@
-"""Satpy-Rendering eines regionalen Ausschnitts als PNG.
+"""Satpy rendering of a regional crop as PNG.
 
-Läuft bewusst in einem eigenen Prozess (siehe ``render_in_subprocess``):
-Satpy/dask geben Speicher nach einem Lauf nicht zuverlässig an das
-Betriebssystem zurück, und ein OOM-Kill soll das Rendering treffen, nicht
-den Webserver.
+Deliberately runs in a separate process (see ``render_in_subprocess``):
+Satpy/dask do not reliably return memory to the operating system after a
+run, and an OOM kill should hit the rendering, not the web server.
 """
 
 from __future__ import annotations
@@ -19,16 +18,16 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-# Eigene Komposit-Definitionen (z. B. natural_color_hrv_with_night_ir).
+# Custom composite definitions (e.g. natural_color_hrv_with_night_ir).
 SATPY_CONFIG_DIR = Path(__file__).resolve().parent.parent / "satpy_config"
 
-# Randpixel um das berechnete Fenster, damit das Nearest-Neighbour-Resampling
-# auch an den Kanten der Zielregion Nachbarn findet.
+# Margin pixels around the computed window so nearest-neighbour resampling
+# also finds neighbours at the edges of the target region.
 WINDOW_MARGIN_PX = 16
 RENDER_TIMEOUT_SECONDS = 300
-# netCDF4/HDF5 aus den pip-Wheels ist nicht thread-sicher: mit dask-Threads
-# stürzte fci_l1c_nc auf dem Pi in ~50 % der Läufe mit SIGSEGV ab,
-# synchron nie - bei gleicher Laufzeit (~7,5 s).
+# netCDF4/HDF5 from the pip wheels is not thread-safe: with dask threads
+# fci_l1c_nc crashed with SIGSEGV in ~50 % of runs on a Raspberry Pi,
+# never when synchronous - at the same runtime (~7.5 s).
 SINGLE_THREADED_READERS = frozenset({"fci_l1c_nc"})
 
 
@@ -51,13 +50,12 @@ class RenderRequest:
 
 
 def source_window(source_area, target_area, margin: int = WINDOW_MARGIN_PX):
-    """Pixelfenster der Quell-Area, das die Zielregion vollständig abdeckt.
+    """Pixel window of the source area that fully covers the target region.
 
-    Ersetzt pyresamples eigenes Vorab-Zuschneiden (``reduce_data``) bzw.
-    ``Scene.crop``: Beide liefern für die gespiegelt gespeicherte
-    SEVIRI-Rapid-Scan-Area ein viel zu kleines Fenster, wodurch z. B. Wien
-    zu 99 % schwarz blieb (siehe HISTORY.md). ``get_array_indices_from_lonlat``
-    rechnet dagegen korrekt.
+    Replaces pyresample's own pre-cropping (``reduce_data``) and
+    ``Scene.crop``: both return a far too small window for the mirrored
+    SEVIRI Rapid Scan area, leaving e.g. Vienna 99 % black (see
+    HISTORY.md). ``get_array_indices_from_lonlat`` computes it correctly.
     """
     import numpy as np
 
@@ -68,7 +66,7 @@ def source_window(source_area, target_area, margin: int = WINDOW_MARGIN_PX):
     valid = ~(np.ma.getmaskarray(cols) | np.ma.getmaskarray(rows))
     cols, rows = np.ma.getdata(cols)[valid], np.ma.getdata(rows)[valid]
     if cols.size == 0:
-        raise SatpyRenderError("Region liegt außerhalb des Satelliten-Sichtbereichs")
+        raise SatpyRenderError("Region is outside the satellite's field of view")
     height, width = source_area.shape
     return (
         slice(max(int(rows.min()) - margin, 0), min(int(rows.max()) + margin + 1, height)),
@@ -91,10 +89,10 @@ def target_area(request: RenderRequest):
 
 
 def _crop_to(data, target):
-    """Schneidet einen Datensatz auf das Fenster um die Zielregion zu.
+    """Crops a dataset to the window around the target region.
 
-    Das Fenster wird je Datensatz aus dessen eigener Area berechnet, damit
-    Kanäle unterschiedlicher Auflösung (HRV ~1 km, übrige ~3 km) passen.
+    The window is computed per dataset from its own area so that channels
+    of different resolution (HRV ~1 km, others ~3 km) fit.
     """
     rows, cols = source_window(data.attrs["area"], target)
     cropped = data[..., rows, cols]
@@ -115,22 +113,22 @@ def _annotate(image, text: str):
 
 
 def render_png(request: RenderRequest) -> tuple[bytes, datetime]:
-    """Rendert das Komposit für die Region und liefert (PNG, Aufnahmeende)."""
+    """Renders the composite for the region and returns (PNG, sensing end)."""
     warnings.filterwarnings("ignore")
     import dask
 
     if request.reader in SINGLE_THREADED_READERS:
         dask.config.set(scheduler="synchronous")
     else:
-        # Zwei Threads: genug für den Pi 5, ohne Grafana auszubremsen.
+        # Two threads: enough on small hosts (e.g. Raspberry Pi 5) without starving other services.
         dask.config.set(scheduler="threads", num_workers=2)
     import satpy
     from satpy import Scene
 
     satpy.config.set(config_path=[str(SATPY_CONFIG_DIR)])
-    # fill_disk: HRV liegt im Full Disk (0°) sonst als zwei gestapelte
-    # Fenster vor (StackedAreaDefinition) - daran scheitern Zuschnitt und
-    # sunz_corrected. Aufgefüllt wird lazy, der Zuschnitt lädt nur das Fenster.
+    # fill_disk: otherwise HRV in the full disk (0°) comes as two stacked
+    # windows (StackedAreaDefinition) - cropping and sunz_corrected fail on
+    # that. Filling is lazy, the crop only loads the window.
     scene = Scene(
         reader=request.reader,
         filenames=list(request.filenames),
@@ -141,17 +139,17 @@ def render_png(request: RenderRequest) -> tuple[bytes, datetime]:
     }
     if request.composite not in available:
         raise SatpyRenderError(
-            f"Komposit '{request.composite}' ist für {request.reader} nicht verfügbar"
+            f"Composite '{request.composite}' is not available for {request.reader}"
         )
-    # Komposite aus Kanälen unterschiedlicher Auflösung (z. B. HRV + VIS)
-    # erzeugt Satpy erst beim Resampling; bis dahin liegen nur die Kanäle vor.
+    # Satpy only generates composites of channels with different resolution
+    # (e.g. HRV + VIS) during resampling; until then only the channels exist.
     scene.load([request.composite], generate=False)
     area = target_area(request)
     for key in list(scene.keys()):
         scene._datasets[key] = _crop_to(scene[key], area)
     local = scene.resample(area, resampler="nearest", reduce_data=False)
     if request.composite not in local:
-        raise SatpyRenderError(f"Komposit '{request.composite}' konnte nicht erzeugt werden")
+        raise SatpyRenderError(f"Composite '{request.composite}' could not be generated")
     data = local[request.composite]
 
     from satpy.writers import get_enhanced_image
@@ -171,14 +169,14 @@ def render_png(request: RenderRequest) -> tuple[bytes, datetime]:
 def _worker(request: RenderRequest, connection) -> None:
     try:
         connection.send(("ok", render_png(request)))
-    except Exception as exc:  # an den Elternprozess durchreichen
+    except Exception as exc:  # pass on to the parent process
         connection.send(("error", f"{type(exc).__name__}: {exc}"))
     finally:
         connection.close()
 
 
 class RenderProcessCrashed(SatpyRenderError):
-    """Kindprozess ist ohne Ergebnis gestorben (Signal, Speicher)."""
+    """Child process died without a result (signal, memory)."""
 
 
 def _describe_exit(exitcode: int | None) -> str:
@@ -187,9 +185,9 @@ def _describe_exit(exitcode: int | None) -> str:
             name = signal.Signals(-exitcode).name
         except ValueError:
             name = f"Signal {-exitcode}"
-        hint = ", evtl. Speicherlimit" if -exitcode == signal.SIGKILL else ""
-        return f"durch {name} beendet{hint}"
-    return f"ohne Ergebnis beendet (Exit-Code {exitcode})"
+        hint = ", possibly memory limit" if -exitcode == signal.SIGKILL else ""
+        return f"killed by {name}{hint}"
+    return f"exited without a result (exit code {exitcode})"
 
 
 def _run_once(request: RenderRequest, timeout: float):
@@ -200,13 +198,13 @@ def _run_once(request: RenderRequest, timeout: float):
     child.close()
     try:
         if not parent.poll(timeout):
-            raise SatpyRenderError(f"Rendering hat das Zeitlimit von {timeout:.0f}s überschritten")
+            raise SatpyRenderError(f"Rendering exceeded the time limit of {timeout:.0f}s")
         try:
             status, payload = parent.recv()
         except EOFError as exc:
             process.join(timeout=5)
             raise RenderProcessCrashed(
-                f"Render-Prozess {_describe_exit(process.exitcode)}"
+                f"Render process {_describe_exit(process.exitcode)}"
             ) from exc
     finally:
         process.join(timeout=5)
@@ -222,14 +220,14 @@ def _run_once(request: RenderRequest, timeout: float):
 def render_in_subprocess(
     request: RenderRequest, timeout: float = RENDER_TIMEOUT_SECONDS, retries: int = 1
 ):
-    """Rendert im Kindprozess; stirbt dieser ohne Ergebnis, wird neu versucht."""
+    """Renders in a child process; retries if it dies without a result."""
     for attempt in range(retries + 1):
         try:
             return _run_once(request, timeout)
         except RenderProcessCrashed as exc:
             if attempt >= retries:
                 raise
-            logger.warning("%s - neuer Versuch", exc)
+            logger.warning("%s - retrying", exc)
 
 
 __all__ = [

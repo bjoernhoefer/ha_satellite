@@ -1,15 +1,15 @@
-"""Rohdaten-Archiv für MTG FCI: nur die benötigten Chunks je Slot.
+"""Raw data archive for MTG FCI: only the required chunks per slot.
 
-Ein FCI-Slot (alle 10 Minuten) besteht aus 40 Streifen ("Chunks") der
-Vollscheibe, nummeriert von Süd (1) nach Nord (40), zusammen ~1 GB. Für
-Europa reichen die Chunks ~32-40 (~180 MB). Diese werden je Slot unter
-``<Speicherort>/_archive/<Collection>/<Slot>/`` abgelegt und für
-``retention_hours`` aufbewahrt, sodass Regionen und Komposite auch
-nachträglich gerendert werden können (auch für neu angelegte Regionen).
+An FCI slot (every 10 minutes) consists of 40 stripes ("chunks") of the
+full disk, numbered from south (1) to north (40), ~1 GB in total. For
+Europe chunks ~32-40 (~180 MB) are enough. They are stored per slot under
+``<storage location>/_archive/<collection>/<slot>/`` and kept for
+``retention_hours``, so regions and composites can also be rendered
+afterwards (including newly created regions).
 
-Welche Chunks eine Region braucht, ergibt sich aus der Geometrie: die
-Bounding Box wird in die geostationäre Projektion (Satellit über 0°)
-umgerechnet, die Zeilen des 2-km-Grids (5568 Zeilen) bestimmen den Chunk.
+Which chunks a region needs follows from the geometry: the bounding box is
+transformed into the geostationary projection (satellite over 0°), and the
+rows of the 2 km grid (5568 rows) determine the chunk.
 """
 
 from __future__ import annotations
@@ -41,7 +41,7 @@ RENDERS_SUBDIR = "renders"
 SLOT_FORMAT = "%Y%m%dT%H%M%SZ"
 SEARCH_WINDOW = timedelta(hours=2)
 
-# Geostationäre Projektion (CGMS/PROJ "geos", sweep=y) für MTG über 0°.
+# Geostationary projection (CGMS/PROJ "geos", sweep=y) for MTG over 0°.
 _SAT_HEIGHT = 35_786_400.0
 _A = 6_378_137.0
 _B = 6_356_752.31414
@@ -53,11 +53,11 @@ _SLOT_RE = re.compile(r"^\d{8}T\d{6}Z$")
 
 
 class ArchiveError(Exception):
-    """Fehler beim Zugriff auf den Data Store oder das Archiv."""
+    """Error accessing the Data Store or the archive."""
 
 
 def _geos_y(lat: float, lon: float, lon_0: float = 0.0) -> float | None:
-    """Nord-Süd-Koordinate (m) in der geos-Projektion; None = nicht sichtbar."""
+    """North-south coordinate (m) in the geos projection; None = not visible."""
     phi, lam = math.radians(lat), math.radians(lon - lon_0)
     radius_p, radius_g = _B / _A, 1.0 + _SAT_HEIGHT / _A
     lat_c = math.atan(radius_p * radius_p * math.tan(phi))
@@ -66,7 +66,7 @@ def _geos_y(lat: float, lon: float, lon_0: float = 0.0) -> float | None:
     vy = r * math.sin(lam) * math.cos(lat_c)
     vz = r * math.sin(lat_c)
     tmp = radius_g - vx
-    # Punkt liegt auf der vom Satelliten abgewandten Seite der Erde.
+    # Point lies on the side of the Earth facing away from the satellite.
     if (tmp * vx - vy * vy - vz * vz * (1.0 / (radius_p * radius_p))) < 0:
         return None
     return _SAT_HEIGHT * math.atan(vz / math.hypot(vy, tmp))
@@ -79,7 +79,7 @@ def chunk_for_y(y: float) -> int:
 
 
 def chunks_for_region(region: RegionConfig) -> set[int]:
-    """Chunks, die die Bounding Box der Region abdecken (leer = nicht sichtbar)."""
+    """Chunks covering the region's bounding box (empty = not visible)."""
     bbox = region.bounding_box()
     ys: list[float] = []
     steps = 24
@@ -96,7 +96,7 @@ def chunks_for_region(region: RegionConfig) -> set[int]:
 
 
 def wanted_chunks(config: AppConfig) -> set[int]:
-    """Konfigurierter Bereich plus alle Chunks der konfigurierten Regionen."""
+    """Configured range plus all chunks of the configured regions."""
     chunks = set(range(config.archive.chunk_min, config.archive.chunk_max + 1))
     for region in config.regions:
         chunks |= chunks_for_region(region)
@@ -175,14 +175,14 @@ class Slot:
 
 
 class FciArchive:
-    """Lädt je Slot die gewünschten Chunks und räumt nach Aufbewahrungszeit auf."""
+    """Downloads the wanted chunks per slot and cleans up after the retention time."""
 
     def __init__(self, root: Path) -> None:
         self.root = Path(root)
         self._lock = threading.Lock()
         self._status: dict[str, dict] = {}
 
-    # -- Lesen -------------------------------------------------------------
+    # -- Reading -----------------------------------------------------------
     def collection_dir(self, collection: str) -> Path:
         return self.root / _safe_name(collection)
 
@@ -201,7 +201,7 @@ class FciArchive:
             return None
 
     def slots(self, collection: str) -> list[Slot]:
-        """Alle vollständig angelegten Slots, neuester zuerst."""
+        """All completely written slots, newest first."""
         directory = self.collection_dir(collection)
         if not directory.is_dir():
             return []
@@ -229,7 +229,7 @@ class FciArchive:
         chunks: set[int],
         retention_hours: int,
     ) -> Slot:
-        """Neuesten Slot sicherstellen (fehlende Chunks laden), alte entfernen."""
+        """Ensure the newest slot (download missing chunks), remove old ones."""
         status = self._status.setdefault(collection, {})
         status["last_sync_at"] = datetime.now(timezone.utc).isoformat()
         try:
@@ -245,9 +245,9 @@ class FciArchive:
     def _sync(self, collection: str, credentials: EumetsatCredentials, chunks: set[int]) -> Slot:
         if not credentials.consumer_key or not credentials.consumer_secret:
             raise ArchiveError(
-                "Keine EUMETSAT-Zugangsdaten hinterlegt (Web-UI oder Umgebungsvariablen)"
+                "No EUMETSAT credentials configured (web UI or environment variables)"
             )
-        import eumdac  # teuer im Import, nur bei echtem Bedarf laden
+        import eumdac  # expensive import, only load when actually needed
 
         with self._lock:
             try:
@@ -260,9 +260,9 @@ class FciArchive:
                 )
                 newest = next(iter(results), None)
             except Exception as exc:
-                raise ArchiveError(f"Data-Store-Suche fehlgeschlagen: {exc}") from exc
+                raise ArchiveError(f"Data Store search failed: {exc}") from exc
             if newest is None:
-                raise ArchiveError(f"Kein Produkt in {collection} innerhalb der letzten 2 Stunden")
+                raise ArchiveError(f"No product in {collection} within the last 2 hours")
 
             product_id = str(newest)
             sensing_end = _as_utc(newest.sensing_end)
@@ -278,7 +278,7 @@ class FciArchive:
                     entries[chunk] = entry
             if entries:
                 logger.info(
-                    "FCI %s: lade Chunks %s (%s)",
+                    "FCI %s: downloading chunks %s (%s)",
                     slot.name, format_chunks(list(entries)), collection,
                 )
             slot_dir.mkdir(parents=True, exist_ok=True)
@@ -296,7 +296,7 @@ class FciArchive:
             except Exception as exc:
                 if not slot.chunk_files():
                     shutil.rmtree(slot_dir, ignore_errors=True)
-                raise ArchiveError(f"Download von {product_id} fehlgeschlagen: {exc}") from exc
+                raise ArchiveError(f"Download of {product_id} failed: {exc}") from exc
 
             meta = {
                 "product_id": product_id,
@@ -308,9 +308,9 @@ class FciArchive:
             tmp.rename(slot_dir / META_FILENAME)
             return slot
 
-    # -- Aufräumen ---------------------------------------------------------
+    # -- Cleanup -----------------------------------------------------------
     def prune(self, collection: str, retention_hours: int) -> int:
-        """Löscht Slots älter als die Aufbewahrungszeit; der neueste bleibt."""
+        """Deletes slots older than the retention time; the newest one is kept."""
         slots = self.slots(collection)
         if not slots:
             return 0
@@ -321,11 +321,11 @@ class FciArchive:
                 shutil.rmtree(slot.path, ignore_errors=True)
                 removed += 1
         if removed:
-            logger.info("FCI-Archiv %s: %d alte Slots entfernt", collection, removed)
+            logger.info("FCI archive %s: removed %d old slots", collection, removed)
         return removed
 
     def prune_all(self, retention_hours: int) -> int:
-        """Alle Collections im Archiv aufräumen (auch nicht mehr konfigurierte)."""
+        """Clean up all collections in the archive (including no longer configured ones)."""
         if not self.root.is_dir():
             return 0
         return sum(
@@ -341,7 +341,7 @@ class FciArchive:
 
 
 def render_cache_path(slot: Slot, region: RegionConfig, composite: str) -> Path:
-    """Cache-Datei für ein bei Bedarf gerendertes Bild (fällt mit dem Slot weg)."""
+    """Cache file for an on-demand rendered image (removed together with the slot)."""
     geometry = f"{region.lat}|{region.lon}|{region.radius_km}|{region.width}|{region.height}"
     if region.borders:
         geometry += "|borders"

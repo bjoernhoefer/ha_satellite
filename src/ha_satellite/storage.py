@@ -1,12 +1,12 @@
-"""Speicherort der Frames: Kandidaten, Prüfung, Warnungen.
+"""Frame storage location: candidates, checks, warnings.
 
-Im Container sind nur Pfade persistent, die als Volume eingehängt sind.
-``docker-compose.yml`` hängt dafür ``/mnt`` des Hosts unter ``/mnt`` ein -
-so lassen sich z. B. ``/mnt/data`` oder ``/mnt/data2`` direkt in der UI
-auswählen. Für jeden Pfad wird geprüft, ob er beschreibbar ist, wie viel
-Platz frei ist und ob er auf demselben Datenträger wie ``/data`` (in der
-Regel die System-Disk des Hosts) oder gar nur im Container-Dateisystem
-liegt (geht bei Neuerstellung des Containers verloren).
+Inside the container only paths mounted as volumes are persistent.
+``docker-compose.yml`` therefore mounts the host's ``/mnt`` at ``/mnt`` -
+so e.g. ``/mnt/data`` or ``/mnt/data2`` can be picked directly in the UI.
+For each path we check whether it is writable, how much space is free and
+whether it lives on the same disk as ``/data`` (usually the host's system
+disk) or only in the container filesystem (lost when the container is
+recreated).
 """
 
 from __future__ import annotations
@@ -50,7 +50,7 @@ def _is_writable(path: Path) -> bool:
 
 
 def describe(path: Path, data_dir: Path) -> dict:
-    """Beschreibt einen (möglicherweise noch nicht existierenden) Pfad."""
+    """Describe a (possibly not yet existing) path."""
     anchor = _existing_ancestor(path)
     info: dict = {
         "path": str(path),
@@ -75,18 +75,18 @@ def describe(path: Path, data_dir: Path) -> dict:
     if device is not None and device == data_device:
         info["same_disk_as_data"] = True
         info["warnings"].append(
-            f"Gleicher Datenträger wie {data_dir} (in der Regel die System-Disk des Hosts)"
+            f"Same disk as {data_dir} (usually the host's system disk)"
         )
     elif device is not None and device == root_device and not in_data_dir:
         info["container_only"] = True
         info["warnings"].append(
-            "Liegt nur im Container-Dateisystem - nicht als Volume eingehängt, "
-            "Bilder gehen beim Neuerstellen des Containers verloren"
+            "Only in the container filesystem - not mounted as a volume, "
+            "images are lost when the container is recreated"
         )
     if not info["writable"]:
         info["warnings"].append(
-            f"Nicht beschreibbar für UID {os.getuid()} / GID {os.getgid()} "
-            "(Rechte auf dem Host bzw. PUID/PGID prüfen)"
+            f"Not writable for UID {os.getuid()} / GID {os.getgid()} "
+            "(check permissions on the host or PUID/PGID)"
         )
     return info
 
@@ -111,7 +111,7 @@ def candidates(default_dir: Path, current_dir: Path, data_dir: Path) -> list[dic
 
 
 def ensure_writable(path: Path) -> None:
-    """Legt das Verzeichnis an und prüft per Testdatei, ob Schreiben klappt."""
+    """Create the directory and verify with a test file that writing works."""
     try:
         path.mkdir(parents=True, exist_ok=True)
         probe = path / f".write-test-{uuid.uuid4().hex}"
@@ -119,9 +119,9 @@ def ensure_writable(path: Path) -> None:
         probe.unlink()
     except OSError as exc:
         raise StorageError(
-            f"Speicherort {path} ist nicht beschreibbar ({exc.strerror or exc}). "
-            f"Der Dienst läuft als UID {os.getuid()} / GID {os.getgid()} - Verzeichnis auf "
-            "dem Host anlegen und Rechte anpassen bzw. PUID/PGID im Compose setzen."
+            f"Storage location {path} is not writable ({exc.strerror or exc}). "
+            f"The service runs as UID {os.getuid()} / GID {os.getgid()} - create the directory "
+            "on the host and adjust permissions, or set PUID/PGID in Compose."
         ) from exc
 
 

@@ -20,8 +20,8 @@ def test_bounding_box_widens_longitude_at_higher_latitude():
     lon_span_equator = bbox_equator.lon_max - bbox_equator.lon_min
     lon_span_vienna = bbox_vienna.lon_max - bbox_vienna.lon_min
 
-    # Bei gleichem Radius muss die Längengrad-Spanne mit dem Breitengrad
-    # wachsen (1 / cos(lat)).
+    # For the same radius the longitude span must grow with latitude
+    # (1 / cos(lat)).
     assert lon_span_vienna > lon_span_equator
     expected_ratio = 1 / math.cos(math.radians(48.2082))
     assert lon_span_vienna / lon_span_equator == pytest.approx(expected_ratio, rel=1e-3)

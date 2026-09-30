@@ -2,10 +2,10 @@ from importlib.resources import files
 
 
 def test_index_template_is_packaged():
-    """Das Jinja-Template muss als Package-Data mitinstalliert werden.
+    """The Jinja template must be installed as package data.
 
-    Im Container liegt nur das Wheel vor - fehlt `package-data` in der
-    pyproject.toml, laeuft `GET /` in einen TemplateNotFound-Fehler.
+    The container only has the wheel - if `package-data` is missing from
+    pyproject.toml, `GET /` fails with TemplateNotFound.
     """
     template = files("ha_satellite").joinpath("templates/index.html")
     assert template.is_file()

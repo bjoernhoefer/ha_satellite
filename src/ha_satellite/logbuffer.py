@@ -1,10 +1,9 @@
-"""In-Memory-Log für die Web-UI (``GET /api/logs``).
+"""In-memory log for the web UI (``GET /api/logs``).
 
-Ein ``logging.Handler`` hält die letzten Einträge in einem Ringpuffer. Jeder
-Eintrag bekommt eine fortlaufende ID, damit die UI per ``?after=<id>`` nur
-neue Zeilen nachladen kann. Zusätzlich wird optional in eine rotierende
-Datei unter ``<Datenverzeichnis>/logs/`` geschrieben, damit Logs einen
-Neustart überleben.
+A ``logging.Handler`` keeps the latest entries in a ring buffer. Each entry
+gets a sequential ID so the UI can fetch only new lines via ``?after=<id>``.
+Optionally, logs are also written to a rotating file under
+``<data dir>/logs/`` so they survive a restart.
 """
 
 from __future__ import annotations
@@ -18,7 +17,7 @@ from pathlib import Path
 
 LOG_FORMAT = "%(asctime)s %(levelname)-7s %(name)s: %(message)s"
 
-# Zugriffslogs würden durch das Polling der UI alles andere verdrängen.
+# Access logs from UI polling would drown out everything else.
 _IGNORED_LOGGERS = ("uvicorn.access",)
 
 
@@ -48,7 +47,7 @@ class LogBuffer(logging.Handler):
                     }
                 )
                 self._next_id += 1
-        except Exception:  # pragma: no cover - Logging darf nie crashen
+        except Exception:  # pragma: no cover - logging must never crash
             self.handleError(record)
 
     def entries(self, after: int = 0, limit: int = 500) -> list[dict]:
@@ -58,7 +57,7 @@ class LogBuffer(logging.Handler):
 
 
 def install(capacity: int = 1000, log_dir: Path | None = None) -> LogBuffer:
-    """Hängt den Puffer (und ggf. eine Logdatei) an Root- und uvicorn-Logger."""
+    """Attach the buffer (and optionally a log file) to the root and uvicorn loggers."""
     root = logging.getLogger()
     if root.level > logging.INFO or root.level == logging.NOTSET:
         root.setLevel(logging.INFO)
@@ -67,8 +66,8 @@ def install(capacity: int = 1000, log_dir: Path | None = None) -> LogBuffer:
         stream.setFormatter(logging.Formatter(LOG_FORMAT))
         root.addHandler(stream)
 
-    # APScheduler protokolliert jeden Job-Lauf auf INFO - das übertönt die
-    # eigentlichen Render-Meldungen in der UI.
+    # APScheduler logs every job run at INFO - that drowns out the actual
+    # render messages in the UI.
     logging.getLogger("apscheduler").setLevel(logging.WARNING)
 
     buffer = LogBuffer(capacity)
@@ -84,10 +83,10 @@ def install(capacity: int = 1000, log_dir: Path | None = None) -> LogBuffer:
             file_handler.addFilter(buffer.filter)
             handlers.append(file_handler)
         except OSError as exc:
-            logging.getLogger(__name__).warning("Logdatei in %s nicht möglich: %s", log_dir, exc)
+            logging.getLogger(__name__).warning("Cannot write log file in %s: %s", log_dir, exc)
 
     for handler in handlers:
         root.addHandler(handler)
-        # uvicorn.error propagiert nicht bis zum Root-Logger.
+        # uvicorn.error does not propagate to the root logger.
         logging.getLogger("uvicorn.error").addHandler(handler)
     return buffer

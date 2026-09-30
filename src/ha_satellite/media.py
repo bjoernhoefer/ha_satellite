@@ -1,13 +1,13 @@
-"""Abgeleitete Medien je Region, auf der Platte gecacht.
+"""Derived media per region, cached on disk.
 
-JPEG-Vorschaubilder (``?w=240``), JPEG in voller Größe (MJPEG-Stream) und
-die Animationen (GIF/MP4) werden einmal erzeugt und unter
-``<Region>/_cache/`` abgelegt. Der Scheduler erzeugt sie direkt nach jedem
-neuen Frame vorab (``prewarm``), sodass Betrachter, Zeitraffer und
-Home Assistant nicht auf die Umrechnung warten. Der Name einer Animation
-enthält einen Hash über die Frame-Liste und die Bildrate: jede Änderung
-ergibt eine neue Datei, die alte wird entfernt. Vorschaubilder gelöschter
-Frames räumt der Ringpuffer auf (``RingBuffer._remove_orphans``).
+JPEG thumbnails (``?w=240``), full-size JPEGs (MJPEG stream) and the
+animations (GIF/MP4) are generated once and stored under
+``<region>/_cache/``. The scheduler pre-generates them right after each new
+frame (``prewarm``) so the viewer, time-lapse and Home Assistant never wait
+for conversion. An animation's name contains a hash over the frame list and
+frame rate: every change yields a new file and the old one is removed.
+Thumbnails of deleted frames are cleaned up by the ring buffer
+(``RingBuffer._remove_orphans``).
 """
 
 from __future__ import annotations
@@ -27,8 +27,8 @@ logger = logging.getLogger(__name__)
 
 THUMB_WIDTH = 240
 ANIMATION_PREFIX = "animation-"
-# Das GIF hält alle Frames im Speicher (PIL); bei langer Historie nicht
-# automatisch erzeugen (768-MB-Limit auf dem Pi), nur auf Anfrage.
+# The GIF keeps all frames in memory (PIL); with a long history do not
+# generate it automatically (768 MB limit on the Pi), only on request.
 GIF_PREWARM_MAX_FRAMES = 60
 
 _locks: dict[Path, threading.Lock] = {}
@@ -51,7 +51,7 @@ def cache_dir(buffer: RingBuffer) -> Path:
     return buffer.region_dir / CACHE_DIRNAME
 
 
-# -- Einzelbilder ------------------------------------------------------------
+# -- Single images ------------------------------------------------------------
 def jpeg_path(buffer: RingBuffer, frame: Frame, width: int | None = None) -> Path:
     suffix = f"w{width}" if width else "full"
     return cache_dir(buffer) / f"{Path(frame.filename).stem}-{suffix}.jpg"
@@ -68,7 +68,7 @@ def _to_jpeg(png_bytes: bytes, width: int | None) -> bytes:
 
 
 def jpeg(buffer: RingBuffer, frame: Frame, width: int | None = None) -> bytes:
-    """JPEG eines Frames (optional verkleinert), gecacht."""
+    """JPEG of a frame (optionally downscaled), cached."""
     path = jpeg_path(buffer, frame, width)
     if path.exists():
         return path.read_bytes()
@@ -76,12 +76,12 @@ def jpeg(buffer: RingBuffer, frame: Frame, width: int | None = None) -> bytes:
         if path.exists():
             return path.read_bytes()
         data = _to_jpeg(frame.path(buffer.region_dir).read_bytes(), width)
-        if buffer.by_filename(frame.filename) is not None:  # nicht inzwischen gelöscht
+        if buffer.by_filename(frame.filename) is not None:  # not deleted in the meantime
             _write_atomic(path, data)
         return data
 
 
-# -- Animationen -------------------------------------------------------------
+# -- Animations ---------------------------------------------------------------
 def _animation_path(buffer: RingBuffer, frames: list[Frame], fps: float, ext: str) -> Path:
     key = "|".join(f.filename for f in frames) + f"|{fps}"
     digest = hashlib.sha1(key.encode()).hexdigest()[:12]
@@ -109,11 +109,11 @@ def _encode_gif(images, fps: float) -> bytes:
 
 
 def _encode_mp4(images, fps: float) -> bytes:
-    import imageio.v2 as imageio  # ImportError -> Aufrufer meldet 501
+    import imageio.v2 as imageio  # ImportError -> caller returns 501
     import numpy as np
 
-    # Das FFMPEG-Plugin von imageio schreibt nur in echte Dateien, nicht in
-    # BytesIO - daher der Umweg über eine temporäre Datei.
+    # imageio's FFMPEG plugin only writes to real files, not to BytesIO -
+    # hence the detour via a temporary file.
     with tempfile.TemporaryDirectory() as tmpdir:
         target = Path(tmpdir) / "animation.mp4"
         with imageio.get_writer(
@@ -134,7 +134,7 @@ ENCODERS = {"gif": _encode_gif, "mp4": _encode_mp4}
 
 
 def animation(buffer: RingBuffer, ext: str, fps: float) -> bytes | None:
-    """Animation der Historie (älteste zuerst), gecacht; ``None`` ohne Frames."""
+    """Animation of the history (oldest first), cached; ``None`` without frames."""
     frames = list(reversed(buffer.frames_newest_first()))
     if not frames:
         return None
@@ -150,14 +150,14 @@ def animation(buffer: RingBuffer, ext: str, fps: float) -> bytes | None:
             if old != path:
                 old.unlink(missing_ok=True)
         logger.info(
-            "Animation %s für %s erzeugt (%d Frames, %d KB)",
+            "Animation %s for %s created (%d frames, %d KB)",
             ext.upper(), buffer.region_dir.name, len(frames), len(data) // 1024,
         )
         return data
 
 
 def prewarm(buffer: RingBuffer, fps: float) -> None:
-    """Nach einem neuen Frame: Vorschaubild, JPEG und Animationen erzeugen."""
+    """After a new frame: generate thumbnail, JPEG and animations."""
     latest = buffer.latest()
     if latest is None:
         return
@@ -168,4 +168,4 @@ def prewarm(buffer: RingBuffer, fps: float) -> None:
     try:
         animation(buffer, "mp4", fps)
     except ImportError:
-        logger.debug("MP4 übersprungen: imageio-ffmpeg fehlt")
+        logger.debug("MP4 skipped: imageio-ffmpeg missing")
