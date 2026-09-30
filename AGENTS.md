@@ -218,15 +218,15 @@ docker compose up -d
 - **Image:** a multi-arch image (`linux/amd64`, `linux/arm64`) is built by
   `.github/workflows/build.yml` and pushed to
   `ghcr.io/bjoernhoefer/ha_satellite` on every push to `main` and on tags.
-  The GHCR package is public, so hosts (and Watchtower) pull without
-  credentials.
+  Private package: hosts (and Watchtower) need `docker login ghcr.io` and
+  Watchtower must mount `~/.docker/config.json` as `/config.json:ro`.
 - **Auto updates:** `docker-compose.yml` includes an optional `watchtower`
   service (`containrrr/watchtower`). It only updates containers labelled
   `com.centurylinklabs.watchtower.enable=true`, polls every
   `WATCHTOWER_POLL_INTERVAL` seconds (default `3600`) and runs with
-  `--cleanup`. Other containers on the host are not touched. Container
-  name `ha_satellite_watchtower`; to disable auto updates, remove the
-  `watchtower` service.
+  `--cleanup`. Other containers on the host are not touched. Opt-in via
+  `docker compose --profile watchtower up -d` (container
+  `ha_satellite_watchtower`); skip it if the host already runs Watchtower.
 - **Compose `.env` variables:** `HOST_DATA_DIR` (host data directory,
   default `./data`), `HA_SATELLITE_TAG` (image tag, default `latest`; pin
   e.g. `1.0` to stay on a minor line), `HA_SATELLITE_PORT` (default `6060`),

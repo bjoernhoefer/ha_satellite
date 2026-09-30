@@ -80,14 +80,18 @@ updates, `docker compose pull` / `up -d` and container recreation.
 updates containers labelled `com.centurylinklabs.watchtower.enable=true`
 (the `ha_satellite` service carries this label; other containers on the
 host are left alone), checks every `WATCHTOWER_POLL_INTERVAL` seconds
-(default `3600`) and removes old images (`--cleanup`). If you do not want
-automatic updates, remove the `watchtower` service from `docker-compose.yml`
-(container name `ha_satellite_watchtower`).
+(default `3600`) and removes old images (`--cleanup`). It is opt-in via a
+Compose profile: `docker compose --profile watchtower up -d`.
+
+If the host **already runs Watchtower**, do not start a second one - the
+existing instance updates `ha_satellite` too. If the package is private,
+it needs the registry login: mount the host's `~/.docker/config.json` into
+it as `/config.json:ro` (after `docker login ghcr.io` on the host).
 
 GitHub Actions (`.github/workflows/build.yml`) builds a multi-arch image
 (`linux/amd64`, `linux/arm64`) and publishes it to GHCR on every push to
-`main` and on every release tag. The GHCR package is public, so Watchtower
-can pull without credentials.
+`main` and on every release tag. Once the GHCR package is public, no
+credentials are needed at all.
 
 ### Versioning and releases
 
