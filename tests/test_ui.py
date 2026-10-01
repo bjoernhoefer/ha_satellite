@@ -65,6 +65,10 @@ def test_page_shows_all_core_sections(ui):
         "region-borders-wien",
         "api-region",
         "api-link-latest",
+        "location-add",
+        "location-count",
+        "location-edit-wien",
+        "location-remove-wien",
     ):
         expect(ui.get_by_test_id(testid)).to_be_visible()
     expect(ui.get_by_test_id("consumer-key")).to_be_editable()
@@ -942,3 +946,251 @@ def test_page_is_english(ui):
     text = ui.locator("body").inner_text()
     for word in (" und ", "Speichern", "Einstellungen", "Bild ", "Aktualisieren", "Quelle", "ä", "ö", "ü", "ß"):
         assert word not in text, f"German text found: {word!r}"
+
+
+# --- Locations on the map of Europe (location_change) -------------------------
+
+# Map extent (lon_min, lat_min, lon_max, lat_max), see location_change.EUROPE_EXTENT.
+_EXTENT = (-25.0, 33.0, 45.0, 72.0)
+
+
+def _map_point(page, lat: float, lon: float) -> tuple[float, float]:
+    """Screen coordinates of lat/lon on the (possibly zoomed) location map."""
+    box = page.evaluate(
+        "() => { const r = document.querySelector('[data-testid=\"location-canvas\"]').getBoundingClientRect();"
+        " return { x: r.left, y: r.top, w: r.width, h: r.height }; }"
+    )
+    lon_min, lat_min, lon_max, lat_max = _EXTENT
+    return (
+        box["x"] + (lon - lon_min) / (lon_max - lon_min) * box["w"],
+        box["y"] + (lat_max - lat) / (lat_max - lat_min) * box["h"],
+    )
+
+
+def _picked(page) -> tuple[float, float]:
+    return (
+        float(page.get_by_test_id("location-lat").input_value()),
+        float(page.get_by_test_id("location-lon").input_value()),
+    )
+
+
+def test_add_location_by_clicking_on_the_map(ui, live_server):
+    expect(ui.get_by_test_id("location-count")).to_contain_text("2 of max. 4")
+    ui.get_by_test_id("location-add").click()
+    editor = ui.get_by_test_id("location-editor")
+    expect(editor).to_be_visible()
+    expect(ui.get_by_test_id("location-title")).to_have_text("Add location")
+    _image_loaded(ui, "location-map-image")
+    assert "outline.png" in ui.get_by_test_id("location-map-image").get_attribute("src")
+    # Existing locations are shown on the map.
+    expect(ui.get_by_test_id("location-box-wien")).to_be_visible()
+    expect(ui.get_by_test_id("location-box-mallorca")).to_be_visible()
+    expect(ui.get_by_test_id("location-selection")).to_be_hidden()
+
+    # Saving without a centre explains what is missing.
+    ui.get_by_test_id("location-save").click()
+    expect(ui.get_by_test_id("location-message")).to_contain_text("Mark the centre")
+
+    # Zoom in towards Berlin, then click exactly on it.
+    x, y = _map_point(ui, 52.52, 13.405)
+    ui.mouse.move(x, y)
+    ui.mouse.wheel(0, -300)
+    ui.mouse.wheel(0, -300)
+    assert float(editor.get_attribute("data-zoom")) > 1.4
+    x, y = _map_point(ui, 52.52, 13.405)
+    ui.mouse.click(x, y)
+    lat, lon = _picked(ui)
+    assert abs(lat - 52.52) < 0.1 and abs(lon - 13.405) < 0.1
+    expect(ui.get_by_test_id("location-selection")).to_be_visible()
+    expect(ui.get_by_test_id("location-marker")).to_be_visible()
+
+    ui.get_by_test_id("location-name").fill("berlin")
+    ui.get_by_test_id("location-radius").fill("200")
+    expect(ui.get_by_test_id("location-radius-range")).to_have_value("200")
+    expect(ui.get_by_test_id("location-selection")).to_contain_text("berlin · 200 km")
+    ui.get_by_test_id("location-save").click()
+
+    # Page reloads with the new location card; it renders immediately.
+    expect(ui.get_by_test_id("region-berlin")).to_be_visible()
+    expect(editor).to_be_hidden()
+    expect(ui.get_by_test_id("location-count")).to_contain_text("3 of max. 4")
+    berlin = next(r for r in _stored(live_server)["regions"] if r["name"] == "berlin")
+    assert abs(berlin["lat"] - 52.52) < 0.1 and abs(berlin["lon"] - 13.405) < 0.1
+    assert berlin["radius_km"] == 200
+    expect(ui.get_by_test_id("region-position-berlin")).to_contain_text("200.0 km")
+    live_server.ensure_frames("berlin", 1)
+
+
+def test_location_entered_as_lat_lon_and_errors_are_shown(ui, live_server):
+    ui.get_by_test_id("location-add").click()
+    ui.get_by_test_id("location-name").fill("wien")  # already exists
+    ui.get_by_test_id("location-lat").fill("47.07")
+    ui.get_by_test_id("location-lon").fill("15.44")
+    expect(ui.get_by_test_id("location-selection")).to_be_visible()
+    ui.get_by_test_id("location-save").click()
+    expect(ui.get_by_test_id("location-message")).to_contain_text("already exists")
+    ui.get_by_test_id("location-name").fill("graz")
+    ui.get_by_test_id("location-save").click()
+    expect(ui.get_by_test_id("region-graz")).to_be_visible()
+    graz = next(r for r in _stored(live_server)["regions"] if r["name"] == "graz")
+    assert (graz["lat"], graz["lon"], graz["radius_km"]) == (47.07, 15.44, 300.0)
+
+
+def test_at_most_four_locations_in_the_ui(ui, live_server):
+    for name, lat, lon in (("berlin", 52.5, 13.4), ("rome", 41.9, 12.5)):
+        response = ui.request.post(
+            live_server.url + "/api/regions", data={"name": name, "lat": lat, "lon": lon}
+        )
+        assert response.ok
+    ui.reload()
+    expect(ui.get_by_test_id("location-count")).to_contain_text("4 of max. 4")
+    expect(ui.get_by_test_id("location-add")).to_be_disabled()
+    expect(ui.get_by_test_id("location-limit")).to_be_visible()
+    # Deep link to "new" does not open the editor at the limit.
+    ui.goto(live_server.url + "/#location=new")
+    ui.wait_for_timeout(500)
+    expect(ui.get_by_test_id("location-editor")).to_be_hidden()
+
+    ui.once("dialog", lambda dialog: dialog.accept())
+    ui.get_by_test_id("location-remove-rome").click()
+    expect(ui.get_by_test_id("region-rome")).to_have_count(0)
+    expect(ui.get_by_test_id("location-add")).to_be_enabled()
+    expect(ui.get_by_test_id("location-limit")).to_be_hidden()
+    assert "rome" not in [r["name"] for r in _stored(live_server)["regions"]]
+
+
+def test_remove_can_be_cancelled(ui, live_server):
+    ui.once("dialog", lambda dialog: dialog.dismiss())
+    ui.get_by_test_id("location-remove-mallorca").click()
+    ui.wait_for_timeout(300)
+    expect(ui.get_by_test_id("region-mallorca")).to_be_visible()
+    assert "mallorca" in [r["name"] for r in _stored(live_server)["regions"]]
+
+
+def test_change_location_moves_region_and_resets_history(ui, live_server):
+    before = {f["filename"] for f in live_server.ensure_frames("wien", 2)}
+    ui.get_by_test_id("location-edit-wien").click()
+    expect(ui.get_by_test_id("location-title")).to_have_text("Change location: wien")
+    expect(ui.get_by_test_id("location-name")).to_be_hidden()
+    assert _picked(ui) == (48.2082, 16.3738)
+    expect(ui.get_by_test_id("location-selection")).to_be_visible()
+    expect(ui.get_by_test_id("location-box-wien")).to_have_count(0)  # it is the selection
+    expect(ui.get_by_test_id("location-box-mallorca")).to_be_visible()
+
+    # Move to Salzburg by clicking on the map, smaller radius via the slider.
+    _image_loaded(ui, "location-map-image")
+    x, y = _map_point(ui, 47.8, 13.04)
+    ui.mouse.click(x, y)
+    ui.get_by_test_id("location-radius-range").fill("150")
+    expect(ui.get_by_test_id("location-radius")).to_have_value("150")
+    ui.get_by_test_id("location-save").click()
+
+    expect(ui.get_by_test_id("location-editor")).to_be_hidden()
+    expect(ui.get_by_test_id("region-position-wien")).to_contain_text("150.0 km")
+    wien = next(r for r in _stored(live_server)["regions"] if r["name"] == "wien")
+    assert abs(wien["lat"] - 47.8) < 0.15 and abs(wien["lon"] - 13.04) < 0.15
+    assert wien["radius_km"] == 150
+    # The old history is dropped, the new location renders right away.
+    frames = live_server.ensure_frames("wien", 1)
+    assert not {f["filename"] for f in frames} & before
+
+
+def test_location_map_zoom_pan_and_cancel(ui, live_server):
+    ui.get_by_test_id("location-edit-mallorca").click()
+    editor = ui.get_by_test_id("location-editor")
+    _image_loaded(ui, "location-map-image")
+    assert editor.get_attribute("data-zoom") == "1.00"
+    ui.get_by_test_id("location-zoom-in").click()
+    ui.get_by_test_id("location-zoom-in").click()
+    assert float(editor.get_attribute("data-zoom")) > 2
+    # Dragging pans the map and does not move the location.
+    before = ui.get_by_test_id("location-canvas").bounding_box()
+    stage = ui.get_by_test_id("location-map").bounding_box()
+    cx, cy = stage["x"] + stage["width"] / 2, stage["y"] + stage["height"] / 2
+    ui.mouse.move(cx, cy)
+    ui.mouse.down()
+    ui.mouse.move(cx + 80, cy + 40, steps=5)
+    ui.mouse.up()
+    after = ui.get_by_test_id("location-canvas").bounding_box()
+    assert abs(after["x"] - before["x"] - 80) < 2 and abs(after["y"] - before["y"] - 40) < 2
+    assert _picked(ui) == (39.6953, 3.0176)
+    # A click after zooming and panning still hits the right place.
+    canvas = ui.get_by_test_id("location-canvas").bounding_box()
+    x, y = cx + 30, cy - 20
+    lon_min, lat_min, lon_max, lat_max = _EXTENT
+    expected_lon = lon_min + (x - canvas["x"]) / canvas["width"] * (lon_max - lon_min)
+    expected_lat = lat_max - (y - canvas["y"]) / canvas["height"] * (lat_max - lat_min)
+    ui.mouse.click(x, y)
+    lat, lon = _picked(ui)
+    assert abs(lat - expected_lat) < 0.05 and abs(lon - expected_lon) < 0.05
+    ui.get_by_test_id("location-zoom-out").click()
+    ui.get_by_test_id("location-zoom-reset").click()
+    assert editor.get_attribute("data-zoom") == "1.00"
+
+    # Esc/cancel discards the change.
+    ui.keyboard.press("Escape")
+    expect(editor).to_be_hidden()
+    mallorca = next(r for r in _stored(live_server)["regions"] if r["name"] == "mallorca")
+    assert (mallorca["lat"], mallorca["lon"]) == (39.6953, 3.0176)
+
+
+def test_satellite_map_is_rendered_on_demand_and_errors_are_shown(ui):
+    ui.get_by_test_id("location-add").click()
+    background = ui.get_by_test_id("location-background")
+    expect(background).to_have_value("outline")
+    expect(ui.get_by_test_id("location-satellite-info")).to_contain_text("not loaded yet")
+    # Test server has no EUMETSAT credentials: the download fails cleanly.
+    ui.get_by_test_id("location-satellite-render").click()
+    expect(ui.get_by_test_id("location-message")).to_contain_text("Satellite map failed")
+    expect(ui.get_by_test_id("location-satellite-info")).to_contain_text("not available")
+    expect(background).to_have_value("outline")
+    expect(ui.get_by_test_id("location-satellite-render")).to_be_enabled()
+
+
+def test_location_editor_on_the_phone(mobile_page, live_server):
+    page = mobile_page
+    page.goto(live_server.url + "/")
+    page.get_by_test_id("location-edit-wien").tap()
+    editor = page.get_by_test_id("location-editor")
+    expect(editor).to_be_visible()
+    _image_loaded(page, "location-map-image")
+    box = editor.bounding_box()
+    assert abs(box["width"] - 390) < 2 and abs(box["height"] - 844) < 2
+    for testid in ("location-map", "location-zoom-in", "location-close", "location-lat", "location-radius"):
+        expect(page.get_by_test_id(testid)).to_be_in_viewport()
+    assert page.evaluate("document.documentElement.scrollWidth") <= 390
+
+    page.get_by_test_id("location-zoom-in").tap()
+    assert float(editor.get_attribute("data-zoom")) > 1
+    x, y = _map_point(page, 47.07, 15.44)  # Graz
+    page.touchscreen.tap(x, y)
+    lat, lon = _picked(page)
+    assert abs(lat - 47.07) < 0.15 and abs(lon - 15.44) < 0.15
+
+    # The phone's back button closes the editor without saving.
+    page.go_back()
+    expect(editor).to_be_hidden()
+    wien = next(r for r in _stored(live_server)["regions"] if r["name"] == "wien")
+    assert wien["lat"] == 48.2082
+
+    # Save on the phone.
+    page.get_by_test_id("location-edit-wien").tap()
+    expect(page.get_by_test_id("location-lat")).to_have_value("48.2082")  # editor reset
+    _image_loaded(page, "location-map-image")
+    x, y = _map_point(page, 47.07, 15.44)
+    page.touchscreen.tap(x, y)
+    assert abs(_picked(page)[0] - 47.07) < 0.2
+    page.get_by_test_id("location-save").scroll_into_view_if_needed()
+    page.get_by_test_id("location-save").tap()
+    expect(editor).to_be_hidden()
+    wien = next(r for r in _stored(live_server)["regions"] if r["name"] == "wien")
+    assert abs(wien["lat"] - 47.07) < 0.2
+
+
+def test_location_deep_link_opens_editor(page, live_server):
+    page.goto(live_server.url + "/#location=mallorca")
+    expect(page.get_by_test_id("location-editor")).to_be_visible()
+    expect(page.get_by_test_id("location-title")).to_have_text("Change location: mallorca")
+    page.get_by_test_id("location-close").click()
+    expect(page.get_by_test_id("location-editor")).to_be_hidden()
+    assert "location=" not in page.url

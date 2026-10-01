@@ -36,7 +36,10 @@ src/ha_satellite/
   config.py       Configuration model (Pydantic) + YAML persistence + env override,
                    source catalogue, storage location, history
   geometry.py      Bounding box computation from centre + radius
-  overlay.py       Country border overlay (Natural Earth 1:10m, overlay_data/)
+  overlay.py       Country border overlay (Natural Earth 1:10m, overlay_data/),
+                   for region squares (LAEA) and the lon/lat map of Europe
+  location_change.py  Locations (max. 4): map of Europe (outline + on-demand
+                   satellite background), add/move/remove, history reset
   buffer.py        Ring buffer (frames per region, cleanup, storage limit, move)
   status.py        Status store (last/next run, errors, frame count)
   scheduler.py     APScheduler jobs (non-blocking): download per source at its
@@ -199,6 +202,41 @@ row in the 2 km grid; tested against pyproj). Storage:
   an FCI counterpart (`FCI_COMPOSITE_ALIASES`); the UI picks a matching
   image type when the source changes.
 
+### Locations and the map of Europe (location_change)
+
+A location is a region: centre in plain WGS84 lat/lon + radius in km (no
+satellite pixel/line numbers). At most `MAX_LOCATIONS` = **4** — enforced
+by `POST /api/regions` and by every configuration save
+(`location_change.check_locations`; an existing configuration with more
+regions stays loadable but cannot grow). New names: `[A-Za-z0-9][A-Za-z0-9_-]{0,31}`;
+radius 25–2000 km. A new location takes the source of the first existing
+one and that driver's default image type.
+
+The editor (button "+ Add location" / "📍 Change location", deep link
+`#location=<name|new>`) shows a zoomable map of Europe
+(`EUROPE_EXTENT` = 25° W–45° E, 33–72° N, 1400×1281 px). It is a plain
+lon/lat grid (plate carrée, pixel aspect for ~52° N), so pixel ↔ lat/lon is
+linear in the browser; the marked square is `geometry.bounding_box`.
+Backgrounds:
+
+- **outline** (`/location-map/outline.png`, generated, always available):
+  Natural Earth 1:50m land (`overlay_data/europe_land_50m.json.gz`, ~33 KB,
+  regenerate with `scripts/build_europe_land.py`) + country borders and
+  Austrian states via `overlay.draw_borders_lonlat` (same style as
+  `draw_borders`, 2× supersampling for memory).
+- **satellite** (`POST /api/location-map/satellite`, button "🛰 Load current
+  satellite map"): rendered on demand under the global render lock from the
+  newest MSG SEVIRI product (downloaded if not cached; source =
+  `location_change.map_source`) with composite
+  `natural_color_raw_with_night_ir` (~3 km — HRV for all of Europe would
+  exceed the memory limit) via `RenderRequest.lonlat_extent`; stored as
+  JPEG in `<data>/location_map/` until rendered again.
+
+Moving (lat/lon/radius/size changed) or removing a location drops its ring
+buffer (`BufferManager.drop`, under the render lock) — the history must not
+mix cut-outs, and the new cut-out renders immediately instead of waiting
+for the next scan (`NoNewData` would otherwise apply).
+
 ## ARM64 build decision
 
 ARM64 hosts (e.g. Raspberry Pi 5) are a primary target. Satpy's
@@ -265,7 +303,7 @@ docker compose up -d
 
 - Semantic version in `src/ha_satellite/__init__.py` (`__version__`) and
   `pyproject.toml`; both must match (`tests/test_version.py`). Current:
-  **1.0.0**.
+  **1.2.0**.
 - Shown in the web UI footer and returned by `GET /api/version`.
 - Releases are git tags `vX.Y.Z`; CI builds them into the image tags
   `X.Y.Z`, `X.Y` and `latest`.
@@ -354,6 +392,13 @@ FCI archive stays PNG.
 | `POST /api/config` | Save configuration (merged onto stored values; empty or masked secret = unchanged) |
 | `GET /api/version` | Running version (`__version__`) |
 | `GET /api/status` | Last/next run, frame count, age, errors per region |
+| `POST /api/regions` | Add a location (`name`, `lat`, `lon`, `radius_km`; max. 4) |
+| `PUT /api/regions/{region}` | Move a location (`lat`, `lon`, `radius_km`); resets its history |
+| `DELETE /api/regions/{region}` | Remove a location and its history |
+| `GET /api/location-map` | Map of Europe: extent, size, limit, locations, satellite background status |
+| `GET /location-map/outline.png` | Map of Europe (land, sea, borders) |
+| `GET /location-map/satellite.jpg` | Satellite background (after rendering) |
+| `POST /api/location-map/satellite` | Render the satellite background now (downloads the newest product if needed) |
 | `POST /api/regions/{region}/refresh` | Immediate render run ("Refresh now") |
 | `GET /api/regions/{region}/frames` | History: frames in the buffer (newest first) with stable URLs |
 | `GET /api/sources` | Source catalogue, result of the last sync, cycle/download status per source (`downloads`) |
@@ -411,7 +456,7 @@ move, no horizontal scrolling on phones, change image type/source per
 region (re-renders without another click), toggle country borders per
 region (desktop + phone), archive viewer (source and image type select,
 paging, format switch, deep link `#archive=…&s=…&c=…&f=…`, desktop +
-phone), archive settings and "Archive all now", show cycle per source and change it via JSON
+phone), archive settings and "Archive all now", locations on the map of Europe (add by clicking on the zoomed map, enter lat/lon, change incl. history reset, remove/cancel, limit of 4, zoom/pan, satellite background error, deep link, desktop + phone), show cycle per source and change it via JSON
 (desktop + phone), placeholder sources marked, API links follow the
 selected region and are clickable, version shown in the footer.
 Selectors use `data-testid` exclusively — markup and styling may change

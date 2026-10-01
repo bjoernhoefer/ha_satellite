@@ -3,6 +3,38 @@
 All notable changes to this project are documented in this file.
 The project follows [Semantic Versioning](https://semver.org/).
 
+## [1.2.0] — 2026-10-01
+
+### Added
+
+- **Locations on a map of Europe** ("location_change"): up to 4 locations
+  can be added, moved and removed in the web UI. "+ Add location" and
+  "📍 Change location" open a zoomable map of Europe (wheel/pinch, drag,
+  +/− buttons) with land, sea and country borders in the same style as the
+  image overlay (incl. Austrian states); click/tap marks the centre, the
+  radius is set with a slider, latitude/longitude can also be typed in
+  (plain WGS84, no Meteosat pixel numbers). Other locations are shown on the
+  map. Deep link `#location=<name>` / `#location=new`.
+- On-demand satellite background for the map ("🛰 Load current satellite
+  map"): rendered from the latest MSG SEVIRI scan (downloaded if needed)
+  with country borders and cached until it is rendered again.
+- API: `POST /api/regions`, `PUT /api/regions/{region}`,
+  `DELETE /api/regions/{region}`, `GET /api/location-map`,
+  `GET /location-map/outline.png`, `GET /location-map/satellite.jpg`,
+  `POST /api/location-map/satellite`.
+- Natural Earth 1:50m land polygons for Europe
+  (`overlay_data/europe_land_50m.json.gz`, `scripts/build_europe_land.py`).
+- Unit, API, rendering and click tests (desktop and phone) for locations
+  and the map.
+
+### Changed
+
+- At most 4 locations: saving a configuration that adds a fifth region is
+  rejected (existing larger configurations remain usable); duplicate region
+  names are rejected.
+- Moving or removing a location deletes its image history, so the history
+  never mixes cut-outs and the new cut-out renders immediately.
+
 ## [1.1.0] — 2026-10-01
 
 ### Added
