@@ -653,7 +653,7 @@ def _region_dict(config: AppConfig, name: str) -> dict:
 async def add_location(payload: dict):
     """Add a location (max. ``MAX_LOCATIONS``): name, lat, lon, radius_km."""
     new_config = await _apply_location_change(location_change.add_location, payload)
-    name = str(payload.get("name")).strip()
+    name = str(payload.get("name") or "").strip()
     region = new_config.region(name)
     logger.info(
         "Location %s added: %.4f, %.4f, %.0f km (source %s)",

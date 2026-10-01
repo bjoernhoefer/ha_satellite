@@ -221,11 +221,13 @@ class BufferManager:
 
     def drop(self, region_name: str) -> None:
         """Delete all frames of a region (e.g. its location has changed)."""
-        if not region_name or region_name.startswith("_") or "/" in region_name or region_name in (".", ".."):
+        base = self.base_dir.resolve()
+        target = (self.base_dir / region_name).resolve()
+        if not region_name or region_name.startswith("_") or target.parent != base:
             raise ValueError(f"Invalid region name '{region_name}'")
         with self._lock:
             self._buffers.pop(region_name, None)
-            shutil.rmtree(self.base_dir / region_name, ignore_errors=True)
+            shutil.rmtree(target, ignore_errors=True)
 
     def relocate(self, new_base_dir: Path, move_existing: bool) -> int:
         """Change the storage location; optionally move existing frames.

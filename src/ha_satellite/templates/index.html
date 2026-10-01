@@ -1830,7 +1830,8 @@
           await api("/api/regions/" + encodeURIComponent(region), { method: "DELETE" });
           reloadToRegions();
         } catch (err) {
-          showMessage(message, "Removing failed: " + err.message, false);
+          if (message) showMessage(message, "Removing failed: " + err.message, false);
+          else alert("Removing failed: " + err.message);
         }
       }));
 
