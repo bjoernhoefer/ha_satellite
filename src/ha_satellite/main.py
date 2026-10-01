@@ -21,7 +21,7 @@ from fastapi.responses import (
 )
 from fastapi.templating import Jinja2Templates
 
-from ha_satellite import __version__, logbuffer, media, storage
+from ha_satellite import __version__, location_change, logbuffer, media, storage
 from ha_satellite.archive import RenderArchive, get_render_archive
 from ha_satellite.buffer import BufferManager
 from ha_satellite.config import (
@@ -69,6 +69,7 @@ buffer_manager = BufferManager(frames_dir_for(config_store.get()))
 status_store = StatusStore()
 source_sync = SourceSync(config_store, DATA_DIR / "source_sync.json")
 scheduler = RenderScheduler(config_store, buffer_manager, status_store, source_sync)
+satellite_map = location_change.SatelliteMap(DATA_DIR / "location_map")
 
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 
@@ -123,6 +124,7 @@ async def index(request: Request):
             "default_composites": {d: default_composite_for(d) for d in VALID_DRIVERS},
             "driver_of": {e.id: e.driver for e in config.sources.catalog},
             "placeholder_drivers": PLACEHOLDER_DRIVERS,
+            "max_locations": location_change.MAX_LOCATIONS,
             "version": __version__,
         },
     )
@@ -185,6 +187,10 @@ async def post_config(payload: dict):
 
 async def _save_config(old: AppConfig, new: AppConfig, move_existing: bool) -> int:
     """Saves the configuration; switches the storage location if needed."""
+    try:
+        location_change.check_locations(old, new)
+    except location_change.LocationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     old_dir, new_dir = frames_dir_for(old), frames_dir_for(new)
     moved = 0
     if old_dir != new_dir or buffer_manager.base_dir != new_dir:
@@ -201,7 +207,25 @@ async def _save_config(old: AppConfig, new: AppConfig, move_existing: bool) -> i
         logger.info(
             "Storage location changed: %s -> %s (%d frames moved)", old_dir, new_dir, moved
         )
-    config_store.update(new)
+    reset = location_change.reset_regions(old, new)
+    if reset:
+        # Frames of a moved (or removed) location no longer match: drop them,
+        # so the history does not mix locations and the new cut-out renders
+        # right away instead of waiting for the next scan.
+        def _apply() -> None:
+            with scheduler.exclusive():
+                for name in reset:
+                    buffer_manager.drop(name)
+                    status_store.forget(name)
+                config_store.update(new)
+
+        try:
+            await run_in_threadpool(_apply)
+        except TimeoutError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        logger.info("Location changed or removed - history reset: %s", ", ".join(reset))
+    else:
+        config_store.update(new)
     scheduler.reload()
     return moved
 
@@ -550,6 +574,111 @@ async def get_version():
 @app.get("/healthz")
 async def healthz():
     return {"status": "ok"}
+
+
+# -- Locations ("location_change") ---------------------------------------------------
+@app.get("/api/location-map")
+async def location_map_info():
+    """Map of Europe for picking locations: geometry, backgrounds, locations."""
+    config = config_store.get()
+    entry = location_change.map_source(config)
+    return {
+        **location_change.map_geometry(),
+        "max_locations": location_change.MAX_LOCATIONS,
+        "radius_km": {
+            "default": location_change.DEFAULT_RADIUS_KM,
+            "min": location_change.MIN_RADIUS_KM,
+            "max": location_change.MAX_RADIUS_KM,
+        },
+        "outline_url": "/location-map/outline.png",
+        "satellite": {**satellite_map.info(), "map_source": entry.id if entry else None},
+        "locations": [
+            {"name": r.name, "lat": r.lat, "lon": r.lon, "radius_km": r.radius_km}
+            for r in config.regions
+        ],
+    }
+
+
+@app.get("/location-map/outline.png")
+async def location_map_outline():
+    data = await run_in_threadpool(location_change.outline_png)
+    return Response(content=data, media_type="image/png", headers={"Cache-Control": "public, max-age=86400"})
+
+
+@app.get("/location-map/satellite.jpg")
+async def location_map_satellite():
+    path = satellite_map.image_path
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="No satellite map rendered yet")
+    return Response(content=path.read_bytes(), media_type="image/jpeg", headers={"Cache-Control": "no-cache"})
+
+
+@app.post("/api/location-map/satellite")
+async def location_map_render_satellite():
+    """Renders the satellite background now (downloads the newest product if needed)."""
+    config = config_store.get()
+
+    def _render() -> dict:
+        with scheduler.exclusive(timeout=ARCHIVE_RENDER_LOCK_TIMEOUT):
+            return satellite_map.render(config)
+
+    try:
+        info = await run_in_threadpool(_render)
+    except RenderError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except TimeoutError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return info
+
+
+async def _apply_location_change(change, *args) -> AppConfig:
+    stored = config_store.stored()
+    try:
+        updated = change(stored, *args)
+        new_config = AppConfig(**updated.model_dump())
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=f"Unknown location: {exc.args[0]}") from exc
+    except ValueError as exc:  # LocationError, pydantic ValidationError
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    await _save_config(stored, new_config, move_existing=False)
+    return new_config
+
+
+def _region_dict(config: AppConfig, name: str) -> dict:
+    region = config.region(name)
+    return region.model_dump() if region else {}
+
+
+@app.post("/api/regions")
+async def add_location(payload: dict):
+    """Add a location (max. ``MAX_LOCATIONS``): name, lat, lon, radius_km."""
+    new_config = await _apply_location_change(location_change.add_location, payload)
+    name = str(payload.get("name")).strip()
+    region = new_config.region(name)
+    logger.info(
+        "Location %s added: %.4f, %.4f, %.0f km (source %s)",
+        name, region.lat, region.lon, region.radius_km, region.source,
+    )
+    return _region_dict(new_config, name)
+
+
+@app.put("/api/regions/{region_name}")
+async def move_location(region_name: str, payload: dict):
+    """Change position/radius of a location (its history is reset)."""
+    new_config = await _apply_location_change(location_change.move_location, region_name, payload)
+    region = new_config.region(region_name)
+    logger.info(
+        "Location %s changed: %.4f, %.4f, %.0f km",
+        region_name, region.lat, region.lon, region.radius_km,
+    )
+    return _region_dict(new_config, region_name)
+
+
+@app.delete("/api/regions/{region_name}")
+async def remove_location(region_name: str):
+    await _apply_location_change(location_change.remove_location, region_name)
+    logger.info("Location %s removed", region_name)
+    return {"status": "removed", "region": region_name}
 
 
 @app.post("/api/regions/{region_name}/refresh")

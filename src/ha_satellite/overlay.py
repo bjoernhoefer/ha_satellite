@@ -93,21 +93,46 @@ def border_segments(
     return segments
 
 
-def draw_borders(image, lat: float, lon: float, radius_km: float):
-    """Draw state and country borders as anti-aliased hairlines."""
+def border_segments_lonlat(extent, width: int, height: int, kind: str = "lines"):
+    """Border lines as pixel polylines on a lon/lat (plate carree) map.
+
+    ``extent`` = (lon_min, lat_min, lon_max, lat_max) of the image edges.
+    Used by the location map of Europe (``location_change.py``).
+    """
+    import numpy as np
+
+    lon_min, lat_min, lon_max, lat_max = extent
+    lines, boxes = _border_lines(kind)
+    if not lines:
+        return []
+    hit = (
+        (boxes[:, 2] >= lon_min) & (boxes[:, 0] <= lon_max)
+        & (boxes[:, 3] >= lat_min) & (boxes[:, 1] <= lat_max)
+    )
+    x_scale = width / (lon_max - lon_min)
+    y_scale = height / (lat_max - lat_min)
+    return [
+        list(zip(((lines[i][:, 0] - lon_min) * x_scale).tolist(),
+                 ((lat_max - lines[i][:, 1]) * y_scale).tolist()))
+        for i in np.flatnonzero(hit)
+    ]
+
+
+def _draw_layers(image, layers, scale: int = SUPERSAMPLE):
+    """Draws (segments, color, width) layers as anti-aliased hairlines.
+
+    Line widths are given for ``SUPERSAMPLE``; a smaller ``scale`` (less
+    memory for large images) keeps the same width in target pixels.
+    """
     from PIL import Image, ImageDraw
 
-    width, height = image.size
-    layers = [
-        (border_segments(lat, lon, radius_km, width, height, "state_lines"), STATE_COLOR, STATE_WIDTH),
-        (border_segments(lat, lon, radius_km, width, height, "lines"), BORDER_COLOR, BORDER_WIDTH),
-    ]
     if not any(segments for segments, _, _ in layers):
         return image
-    scale = SUPERSAMPLE
+    width, height = image.size
     overlay = Image.new("RGBA", (width * scale, height * scale), (0, 0, 0, 0))
     draw = ImageDraw.Draw(overlay)
     for segments, color, line_width in layers:
+        line_width = max(1, round(line_width * scale / SUPERSAMPLE))
         for segment in segments:
             draw.line([(x * scale, y * scale) for x, y in segment], fill=color,
                       width=line_width, joint="curve")
@@ -116,4 +141,26 @@ def draw_borders(image, lat: float, lon: float, radius_km: float):
     return image
 
 
-__all__ = ["border_segments", "draw_borders"]
+def draw_borders(image, lat: float, lon: float, radius_km: float):
+    """Draw state and country borders as anti-aliased hairlines."""
+    width, height = image.size
+    return _draw_layers(image, [
+        (border_segments(lat, lon, radius_km, width, height, "state_lines"), STATE_COLOR, STATE_WIDTH),
+        (border_segments(lat, lon, radius_km, width, height, "lines"), BORDER_COLOR, BORDER_WIDTH),
+    ])
+
+
+def draw_borders_lonlat(image, extent, scale: int = 2):
+    """Same borders (style as ``draw_borders``) on a lon/lat map image.
+
+    ``scale`` 2 instead of 4: the Europe map is large, 4x supersampling
+    would need ~100 MB for the overlay alone.
+    """
+    width, height = image.size
+    return _draw_layers(image, [
+        (border_segments_lonlat(extent, width, height, "state_lines"), STATE_COLOR, STATE_WIDTH),
+        (border_segments_lonlat(extent, width, height, "lines"), BORDER_COLOR, BORDER_WIDTH),
+    ], scale)
+
+
+__all__ = ["border_segments", "border_segments_lonlat", "draw_borders", "draw_borders_lonlat"]
