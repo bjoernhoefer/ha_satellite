@@ -102,6 +102,35 @@
     .viewer .viewer-empty { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: #9ca3af; }
     .viewer .viewer-loading { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); background: rgba(0,0,0,.7); color: #e5e7eb; padding: 0.6rem 1rem; border-radius: 8px; pointer-events: none; }
 
+    /* Location editor (map of Europe) */
+    .location-actions button { margin-top: 0.3rem; padding: 0.3rem 0.6rem; font-size: 0.85rem; }
+    .location-editor { position: fixed; inset: 0; z-index: 1100; background: #0b1a2e; color: #fff; display: flex; flex-direction: column; height: 100vh; height: 100dvh; width: 100vw; }
+    .location-editor[hidden] { display: none; }
+    .location-head { display: flex; gap: 0.5rem; align-items: center; padding: 0.5rem 0.7rem; padding-top: max(0.5rem, env(safe-area-inset-top)); flex-wrap: wrap; }
+    .location-head h2 { flex: 1; min-width: 0; margin: 0; font-size: 1rem; }
+    .location-head button { margin: 0; background: rgba(255,255,255,.12); color: #fff; border: 1px solid rgba(255,255,255,.3); min-height: 40px; }
+    .location-body { flex: 1; display: flex; min-height: 0; }
+    .location-stage { position: relative; flex: 1; overflow: hidden; touch-action: none; user-select: none; -webkit-user-select: none; cursor: crosshair; background: #accbe4; min-height: 0; }
+    .location-stage.panning { cursor: grabbing; }
+    .location-canvas { position: absolute; left: 0; top: 0; transform-origin: 0 0; will-change: transform; }
+    .location-canvas img { width: 100%; height: 100%; display: block; pointer-events: none; }
+    .location-box { position: absolute; border: 2px dashed rgba(29,78,216,.8); background: rgba(29,78,216,.08); pointer-events: none; }
+    .location-box span { position: absolute; left: 0; top: -1.3em; font-size: 0.75rem; color: #1e3a8a; background: rgba(255,255,255,.8); padding: 0 0.25rem; border-radius: 3px; white-space: nowrap; }
+    .location-box.selection { border: 2px solid #dc2626; background: rgba(220,38,38,.12); }
+    .location-box.selection span { color: #7f1d1d; }
+    .location-marker { position: absolute; width: 14px; height: 14px; margin: -7px 0 0 -7px; border-radius: 50%; background: #dc2626; border: 2px solid #fff; pointer-events: none; }
+    .location-panel { width: 20rem; max-width: 100%; overflow-y: auto; padding: 0.6rem 0.9rem 1rem; background: #fff; color: #1f2937; }
+    .location-panel label { margin-top: 0.4rem; }
+    .location-panel .row button { margin-top: 0.5rem; }
+    .location-zoom { position: absolute; right: 0.5rem; top: 0.5rem; display: flex; gap: 0.25rem; z-index: 2; }
+    .location-zoom button { margin: 0; min-width: 40px; min-height: 40px; padding: 0.3rem 0.5rem; background: rgba(255,255,255,.9); }
+    .location-hint { position: absolute; left: 0.5rem; bottom: 0.5rem; background: rgba(0,0,0,.65); color: #fff; padding: 0.3rem 0.6rem; border-radius: 6px; font-size: 0.8rem; pointer-events: none; z-index: 2; }
+    @media (max-width: 760px) {
+      .location-body { flex-direction: column; }
+      .location-stage { flex: 1 1 55%; }
+      .location-panel { width: 100%; flex: 0 1 45%; }
+    }
+
     @media (max-width: 600px) {
       main { padding: 0.6rem; }
       section { padding: 0.8rem; }
@@ -122,12 +151,25 @@
   <main>
 
   <section id="sec-regions">
-    <h2>Regions</h2>
+    <h2>Regions <span class="muted" data-testid="location-count">({{ config.regions | length }} of max. {{ max_locations }} locations)</span></h2>
+    <div class="row" style="margin-bottom:0.6rem">
+      <button type="button" class="primary" id="location-add" data-testid="location-add" style="margin-top:0"
+              {% if config.regions | length >= max_locations %}disabled{% endif %}>+ Add location</button>
+      <span class="muted" data-testid="location-limit" {% if config.regions | length < max_locations %}hidden{% endif %}>
+        Maximum of {{ max_locations }} locations reached – remove one to add another.</span>
+    </div>
+    {% if not config.regions %}<p class="muted" data-testid="location-empty">No locations yet – add one on the map of Europe.</p>{% endif %}
     <div class="regions">
       {% for region in config.regions %}
       <div class="region-card" data-testid="region-{{ region.name }}" data-region="{{ region.name }}">
         <h3>{{ region.name }}</h3>
-        <div class="muted">{{ region.lat }}, {{ region.lon }} · {{ region.radius_km }} km · {{ region.width }}×{{ region.height }} px</div>
+        <div class="muted" data-testid="region-position-{{ region.name }}">{{ region.lat }}, {{ region.lon }} · {{ region.radius_km }} km · {{ region.width }}×{{ region.height }} px</div>
+        <div class="row location-actions">
+          <button type="button" class="location-edit" data-region="{{ region.name }}"
+                  data-testid="location-edit-{{ region.name }}">📍 Change location</button>
+          <button type="button" class="location-remove" data-region="{{ region.name }}"
+                  data-testid="location-remove-{{ region.name }}">🗑 Remove</button>
+        </div>
         <div class="preview-wrap" data-preview-wrap="{{ region.name }}">
           <img class="preview" src="/regions/{{ region.name }}/latest.jpg" alt="{{ region.name }} – latest image"
                role="button" tabindex="0" title="Show large"
@@ -435,8 +477,62 @@
     </div>
   </div>
 
+  <div class="location-editor" id="location-editor" data-testid="location-editor" hidden
+       role="dialog" aria-modal="true" aria-labelledby="location-title">
+    <div class="location-head">
+      <h2 id="location-title" data-testid="location-title">Add location</h2>
+      <button type="button" id="location-close" data-testid="location-close" title="Close (Esc)">✕</button>
+    </div>
+    <div class="location-body">
+      <div class="location-stage" id="location-stage" data-testid="location-map">
+        <div class="location-canvas" id="location-canvas" data-testid="location-canvas">
+          <img id="location-map-img" data-testid="location-map-image" alt="Map of Europe" draggable="false">
+          <div id="location-boxes"></div>
+          <div class="location-box selection" id="location-selection" data-testid="location-selection" hidden><span></span></div>
+          <div class="location-marker" id="location-marker" data-testid="location-marker" hidden></div>
+        </div>
+        <div class="location-zoom">
+          <button type="button" id="location-zoom-out" data-testid="location-zoom-out" title="Zoom out">−</button>
+          <button type="button" id="location-zoom-reset" data-testid="location-zoom-reset" title="Whole map">⤢</button>
+          <button type="button" id="location-zoom-in" data-testid="location-zoom-in" title="Zoom in">+</button>
+        </div>
+        <div class="location-hint" data-testid="location-hint">Click/tap to mark the centre · wheel/pinch to zoom · drag to pan</div>
+      </div>
+      <form class="location-panel" id="location-form" data-testid="location-form" novalidate>
+        <div id="location-name-wrap">
+          <label for="location-name">Name</label>
+          <input id="location-name" data-testid="location-name" maxlength="32" autocomplete="off"
+                 placeholder="e.g. vienna">
+        </div>
+        <div class="grid2" style="grid-template-columns: 1fr 1fr">
+          <div><label for="location-lat">Latitude (°N)</label>
+            <input id="location-lat" data-testid="location-lat" type="number" step="0.0001" min="-90" max="90" inputmode="decimal"></div>
+          <div><label for="location-lon">Longitude (°E)</label>
+            <input id="location-lon" data-testid="location-lon" type="number" step="0.0001" min="-180" max="180" inputmode="decimal"></div>
+        </div>
+        <label for="location-radius">Radius (km) – half the width of the image</label>
+        <input id="location-radius" data-testid="location-radius" type="number" step="5">
+        <input id="location-radius-range" data-testid="location-radius-range" type="range" step="5" aria-label="Radius">
+        <p class="muted" style="margin:0.3rem 0 0">Plain latitude/longitude (WGS84) – no Meteosat pixel or line numbers needed.</p>
+        <label for="location-background">Map background</label>
+        <select id="location-background" data-testid="location-background">
+          <option value="outline">Map (land, sea, country borders)</option>
+          <option value="satellite">Satellite image (Meteosat)</option>
+        </select>
+        <button type="button" id="location-satellite-render" data-testid="location-satellite-render">🛰 Load current satellite map</button>
+        <div class="muted" data-testid="location-satellite-info"></div>
+        <div class="message" data-testid="location-message" role="status"></div>
+        <div class="row">
+          <button type="submit" class="primary" id="location-save" data-testid="location-save">Save location</button>
+          <button type="button" id="location-cancel" data-testid="location-cancel">Cancel</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
   <script>
     const PLACEHOLDER_DRIVERS = {{ placeholder_drivers | list | tojson }};
+    const MAX_LOCATIONS = {{ max_locations | tojson }};
     const COMPOSITES_BY_DRIVER = {{ composites_by_driver | tojson }};
     const DEFAULT_COMPOSITES = {{ default_composites | tojson }};
 {% raw %}
@@ -1469,6 +1565,327 @@
     }
     window.addEventListener("popstate", applyHash);
 
+    /* ---------- Locations: map of Europe (location_change) ---------- */
+    const locEditor = document.getElementById("location-editor");
+    const locStage = document.getElementById("location-stage");
+    const locCanvas = document.getElementById("location-canvas");
+    const locImg = document.getElementById("location-map-img");
+    const locSelection = document.getElementById("location-selection");
+    const locMarker = document.getElementById("location-marker");
+    const locLat = byTestId("location-lat");
+    const locLon = byTestId("location-lon");
+    const locRadius = byTestId("location-radius");
+    const locRange = byTestId("location-radius-range");
+    const locName = byTestId("location-name");
+    const locBackground = byTestId("location-background");
+    const locMessage = byTestId("location-message");
+    const ls = { open: false, pushed: false, region: null, map: null, z: 1, x: 0, y: 0, base: { left: 0, top: 0, w: 0, h: 0 } };
+    const KM_PER_DEGREE_LAT = 111.32;
+
+    async function loadLocationMap() {
+      ls.map = await api("/api/location-map");
+      const r = ls.map.radius_km;
+      for (const input of [locRadius, locRange]) { input.min = r.min; input.max = r.max; }
+      updateSatelliteInfo();
+      return ls.map;
+    }
+    function updateSatelliteInfo() {
+      const sat = ls.map.satellite;
+      const option = locBackground.querySelector('option[value="satellite"]');
+      option.disabled = !sat.available;
+      byTestId("location-satellite-info").textContent = sat.available
+        ? "Satellite map: " + fmtTime(sat.sensing_time, true) + " (" + sat.source + ")"
+        : (sat.error ? "Satellite map not available: " + sat.error
+           : "Satellite map not loaded yet" + (sat.map_source ? " – rendered on demand from " + sat.map_source + "." : "."));
+      if (!sat.available && locBackground.value === "satellite") locBackground.value = "outline";
+    }
+    function setBackground(kind) {
+      const sat = ls.map && ls.map.satellite;
+      if (kind === "satellite" && sat && sat.available) {
+        locBackground.value = "satellite";
+        locImg.src = sat.url;
+      } else {
+        locBackground.value = "outline";
+        locImg.src = ls.map.outline_url;
+      }
+      locImg.dataset.kind = locBackground.value;
+    }
+
+    // Map geometry: plain lon/lat grid, so pixel <-> lat/lon is linear.
+    function boxPercent(lat, lon, radiusKm) {
+      const e = ls.map.extent;
+      const dLat = radiusKm / KM_PER_DEGREE_LAT;
+      const dLon = radiusKm / (KM_PER_DEGREE_LAT * Math.max(Math.abs(Math.cos(lat * Math.PI / 180)), 1e-6));
+      const lonSpan = e.lon_max - e.lon_min, latSpan = e.lat_max - e.lat_min;
+      return {
+        left: (lon - dLon - e.lon_min) / lonSpan * 100,
+        top: (e.lat_max - (lat + dLat)) / latSpan * 100,
+        width: 2 * dLon / lonSpan * 100,
+        height: 2 * dLat / latSpan * 100,
+        cx: (lon - e.lon_min) / lonSpan * 100,
+        cy: (e.lat_max - lat) / latSpan * 100,
+      };
+    }
+    function placeBox(node, lat, lon, radiusKm) {
+      const b = boxPercent(lat, lon, radiusKm);
+      Object.assign(node.style, { left: b.left + "%", top: b.top + "%", width: b.width + "%", height: b.height + "%" });
+      return b;
+    }
+    function clientToLatLon(clientX, clientY) {
+      const rect = locCanvas.getBoundingClientRect();
+      const e = ls.map.extent;
+      const fx = (clientX - rect.left) / rect.width, fy = (clientY - rect.top) / rect.height;
+      if (fx < 0 || fx > 1 || fy < 0 || fy > 1) return null;
+      return { lat: e.lat_max - fy * (e.lat_max - e.lat_min), lon: e.lon_min + fx * (e.lon_max - e.lon_min) };
+    }
+    function currentLocation() {
+      const lat = parseFloat(locLat.value), lon = parseFloat(locLon.value), radius = parseFloat(locRadius.value);
+      if (!isFinite(lat) || !isFinite(lon) || !isFinite(radius)) return null;
+      return { lat, lon, radius };
+    }
+    function drawSelection() {
+      const loc = currentLocation();
+      locSelection.hidden = locMarker.hidden = !loc;
+      if (!loc) return;
+      const b = placeBox(locSelection, loc.lat, loc.lon, loc.radius);
+      Object.assign(locMarker.style, { left: b.cx + "%", top: b.cy + "%" });
+      locSelection.querySelector("span").textContent = (ls.region || locName.value.trim() || "new location")
+        + " · " + Math.round(loc.radius) + " km";
+    }
+    function drawOtherLocations() {
+      const container = document.getElementById("location-boxes");
+      container.replaceChildren();
+      for (const loc of ls.map.locations) {
+        if (loc.name === ls.region) continue;
+        const box = el("div", { class: "location-box", "data-testid": "location-box-" + loc.name }, el("span", { text: loc.name }));
+        placeBox(box, loc.lat, loc.lon, loc.radius_km);
+        container.append(box);
+      }
+    }
+    function setCenter(lat, lon) {
+      locLat.value = lat.toFixed(4);
+      locLon.value = lon.toFixed(4);
+      drawSelection();
+    }
+
+    // Zoom & pan: canvas = translate(x, y) scale(z) on top of the "contain" fit.
+    function layoutCanvas() {
+      if (!ls.map) return;
+      const sw = locStage.clientWidth, sh = locStage.clientHeight;
+      const scale = Math.min(sw / ls.map.width, sh / ls.map.height);
+      const w = ls.map.width * scale, h = ls.map.height * scale;
+      ls.base = { left: (sw - w) / 2, top: (sh - h) / 2, w, h };
+      Object.assign(locCanvas.style, { left: ls.base.left + "px", top: ls.base.top + "px", width: w + "px", height: h + "px" });
+      applyLocZoom();
+    }
+    function applyLocZoom() {
+      if (ls.z <= 1) { ls.z = 1; ls.x = 0; ls.y = 0; }
+      else {
+        // Keep the map within the stage.
+        const w = ls.base.w * ls.z, h = ls.base.h * ls.z;
+        const sw = locStage.clientWidth, sh = locStage.clientHeight;
+        const minX = Math.min(sw - ls.base.left - w, -ls.base.left), maxX = Math.max(-ls.base.left, sw - ls.base.left - w);
+        const minY = Math.min(sh - ls.base.top - h, -ls.base.top), maxY = Math.max(-ls.base.top, sh - ls.base.top - h);
+        ls.x = Math.min(Math.max(ls.x, minX), maxX);
+        ls.y = Math.min(Math.max(ls.y, minY), maxY);
+      }
+      locCanvas.style.transform = ls.z === 1 ? "" : "translate(" + ls.x + "px, " + ls.y + "px) scale(" + ls.z + ")";
+      locEditor.dataset.zoom = ls.z.toFixed(2);
+    }
+    function locZoomAt(z, clientX, clientY) {
+      const rect = locStage.getBoundingClientRect();
+      const px = clientX - rect.left - ls.base.left, py = clientY - rect.top - ls.base.top;
+      const u = (px - ls.x) / ls.z, v = (py - ls.y) / ls.z;
+      ls.z = Math.min(Math.max(z, 1), 16);
+      ls.x = px - u * ls.z;
+      ls.y = py - v * ls.z;
+      applyLocZoom();
+    }
+    function locZoomStep(direction) {
+      const rect = locStage.getBoundingClientRect();
+      locZoomAt(ls.z * (direction > 0 ? 1.6 : 1 / 1.6), rect.left + rect.width / 2, rect.top + rect.height / 2);
+    }
+    byTestId("location-zoom-in").addEventListener("click", () => locZoomStep(1));
+    byTestId("location-zoom-out").addEventListener("click", () => locZoomStep(-1));
+    byTestId("location-zoom-reset").addEventListener("click", () => { ls.z = 1; applyLocZoom(); });
+    locStage.addEventListener("wheel", (ev) => {
+      ev.preventDefault();
+      locZoomAt(ls.z * (ev.deltaY < 0 ? 1.25 : 0.8), ev.clientX, ev.clientY);
+    }, { passive: false });
+
+    // Pointer: tap/click marks the centre, drag pans, two fingers zoom.
+    const locPointers = new Map();
+    let locGesture = null;
+    locStage.addEventListener("pointerdown", (ev) => {
+      if (ev.target.closest(".location-zoom")) return;
+      locStage.setPointerCapture(ev.pointerId);
+      locPointers.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
+      if (locPointers.size === 2) {
+        const [a, b] = [...locPointers.values()];
+        locGesture = { pinch: true, dist: Math.hypot(a.x - b.x, a.y - b.y) || 1, z: ls.z, moved: true };
+      } else if (locPointers.size === 1) {
+        locGesture = { pinch: false, x: ev.clientX, y: ev.clientY, sx: ls.x, sy: ls.y, moved: false };
+      }
+    });
+    locStage.addEventListener("pointermove", (ev) => {
+      if (!locPointers.has(ev.pointerId) || !locGesture) return;
+      locPointers.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
+      if (locGesture.pinch && locPointers.size >= 2) {
+        const [a, b] = [...locPointers.values()];
+        const dist = Math.hypot(a.x - b.x, a.y - b.y) || 1;
+        locZoomAt(locGesture.z * dist / locGesture.dist, (a.x + b.x) / 2, (a.y + b.y) / 2);
+      } else if (!locGesture.pinch) {
+        const dx = ev.clientX - locGesture.x, dy = ev.clientY - locGesture.y;
+        if (!locGesture.moved && Math.hypot(dx, dy) < 6) return;
+        locGesture.moved = true;
+        if (ls.z > 1) {
+          locStage.classList.add("panning");
+          ls.x = locGesture.sx + dx; ls.y = locGesture.sy + dy;
+          applyLocZoom();
+        }
+      }
+    });
+    function endLocPointer(ev) {
+      if (!locPointers.has(ev.pointerId)) return;
+      locPointers.delete(ev.pointerId);
+      if (locGesture && !locGesture.pinch && !locGesture.moved && ev.type === "pointerup") {
+        const point = clientToLatLon(ev.clientX, ev.clientY);
+        if (point) setCenter(point.lat, point.lon);
+      }
+      if (locPointers.size === 0) { locGesture = null; locStage.classList.remove("panning"); }
+      else if (locGesture && locGesture.pinch && locPointers.size === 1) {
+        // Continue with one finger as a pan, never as a tap.
+        const [p] = [...locPointers.values()];
+        locGesture = { pinch: false, x: p.x, y: p.y, sx: ls.x, sy: ls.y, moved: true };
+      }
+    }
+    locStage.addEventListener("pointerup", endLocPointer);
+    locStage.addEventListener("pointercancel", endLocPointer);
+
+    for (const input of [locLat, locLon]) input.addEventListener("input", drawSelection);
+    locRadius.addEventListener("input", () => { locRange.value = locRadius.value; drawSelection(); });
+    locRange.addEventListener("input", () => { locRadius.value = locRange.value; drawSelection(); });
+    locName.addEventListener("input", drawSelection);
+    locBackground.addEventListener("change", () => setBackground(locBackground.value));
+    window.addEventListener("resize", () => { if (ls.open) layoutCanvas(); });
+
+    async function openLocationEditor(region, fromHash = false) {
+      const config = await api("/api/config");
+      const existing = region ? config.regions.find((r) => r.name === region) : null;
+      if (region && !existing) return;
+      if (!region && config.regions.length >= MAX_LOCATIONS) return;
+      await loadLocationMap();
+      ls.region = region || null;
+      ls.open = true;
+      locEditor.hidden = false;
+      document.body.classList.add("viewer-open");
+      byTestId("location-title").textContent = existing ? "Change location: " + existing.name : "Add location";
+      document.getElementById("location-name-wrap").hidden = !!existing;
+      locName.value = "";
+      locLat.value = existing ? existing.lat : "";
+      locLon.value = existing ? existing.lon : "";
+      locRadius.value = locRange.value = existing ? existing.radius_km : ls.map.radius_km.default;
+      showMessage(locMessage, existing ? "" : "Click on the map to mark the centre of the new location.", true);
+      locMessage.className = "message";
+      setBackground(ls.map.satellite.available ? "satellite" : "outline");
+      drawOtherLocations();
+      drawSelection();
+      ls.z = 1;
+      layoutCanvas();
+      if (!fromHash) {
+        history.pushState({ location: true }, "", location.pathname + location.search + "#location=" + encodeURIComponent(region || "new"));
+        ls.pushed = true;
+      }
+      (existing ? locLat : locName).focus({ preventScroll: true });
+    }
+    function teardownLocationEditor() {
+      ls.open = false;
+      locEditor.hidden = true;
+      document.body.classList.remove("viewer-open");
+    }
+    function closeLocationEditor() {
+      if (!ls.open) return;
+      const pushed = ls.pushed;
+      ls.pushed = false;
+      teardownLocationEditor();
+      if (pushed && history.state && history.state.location) history.back();
+      else setHash("");
+    }
+    function reloadToRegions() {
+      history.replaceState(null, "", location.pathname + location.search + "#sec-regions");
+      location.reload();
+    }
+    byTestId("location-close").addEventListener("click", closeLocationEditor);
+    byTestId("location-cancel").addEventListener("click", closeLocationEditor);
+    document.addEventListener("keydown", (ev) => { if (ls.open && ev.key === "Escape") closeLocationEditor(); });
+    byTestId("location-add").addEventListener("click", () => openLocationEditor(null));
+    document.querySelectorAll("button.location-edit").forEach((b) =>
+      b.addEventListener("click", () => openLocationEditor(b.dataset.region)));
+    document.querySelectorAll("button.location-remove").forEach((b) =>
+      b.addEventListener("click", async () => {
+        const region = b.dataset.region;
+        if (!confirm("Remove location “" + region + "” including its image history?")) return;
+        const message = byTestId("refresh-message-" + region);
+        try {
+          await api("/api/regions/" + encodeURIComponent(region), { method: "DELETE" });
+          reloadToRegions();
+        } catch (err) {
+          if (message) showMessage(message, "Removing failed: " + err.message, false);
+          else alert("Removing failed: " + err.message);
+        }
+      }));
+
+    document.getElementById("location-form").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const loc = currentLocation();
+      if (!loc) { showMessage(locMessage, "Mark the centre on the map (or enter latitude and longitude).", false); return; }
+      const payload = { lat: loc.lat, lon: loc.lon, radius_km: loc.radius };
+      const save = byTestId("location-save");
+      save.disabled = true;
+      try {
+        if (ls.region) {
+          await api("/api/regions/" + encodeURIComponent(ls.region), {
+            method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+        } else {
+          const name = locName.value.trim();
+          if (!name) throw new Error("Please enter a name for the location.");
+          await postJson("/api/regions", { ...payload, name });
+        }
+        showMessage(locMessage, "Location saved – rendering …", true);
+        ls.pushed = false;
+        reloadToRegions();
+      } catch (err) {
+        showMessage(locMessage, err.message, false);
+      } finally {
+        save.disabled = false;
+      }
+    });
+
+    byTestId("location-satellite-render").addEventListener("click", async () => {
+      const button = byTestId("location-satellite-render");
+      button.disabled = true;
+      showMessage(locMessage, "Rendering the satellite map (downloads the latest scan if needed) …", true);
+      try {
+        ls.map.satellite = { ...ls.map.satellite, ...(await postJson("/api/location-map/satellite", {})) };
+        updateSatelliteInfo();
+        setBackground("satellite");
+        showMessage(locMessage, "Satellite map loaded.", true);
+      } catch (err) {
+        ls.map.satellite.error = err.message;
+        updateSatelliteInfo();
+        showMessage(locMessage, "Satellite map failed: " + err.message, false);
+      } finally {
+        button.disabled = false;
+      }
+    });
+
+    function applyLocationHash() {
+      const target = new URLSearchParams(location.hash.replace(/^#/, "")).get("location");
+      if (target && !ls.open) openLocationEditor(target === "new" ? null : target, true);
+      else if (!target && ls.open) { ls.pushed = false; teardownLocationEditor(); }
+    }
+    window.addEventListener("popstate", applyLocationHash);
+
     /* ---------- API links ---------- */
     const API_GENERAL = [
       ["config", "/api/config", "Current configuration (secret masked)"],
@@ -1526,6 +1943,7 @@
     statusLoop();
     pollLogs();
     applyHash();
+    applyLocationHash();
 {% endraw %}
   </script>
 </body>

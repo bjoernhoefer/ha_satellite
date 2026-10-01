@@ -4,7 +4,7 @@ Containerised service that downloads EUMETSAT satellite imagery, renders it
 into regional crops and exposes it to **Home Assistant** as camera entities
 (still image, history, MJPEG loop, GIF/MP4 animation).
 
-> **Status:** Version 1.0.0 (first public release). `msg_seviri` delivers
+> **Status:** Version 1.2.0. `msg_seviri` delivers
 > real images from MSG SEVIRI (Rapid Scan every 5 minutes or 0°), `mtg_fci`
 > from MTG FCI (1 km, with a raw-data archive for rendering after the fact),
 > both rendered with Satpy; `data_tailor` still delivers placeholder images
@@ -97,7 +97,7 @@ credentials are needed at all.
 
 ha_satellite uses [semantic versioning](https://semver.org/). The version is
 defined in `src/ha_satellite/__init__.py` (`__version__`) and in
-`pyproject.toml` (both must match; current: **1.0.0**). It is shown in the
+`pyproject.toml` (both must match; current: **1.2.0**). It is shown in the
 web UI footer and returned by `GET /api/version`.
 
 Releases are git tags `vX.Y.Z`; CI builds them into the image tags `X.Y.Z`,
@@ -119,6 +119,15 @@ Releases are git tags `vX.Y.Z`; CI builds them into the image tags `X.Y.Z`,
   `wien` (Vienna) and `mallorca` with the composite
   `natural_color_hrv_with_night_ir` (true colour by day, sharpened to ~1 km
   with the HRV channel, IR clouds at night; more in AGENTS.md).
+- **Locations on a map of Europe** (up to 4): "+ Add location" and
+  "📍 Change location" open a zoomable map of Europe (land, sea and country
+  borders in the same style as the image overlay). Click/tap marks the
+  centre, the radius is set with a slider; latitude/longitude can also be
+  typed in directly (plain WGS84 – no Meteosat pixel or line numbers). The
+  other locations are shown on the map. A current satellite image of Europe
+  can be loaded as map background on demand ("🛰 Load current satellite
+  map", rendered from the latest MSG SEVIRI scan). Moving or removing a
+  location resets its image history.
 - **FCI raw-data archive**: while an `mtg_fci` source is active, the raw data
   (Europe + all regions) is kept for 12 h (configurable). Via the
   "🛰 FCI archive" button any region — including newly created ones — can
@@ -133,6 +142,8 @@ Releases are git tags `vX.Y.Z`; CI builds them into the image tags `X.Y.Z`,
   non-persistent paths.
 - **Web API** (details in [AGENTS.md](AGENTS.md)):
   `GET/POST /api/config`, `GET /api/status`, `GET /api/version`,
+  `POST /api/regions`, `PUT/DELETE /api/regions/{region}` (locations),
+  `GET /api/location-map`,
   `GET /healthz`, `GET /regions/{region}/latest.png` (or `latest.jpg`),
   `GET /regions/{region}/frames/{i}.png`,
   `GET /regions/{region}/animation.gif`, `GET /regions/{region}/animation.mp4`,

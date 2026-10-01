@@ -52,6 +52,10 @@ class StatusStore:
             status.last_error = error
             status.next_run_at = next_run_at
 
+    def forget(self, region: str) -> None:
+        with self._lock:
+            self._regions.pop(region, None)
+
     def all(self) -> dict[str, dict]:
         with self._lock:
             return {name: status.as_dict() for name, status in self._regions.items()}

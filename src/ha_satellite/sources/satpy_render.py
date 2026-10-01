@@ -47,6 +47,10 @@ class RenderRequest:
     height: int
     label: str
     borders: bool = False
+    # Lon/lat (plate carree) map instead of the region square: extent
+    # (lon_min, lat_min, lon_max, lat_max); lat/lon/radius are then unused.
+    # Used for the location map of Europe (location_change.py).
+    lonlat_extent: tuple[float, float, float, float] | None = None
 
 
 def source_window(source_area, target_area, margin: int = WINDOW_MARGIN_PX):
@@ -77,6 +81,15 @@ def source_window(source_area, target_area, margin: int = WINDOW_MARGIN_PX):
 def target_area(request: RenderRequest):
     from pyresample import create_area_def
 
+    if request.lonlat_extent is not None:
+        return create_area_def(
+            request.label,
+            {"proj": "longlat", "datum": "WGS84"},
+            width=request.width,
+            height=request.height,
+            area_extent=tuple(request.lonlat_extent),
+            units="degrees",
+        )
     radius_m = request.radius_km * 1000
     return create_area_def(
         request.label,
@@ -156,7 +169,11 @@ def render_png(request: RenderRequest) -> tuple[bytes, datetime]:
 
     pil_image = get_enhanced_image(data).pil_image().convert("RGB")
     sensing_end = data.attrs["end_time"]
-    if request.borders:
+    if request.borders and request.lonlat_extent is not None:
+        from ha_satellite.overlay import draw_borders_lonlat
+
+        draw_borders_lonlat(pil_image, request.lonlat_extent)
+    elif request.borders:
         from ha_satellite.overlay import draw_borders
 
         draw_borders(pil_image, request.lat, request.lon, request.radius_km)
