@@ -404,3 +404,84 @@ def test_storage_api_sets_archive_settings_and_prunes(live_server):
     assert len(renders.images("wien", "dummy", "cloudtop")) == 1
     summary = response.json()["archive"]
     assert summary["render_all"] is True and summary["renders"]["images"] == 1
+
+
+# -- Archive of pre-rendered images ----------------------------------------------
+def test_archive_run_prerenders_every_archived_fci_slot(tmp_path, monkeypatch):
+    """Not only the newest capture: every raw slot without images gets rendered."""
+    from ha_satellite.archive import RenderArchive
+    from ha_satellite.config import ConfigStore
+    from ha_satellite.scheduler import RenderScheduler
+    from ha_satellite.sources import archive_composites
+    from ha_satellite.status import StatusStore
+
+    store = ConfigStore(tmp_path / "config.yaml")
+    config = _fci_config(tmp_path)
+    config.archive.render_all = True
+    store.update(config)
+    frames = tmp_path / "frames"
+    now = datetime.now(timezone.utc).replace(second=0, microsecond=0)
+    names = [(now - timedelta(minutes=m)).strftime("%Y%m%dT%H%M%SZ") for m in (0, 10, 20)]
+    for name in names:
+        write_fci_slot(frames, name)
+    # Older than the render retention: would be pruned at once, not rendered.
+    write_fci_slot(frames, (now - timedelta(hours=30)).strftime("%Y%m%dT%H%M%SZ"))
+    renders = RenderArchive(frames / "_renders")
+    from ha_satellite.archive import region_signature
+
+    for region in store.get().regions:
+        renders.sync_region(region.name, region_signature(region))
+    # One combination already exists (e.g. rendered on request): not again.
+    renders.store("wien", "mtg_fci", DEFAULT_FCI_COMPOSITE,
+                  datetime.strptime(names[1], "%Y%m%dT%H%M%SZ").replace(tzinfo=timezone.utc),
+                  _tiny_png())
+
+    calls = []
+
+    def fake_render(slot, region, composite):
+        calls.append((slot.name, region.name, composite))
+        if composite == "cloudtop" and slot.name == names[2]:
+            raise RenderError("broken slot")
+        return sources.RenderedFrame(_tiny_png(), slot.sensing_end)
+
+    monkeypatch.setattr("ha_satellite.scheduler.render_fci_slot", fake_render)
+    scheduler = RenderScheduler(store, BufferManager(frames), StatusStore())
+    composites = archive_composites(store.get().sources.get("mtg_fci"))
+    regions = [r.name for r in store.get().regions]
+
+    # The capture time passed in is only the trigger; all slots are covered.
+    stored = scheduler.archive_capture("mtg_fci", now)
+    expected = len(names) * len(regions) * len(composites) - 1  # minus the existing one
+    assert len(calls) == expected
+    assert stored == expected - len(regions)  # broken cloudtop slot per region
+    # Newest slot first, each image rendered from its own slot.
+    assert calls[0][0] == names[0]
+    assert {c[0] for c in calls} == set(names)
+    for name in names:
+        for region in regions:
+            for composite in composites:
+                path = renders.path_for(region, "mtg_fci", composite, name)
+                assert path.exists() == (not (composite == "cloudtop" and name == names[2]))
+
+    # Nothing left: a second run renders nothing (failed ones are retried).
+    calls.clear()
+    assert scheduler.archive_capture("mtg_fci", now) == 0
+    assert {c[2] for c in calls} == {"cloudtop"} and len(calls) == len(regions)
+
+
+def test_archive_run_for_fci_does_not_run_twice_at_once(tmp_path, monkeypatch):
+    from ha_satellite.config import ConfigStore
+    from ha_satellite.scheduler import RenderScheduler
+    from ha_satellite.status import StatusStore
+
+    store = ConfigStore(tmp_path / "config.yaml")
+    store.update(_fci_config(tmp_path))
+    write_fci_slot(tmp_path / "frames", datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ"))
+    monkeypatch.setattr(
+        "ha_satellite.scheduler.render_fci_slot",
+        lambda *a: pytest.fail("must not render while another run is active"),
+    )
+    scheduler = RenderScheduler(store, BufferManager(tmp_path / "frames"), StatusStore())
+    guard = scheduler._archive_locks.setdefault("mtg_fci", __import__("threading").Lock())
+    with guard:
+        assert scheduler.archive_capture("mtg_fci", datetime.now(timezone.utc)) == 0

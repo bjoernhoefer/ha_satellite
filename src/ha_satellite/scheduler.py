@@ -47,7 +47,9 @@ from ha_satellite.sources import (
     RenderError,
     archive_composites,
     get_source,
+    archive_root,
     render_archive_root,
+    render_fci_slot,
     render_with,
 )
 from ha_satellite.status import StatusStore
@@ -121,6 +123,8 @@ class RenderScheduler:
         self._signatures: dict[str, tuple[int, str]] = {}
         self._downloads: dict[str, DownloadState] = {}
         self._download_lock = threading.Lock()
+        # Source -> lock of its running FCI archive run (one at a time).
+        self._archive_locks: dict[str, threading.Lock] = {}
         self._job_counter = itertools.count()
         self._initialized = False
 
@@ -436,6 +440,21 @@ class RenderScheduler:
             return 0
         archive = get_render_archive(render_archive_root(config))
         composites = archive_composites(entry)
+        if entry.driver == "mtg_fci":
+            stored = self._archive_fci_slots(entry, config, archive, composites)
+        else:
+            stored = self._archive_newest(entry, config, archive, composites, sensing)
+        if stored:
+            archive.forget({r.name for r in config.regions})
+            archive.prune(
+                config.archive.render_retention_hours,
+                config.archive.render_max_storage_mb,
+            )
+        return stored
+
+    def _archive_newest(self, entry, config, archive, composites, sensing) -> int:
+        """Render the newest capture of a source in every region and image type."""
+        source_id = entry.id
         stored = 0
         for region in config.regions:
             archive.sync_region(region.name, region_signature(region))
@@ -474,13 +493,99 @@ class RenderScheduler:
                         region.name, source_id, composite, image.slot,
                         time.monotonic() - started, len(rendered.png) // 1024,
                     )
-        if stored:
-            archive.forget({r.name for r in config.regions})
-            archive.prune(
-                config.archive.render_retention_hours,
-                config.archive.render_max_storage_mb,
-            )
         return stored
+
+    def _archive_fci_slots(self, entry, config, archive, composites) -> int:
+        """Render **every** archived FCI raw slot that still lacks images.
+
+        Not only the newest capture: slots missed while an archive run lagged
+        behind, the render lock was busy, the service restarted or before
+        "download all sources" was enabled are rendered as well, each from
+        its own slot. Newest slots first; the slot list is re-read after
+        every image, so captures arriving meanwhile are picked up by the
+        running loop (a second run for the same source just returns).
+        """
+        from ha_satellite.config import DEFAULT_FCI_COLLECTION
+        from ha_satellite.sources.fci_archive import chunks_for_region, get_archive
+
+        with self._download_lock:
+            guard = self._archive_locks.setdefault(entry.id, threading.Lock())
+        if not guard.acquire(blocking=False):
+            logger.debug("Archive %s: run already in progress", entry.id)
+            return 0
+        try:
+            raw = get_archive(archive_root(config))
+            collection = entry.collection or DEFAULT_FCI_COLLECTION
+            retention = config.archive.render_retention_hours
+            needed = {region.name: chunks_for_region(region) for region in config.regions}
+            for region in config.regions:
+                archive.sync_region(region.name, region_signature(region))
+            failed: set[tuple[str, str, str]] = set()
+
+            def next_task():
+                cutoff = (
+                    datetime.now(timezone.utc) - timedelta(hours=retention)
+                    if retention > 0 else None
+                )
+                for slot in raw.slots(collection):
+                    if cutoff is not None and slot.sensing_end < cutoff:
+                        break  # slots are sorted newest first
+                    chunks = set(slot.chunks)
+                    for region in config.regions:
+                        if not needed[region.name] or not needed[region.name] <= chunks:
+                            continue
+                        for composite in composites:
+                            if (slot.name, region.name, composite) in failed:
+                                continue
+                            if not archive.has(region.name, entry.id, composite, slot.sensing_end):
+                                return slot, region, composite
+                return None
+
+            stored = 0
+            while (task := next_task()) is not None:
+                if self._config_store.get() is not config:
+                    # Regions/sources changed: the next archive run continues.
+                    logger.info("Archive %s: configuration changed, stopping this run", entry.id)
+                    break
+                slot, region, composite = task
+                if not self._render_lock.acquire(timeout=LOCK_TIMEOUT_SECONDS):
+                    logger.warning("Archive %s: render lock busy, skipping", entry.id)
+                    break
+                started = time.monotonic()
+                try:
+                    if archive.has(region.name, entry.id, composite, slot.sensing_end):
+                        continue  # rendered on request while waiting for the lock
+                    rendered = render_fci_slot(slot, region, composite)
+                except (RenderError, FileNotFoundError) as exc:
+                    failed.add((slot.name, region.name, composite))
+                    logger.error(
+                        "Archive %s / %s / %s %s failed: %s",
+                        region.name, entry.id, composite, slot.name, exc,
+                    )
+                    continue
+                except Exception:  # pragma: no cover - defensive
+                    failed.add((slot.name, region.name, composite))
+                    logger.exception(
+                        "Archive %s / %s / %s %s: unexpected error",
+                        region.name, entry.id, composite, slot.name,
+                    )
+                    continue
+                finally:
+                    self._render_lock.release()
+                # Named after the raw slot, so the viewer finds it as pre-rendered.
+                image = archive.store(region.name, entry.id, composite, slot.sensing_end, rendered.png)
+                if image is None:
+                    failed.add((slot.name, region.name, composite))
+                    continue
+                stored += 1
+                logger.info(
+                    "Archived %s / %s / %s %s in %.1f s (%d KB)",
+                    region.name, entry.id, composite, image.slot,
+                    time.monotonic() - started, len(rendered.png) // 1024,
+                )
+            return stored
+        finally:
+            guard.release()
 
     def _next_run_for(self, config: AppConfig, source_id: str) -> datetime:
         state = self._downloads.get(source_id)
