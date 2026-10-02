@@ -520,7 +520,9 @@ class RenderScheduler:
             needed = {region.name: chunks_for_region(region) for region in config.regions}
             for region in config.regions:
                 archive.sync_region(region.name, region_signature(region))
-            failed: set[tuple[str, str, str]] = set()
+            # Combinations already rendered, existing or failed in this run
+            # (keeps the re-scan after every image cheap).
+            handled: set[tuple[str, str, str]] = set()
 
             def next_task():
                 cutoff = (
@@ -535,8 +537,10 @@ class RenderScheduler:
                         if not needed[region.name] or not needed[region.name] <= chunks:
                             continue
                         for composite in composites:
-                            if (slot.name, region.name, composite) in failed:
+                            key = (slot.name, region.name, composite)
+                            if key in handled:
                                 continue
+                            handled.add(key)
                             if not archive.has(region.name, entry.id, composite, slot.sensing_end):
                                 return slot, region, composite
                 return None
@@ -554,17 +558,15 @@ class RenderScheduler:
                 started = time.monotonic()
                 try:
                     if archive.has(region.name, entry.id, composite, slot.sensing_end):
-                        continue  # rendered on request while waiting for the lock
+                        continue  # rendered on request meanwhile; finally releases the lock
                     rendered = render_fci_slot(slot, region, composite)
                 except (RenderError, FileNotFoundError) as exc:
-                    failed.add((slot.name, region.name, composite))
                     logger.error(
                         "Archive %s / %s / %s %s failed: %s",
                         region.name, entry.id, composite, slot.name, exc,
                     )
                     continue
                 except Exception:  # pragma: no cover - defensive
-                    failed.add((slot.name, region.name, composite))
                     logger.exception(
                         "Archive %s / %s / %s %s: unexpected error",
                         region.name, entry.id, composite, slot.name,
@@ -575,7 +577,6 @@ class RenderScheduler:
                 # Named after the raw slot, so the viewer finds it as pre-rendered.
                 image = archive.store(region.name, entry.id, composite, slot.sensing_end, rendered.png)
                 if image is None:
-                    failed.add((slot.name, region.name, composite))
                     continue
                 stored += 1
                 logger.info(

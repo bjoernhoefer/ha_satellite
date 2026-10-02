@@ -470,6 +470,8 @@ def test_archive_run_prerenders_every_archived_fci_slot(tmp_path, monkeypatch):
 
 
 def test_archive_run_for_fci_does_not_run_twice_at_once(tmp_path, monkeypatch):
+    import threading
+
     from ha_satellite.config import ConfigStore
     from ha_satellite.scheduler import RenderScheduler
     from ha_satellite.status import StatusStore
@@ -482,6 +484,6 @@ def test_archive_run_for_fci_does_not_run_twice_at_once(tmp_path, monkeypatch):
         lambda *a: pytest.fail("must not render while another run is active"),
     )
     scheduler = RenderScheduler(store, BufferManager(tmp_path / "frames"), StatusStore())
-    guard = scheduler._archive_locks.setdefault("mtg_fci", __import__("threading").Lock())
+    guard = scheduler._archive_locks.setdefault("mtg_fci", threading.Lock())
     with guard:
         assert scheduler.archive_capture("mtg_fci", datetime.now(timezone.utc)) == 0
