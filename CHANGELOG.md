@@ -3,6 +3,19 @@
 All notable changes to this project are documented in this file.
 The project follows [Semantic Versioning](https://semver.org/).
 
+## [1.2.1] — 2026-10-02
+
+### Fixed
+
+- Archive ("Download all sources"): MTG FCI images were often not
+  pre-rendered, so the archive viewer had to render them from raw data on
+  request ("Rendering from raw data …"). The archive run only rendered the
+  newest raw slot (and, if it lagged behind, a newer slot than the one that
+  triggered it), so missed slots were never rendered. It now renders every
+  archived FCI raw slot that still lacks images (newest first, within the
+  render retention, each from its own slot) and backfills slots downloaded
+  before the option was enabled or while the render lock was busy.
+
 ## [1.2.0] — 2026-10-01
 
 ### Added

@@ -145,7 +145,12 @@ Rendering runs strictly serialized under the **global render lock**, one
 image at a time (memory!), in the scheduler jobs `archive-<source>`; an
 immediate run over all sources is `POST /api/archive/render` (button
 "Archive all now"). Combinations that already exist are skipped, so a
-restart or a second run costs nothing.
+restart or a second run costs nothing. For `mtg_fci` an archive run covers
+**every** raw slot in the FCI archive (within `render_retention_hours`,
+newest first, each rendered from its own slot), not only the newest one —
+slots missed earlier (run lagging behind, lock busy, restart, slots older
+than enabling "Download all sources") are backfilled; only one such run per
+source at a time, it re-reads the slot list after every image.
 
 The per-region button "🗄 Archive" opens the archive viewer with a source
 and an image type select, JPEG/PNG format selection and time-lapse. MTG FCI
@@ -303,7 +308,7 @@ docker compose up -d
 
 - Semantic version in `src/ha_satellite/__init__.py` (`__version__`) and
   `pyproject.toml`; both must match (`tests/test_version.py`). Current:
-  **1.2.0**.
+  **1.2.1**.
 - Shown in the web UI footer and returned by `GET /api/version`.
 - Releases are git tags `vX.Y.Z`; CI builds them into the image tags
   `X.Y.Z`, `X.Y` and `latest`.
