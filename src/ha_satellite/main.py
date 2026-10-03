@@ -496,7 +496,7 @@ async def archive_image(
                 return path.read_bytes()
             logger.info("Archive render %s / %s / %s started", region.name, slot.name, composite)
             frame = render_fci_slot(slot, region, composite)
-        archive.store(region_name, source, composite, frame.sensing_time, frame.png)
+        archive.store(region_name, source, composite, slot.sensing_end, frame.png)
         return path.read_bytes() if path.exists() else frame.png
 
     try:
@@ -828,4 +828,3 @@ async def mjpeg(region_name: str):
                 await asyncio.sleep(delay)
 
     return StreamingResponse(_generate(), media_type="multipart/x-mixed-replace; boundary=frame")
-

@@ -3,6 +3,14 @@
 All notable changes to this project are documented in this file.
 The project follows [Semantic Versioning](https://semver.org/).
 
+## [1.2.2] — 2026-10-03
+
+### Fixed
+
+- On-demand MTG FCI renders are now cached under the raw archive slot's
+  sensing time, so the rendered image is found on subsequent requests instead
+  of being rendered again when Satpy reports a rounded scan time.
+
 ## [1.2.1] — 2026-10-02
 
 ### Fixed
