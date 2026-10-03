@@ -6,10 +6,12 @@ never contacted.
 
 from __future__ import annotations
 
+import asyncio
 import io
 import json
 import sys
 import types
+from contextlib import nullcontext
 from datetime import datetime, timedelta, timezone
 
 import httpx
@@ -26,7 +28,13 @@ from ha_satellite.config import (
     RegionConfig,
     default_config,
 )
-from ha_satellite.sources import MtgFciSource, NoNewData, RenderError, render_fci_slot
+from ha_satellite.sources import (
+    MtgFciSource,
+    NoNewData,
+    RenderError,
+    RenderedFrame,
+    render_fci_slot,
+)
 from ha_satellite.sources.fci_archive import (
     ArchiveError,
     FciArchive,
@@ -355,6 +363,46 @@ def test_archive_api_lists_slots_and_serves_cached_renders(live_server):
     # Vienna lacks chunk 37 in the older slot -> not offered at all.
     names = [s["name"] for s in listing["images"]]
     assert "20260926T141000Z" not in names
+
+
+def test_on_demand_fci_render_is_cached_under_raw_slot_time(tmp_path, monkeypatch):
+    from ha_satellite import main
+
+    config = _fci_config(tmp_path)
+    frames_dir = tmp_path / "frames"
+    config.storage.frames_dir = str(frames_dir)
+    slot_name = "20260926T142000Z"
+    write_fci_slot(frames_dir, slot_name)
+
+    calls = []
+
+    def render_with_offset(slot, region, composite):
+        calls.append(slot.name)
+        return RenderedFrame(_tiny_png(), SENSING + timedelta(seconds=37))
+
+    monkeypatch.setattr(main.config_store, "get", lambda: config)
+    monkeypatch.setattr(main.scheduler, "exclusive", lambda timeout: nullcontext())
+    monkeypatch.setattr(main, "render_fci_slot", render_with_offset)
+
+    async def exercise_archive():
+        first = await main.archive_image(
+            "wien", "mtg_fci", DEFAULT_FCI_COMPOSITE, slot_name, "png"
+        )
+        assert first.body == _tiny_png()
+
+        listing = await main.list_archive(
+            "wien", source="mtg_fci", composite=DEFAULT_FCI_COMPOSITE
+        )
+        assert listing["images"][0]["name"] == slot_name
+        assert listing["images"][0]["cached"] is True
+
+        second = await main.archive_image(
+            "wien", "mtg_fci", DEFAULT_FCI_COMPOSITE, slot_name, "png"
+        )
+        assert second.body == first.body
+
+    asyncio.run(exercise_archive())
+    assert calls == [slot_name]
 
 
 def _tiny_png() -> bytes:

@@ -1,3 +1,3 @@
 """ha_satellite: EUMETSAT satellite images as Home Assistant cameras."""
 
-__version__ = "1.2.1"
+__version__ = "1.2.2"
