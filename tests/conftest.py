@@ -9,6 +9,7 @@ anyway.
 from __future__ import annotations
 
 import json
+import io
 import os
 import socket
 import subprocess
@@ -18,6 +19,7 @@ import time
 import urllib.parse
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -147,6 +149,62 @@ def start_server(tmp_path: Path) -> Iterator[Callable[..., LiveServer]]:
 @pytest.fixture
 def live_server(start_server: Callable[..., LiveServer]) -> LiveServer:
     return start_server()
+
+
+@pytest.fixture
+def fci_server(tmp_path, monkeypatch):
+    """Real HTTP app with retained legacy slots; only the costly renderer is fake."""
+    import uvicorn
+    from PIL import Image
+
+    from ha_satellite import main
+    from ha_satellite.buffer import BufferManager
+    from ha_satellite.config import AppConfig
+    from ha_satellite.sources import RenderedFrame
+
+    config = AppConfig(**_dummy_config())
+    config.storage.frames_dir = str(tmp_path / "frames")
+    frames = Path(config.storage.frames_dir)
+    names = ["20260926T235959Z", "20260927T000959Z"]
+    for name in names:
+        directory = frames / "_archive" / "EO_EUM_DAT_0662" / name
+        directory.mkdir(parents=True)
+        end = datetime.strptime(name, "%Y%m%dT%H%M%SZ").replace(tzinfo=timezone.utc)
+        # Legacy raw directory and metadata disagree; precision and offset also differ.
+        end = (end + timedelta(seconds=37, microseconds=395000)).astimezone(timezone(timedelta(hours=2)))
+        (directory / "meta.json").write_text(json.dumps({
+            "product_id": name, "sensing_start": end.isoformat(), "sensing_end": end.isoformat(),
+        }))
+        for chunk in range(32, 41):
+            (directory / f"chunk_{chunk:04d}.nc").write_bytes(b"fake chunk")
+    calls = []
+
+    def render(slot, region, composite):
+        calls.append((slot.name, region.name, composite))
+        image = io.BytesIO()
+        Image.new("RGB", (40, 40), "red").save(image, format="PNG")
+        return RenderedFrame(image.getvalue(), datetime.now(timezone.utc))
+
+    monkeypatch.setattr(main.config_store, "get", lambda: config)
+    monkeypatch.setattr(main, "buffer_manager", BufferManager(frames))
+    monkeypatch.setattr(main, "render_fci_slot", render)
+    server = uvicorn.Server(uvicorn.Config(
+        main.app, host="127.0.0.1", port=_free_port(), lifespan="off", log_level="warning",
+    ))
+    thread = threading.Thread(target=server.run, daemon=True)
+    thread.start()
+    url = f"http://127.0.0.1:{server.config.port}"
+    try:
+        deadline = time.monotonic() + 20
+        while not server.started:
+            if not thread.is_alive() or time.monotonic() >= deadline:
+                raise RuntimeError("FCI test server did not start")
+            time.sleep(0.01)
+        yield url, calls, frames, names
+    finally:
+        server.should_exit = True
+        thread.join(timeout=10)
+        assert not thread.is_alive()
 
 
 FAKE_COLLECTIONS = {

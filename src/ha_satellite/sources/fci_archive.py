@@ -24,6 +24,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from ha_satellite.archive import SLOT_FORMAT, slot_name, slot_time
 from ha_satellite.config import (
     FCI_CHUNK_COUNT,
     AppConfig,
@@ -35,7 +36,6 @@ logger = logging.getLogger(__name__)
 
 ARCHIVE_SUBDIR = "_archive"
 META_FILENAME = "meta.json"
-SLOT_FORMAT = "%Y%m%dT%H%M%SZ"
 SEARCH_WINDOW = timedelta(hours=2)
 
 # Geostationary projection (CGMS/PROJ "geos", sweep=y) for MTG over 0°.
@@ -117,7 +117,7 @@ def format_chunks(chunks: set[int] | list[int]) -> str:
 
 
 def _as_utc(value: datetime) -> datetime:
-    return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value
+    return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
 
 
 def _safe_name(collection_id: str) -> str:
@@ -142,6 +142,15 @@ class Slot:
     sensing_start: datetime
     sensing_end: datetime
     path: Path
+
+    @property
+    def archive_time(self) -> datetime:
+        """Stable cache identity from the raw directory, including legacy slots.
+
+        Metadata and Satpy times can differ in timezone, seconds or precision.
+        The raw slot name is also the viewer URL and must identify its renders.
+        """
+        return datetime.strptime(self.name, SLOT_FORMAT).replace(tzinfo=timezone.utc)
 
     def chunk_files(self) -> dict[int, Path]:
         files: dict[int, Path] = {}
@@ -184,6 +193,8 @@ class FciArchive:
         return self.root / _safe_name(collection)
 
     def _read_slot(self, collection: str, path: Path) -> Slot | None:
+        if slot_time(path.name) is None:
+            return None
         try:
             meta = json.loads((path / META_FILENAME).read_text(encoding="utf-8"))
             return Slot(
@@ -264,7 +275,7 @@ class FciArchive:
             product_id = str(newest)
             sensing_end = _as_utc(newest.sensing_end)
             sensing_start = _as_utc(getattr(newest, "sensing_start", None) or sensing_end)
-            slot_dir = self.collection_dir(collection) / sensing_end.strftime(SLOT_FORMAT)
+            slot_dir = self.collection_dir(collection) / slot_name(sensing_end)
             slot = Slot(slot_dir.name, collection, product_id, sensing_start, sensing_end, slot_dir)
 
             present = slot.chunk_files()

@@ -175,6 +175,22 @@ def test_sync_downloads_only_wanted_chunks_once(tmp_path, monkeypatch):
     assert archive.status()[COLLECTION]["last_error"] is None
 
 
+@pytest.mark.parametrize("offset", [-10, 0, 2, 10])
+def test_download_slot_identity_is_utc_across_timezones(tmp_path, monkeypatch, offset):
+    sensing = datetime(2026, 9, 26, 23, 59, 59, 395000, tzinfo=timezone.utc)
+    product = FakeFciProduct("FCI-A", sensing)
+    product.sensing_end = sensing.astimezone(timezone(timedelta(hours=offset)))
+    install_fake_eumdac(monkeypatch, [product])
+    archive = FciArchive(tmp_path)
+    slot = archive.sync(COLLECTION, CREDS, {36, 37}, retention_hours=12)
+    assert slot.name == "20260926T235959Z"
+    assert slot.sensing_end.tzinfo == timezone.utc
+    assert slot.sensing_end == sensing
+    assert FciArchive(tmp_path).slots(COLLECTION)[0] == slot
+    assert archive.sync(COLLECTION, CREDS, {36, 37}, retention_hours=12) == slot
+    assert len(product.opened) == 2
+
+
 def test_sync_prunes_slots_older_than_retention(tmp_path, monkeypatch):
     products: list[FakeFciProduct] = []
     install_fake_eumdac(monkeypatch, products)
@@ -208,6 +224,19 @@ def test_slot_lookup_rejects_path_tricks(tmp_path):
     archive = FciArchive(tmp_path)
     assert archive.slot(COLLECTION, "../../etc") is None
     assert archive.slot(COLLECTION, "20260926T142000Z") is None
+
+
+def test_invalid_calendar_slot_is_not_offered_for_rendering(tmp_path):
+    archive = FciArchive(tmp_path)
+    directory = archive.collection_dir(COLLECTION) / "20260230T142000Z"
+    directory.mkdir(parents=True)
+    (directory / "meta.json").write_text(json.dumps({
+        "product_id": "invalid",
+        "sensing_start": SENSING.isoformat(),
+        "sensing_end": SENSING.isoformat(),
+    }))
+    assert archive.slot(COLLECTION, directory.name) is None
+    assert archive.slots(COLLECTION) == []
 
 
 # -- Treiber ------------------------------------------------------------------
@@ -365,14 +394,26 @@ def test_archive_api_lists_slots_and_serves_cached_renders(live_server):
     assert "20260926T141000Z" not in names
 
 
-def test_on_demand_fci_render_is_cached_under_raw_slot_time(tmp_path, monkeypatch):
+@pytest.mark.parametrize("sensing_end", [
+    "2026-09-26T14:20:00+00:00",
+    "2026-09-26T14:20:00.395",
+    "2026-09-26T16:20:00.395+02:00",
+    "2026-09-26T14:20:37.395+00:00",
+    "2026-09-26T12:20:00+00:00",
+    "2026-09-27T00:20:00+10:00",
+])
+@pytest.mark.parametrize("extension", ["png", "jpg"])
+def test_on_demand_fci_render_is_cached_under_raw_slot_time(tmp_path, monkeypatch, sensing_end, extension):
     from ha_satellite import main
 
     config = _fci_config(tmp_path)
     frames_dir = tmp_path / "frames"
     config.storage.frames_dir = str(frames_dir)
     slot_name = "20260926T142000Z"
-    write_fci_slot(frames_dir, slot_name)
+    directory = write_fci_slot(frames_dir, slot_name)
+    metadata = json.loads((directory / "meta.json").read_text())
+    metadata["sensing_end"] = sensing_end
+    (directory / "meta.json").write_text(json.dumps(metadata))
 
     calls = []
 
@@ -386,20 +427,28 @@ def test_on_demand_fci_render_is_cached_under_raw_slot_time(tmp_path, monkeypatc
 
     async def exercise_archive():
         first = await main.archive_image(
-            "wien", "mtg_fci", DEFAULT_FCI_COMPOSITE, slot_name, "png"
+            "wien", "mtg_fci", DEFAULT_FCI_COMPOSITE, slot_name, extension
         )
-        assert first.body == _tiny_png()
+        from PIL import Image
+
+        assert Image.open(io.BytesIO(first.body)).format == extension.upper().replace("JPG", "JPEG")
 
         listing = await main.list_archive(
             "wien", source="mtg_fci", composite=DEFAULT_FCI_COMPOSITE
         )
         assert listing["images"][0]["name"] == slot_name
         assert listing["images"][0]["cached"] is True
+        assert len(listing["images"]) == 1
 
-        second = await main.archive_image(
-            "wien", "mtg_fci", DEFAULT_FCI_COMPOSITE, slot_name, "png"
-        )
-        assert second.body == first.body
+        # A fresh archive reader (as after restart) must find the same identity.
+        from ha_satellite.archive import RenderArchive
+
+        monkeypatch.setattr(main, "_render_archive", lambda config: RenderArchive(frames_dir / "_renders"))
+        for ext in ("png", "jpg", extension):
+            second = await main.archive_image(
+                "wien", "mtg_fci", DEFAULT_FCI_COMPOSITE, slot_name, ext
+            )
+            assert Image.open(io.BytesIO(second.body)).format == ext.upper().replace("JPG", "JPEG")
 
     asyncio.run(exercise_archive())
     assert calls == [slot_name]
@@ -413,6 +462,48 @@ def _tiny_png() -> bytes:
     out = io.BytesIO()
     Image.new("RGB", (8, 8), "red").save(out, format="PNG")
     return out.getvalue()
+
+
+def test_parallel_archive_requests_publish_cache_under_render_lock(fci_server, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    import shutil
+    import time
+
+    from PIL import Image
+
+    from ha_satellite import main
+    from ha_satellite.archive import RenderArchive
+
+    url, calls, frames, names = fci_server
+    original_store = RenderArchive.store
+
+    def slow_store(self, *args, **kwargs):
+        assert main.scheduler._render_lock.locked(), "cache publication must be serialized with rendering"
+        time.sleep(0.05)
+        return original_store(self, *args, **kwargs)
+
+    monkeypatch.setattr(RenderArchive, "store", slow_store)
+    base = f"{url}/regions/wien/archive/mtg_fci/{DEFAULT_FCI_COMPOSITE}/{names[0]}"
+    extensions = ["png", "jpg"] * 4
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        responses = list(pool.map(lambda ext: httpx.get(f"{base}.{ext}"), extensions))
+    for response, ext in zip(responses, extensions):
+        assert response.status_code == 200, response.text
+        assert Image.open(io.BytesIO(response.content)).format == ("PNG" if ext == "png" else "JPEG")
+    assert len(calls) == 1
+    archive = RenderArchive(frames / "_renders")
+    image = archive.images("wien", "mtg_fci", DEFAULT_FCI_COMPOSITE)[0]
+    image.jpeg_path.unlink()
+    shutil.rmtree(frames / "_archive")
+    # JPEG repair needs neither retained raw data nor a second Satpy render.
+    response = httpx.get(f"{base}.jpg")
+    assert response.status_code == 200
+    assert Image.open(io.BytesIO(response.content)).format == "JPEG"
+    assert len(calls) == 1
+    listing = httpx.get(f"{url}/api/regions/wien/archive", params={
+        "source": "mtg_fci", "composite": DEFAULT_FCI_COMPOSITE,
+    }).json()
+    assert [(item["name"], item["cached"]) for item in listing["images"]] == [(names[0], True)]
 
 
 def test_storage_api_sets_archive_settings_and_prunes(live_server):
@@ -455,7 +546,8 @@ def test_storage_api_sets_archive_settings_and_prunes(live_server):
 
 
 # -- Archive of pre-rendered images ----------------------------------------------
-def test_archive_run_prerenders_every_archived_fci_slot(tmp_path, monkeypatch):
+@pytest.mark.parametrize("metadata_offset", [0, 37, 7200])
+def test_archive_run_prerenders_every_archived_fci_slot(tmp_path, monkeypatch, metadata_offset):
     """Not only the newest capture: every raw slot without images gets rendered."""
     from ha_satellite.archive import RenderArchive
     from ha_satellite.config import ConfigStore
@@ -471,7 +563,11 @@ def test_archive_run_prerenders_every_archived_fci_slot(tmp_path, monkeypatch):
     now = datetime.now(timezone.utc).replace(second=0, microsecond=0)
     names = [(now - timedelta(minutes=m)).strftime("%Y%m%dT%H%M%SZ") for m in (0, 10, 20)]
     for name in names:
-        write_fci_slot(frames, name)
+        directory = write_fci_slot(frames, name)
+        metadata = json.loads((directory / "meta.json").read_text())
+        end = datetime.fromisoformat(metadata["sensing_end"]) + timedelta(seconds=metadata_offset, microseconds=395000)
+        metadata["sensing_end"] = end.astimezone(timezone(timedelta(hours=2))).isoformat()
+        (directory / "meta.json").write_text(json.dumps(metadata))
     # Older than the render retention: would be pruned at once, not rendered.
     write_fci_slot(frames, (now - timedelta(hours=30)).strftime("%Y%m%dT%H%M%SZ"))
     renders = RenderArchive(frames / "_renders")
@@ -514,6 +610,10 @@ def test_archive_run_prerenders_every_archived_fci_slot(tmp_path, monkeypatch):
     # Nothing left: a second run renders nothing (failed ones are retried).
     calls.clear()
     assert scheduler.archive_capture("mtg_fci", now) == 0
+    assert {c[2] for c in calls} == {"cloudtop"} and len(calls) == len(regions)
+    calls.clear()
+    restarted = RenderScheduler(store, BufferManager(frames), StatusStore())
+    assert restarted.archive_capture("mtg_fci", now) == 0
     assert {c[2] for c in calls} == {"cloudtop"} and len(calls) == len(regions)
 
 

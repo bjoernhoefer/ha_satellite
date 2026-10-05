@@ -3,6 +3,20 @@
 All notable changes to this project are documented in this file.
 The project follows [Semantic Versioning](https://semver.org/).
 
+## [1.3.2] — 2026-10-05
+
+### Fixed
+
+- MTG FCI raw downloads normalize timezone-aware scan timestamps to UTC.
+  Archive cache checks and writes use the raw slot directory's identity,
+  including legacy slots whose metadata or Satpy timestamps differ.
+- On-demand renders keep the global render lock until PNG and JPEG publication
+  completes, preventing duplicate rendering during parallel requests.
+- Missing archive JPEGs are regenerated from cached PNGs without rendering or
+  requiring retained raw data; JPEG requests always receive JPEG content.
+- Regression coverage includes timezone offsets, fractional seconds, midnight,
+  legacy metadata, restart, concurrent requests and desktop/mobile browsing.
+
 ## [1.3.1] — 2026-10-05
 
 ### Fixed
