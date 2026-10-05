@@ -132,6 +132,12 @@ Releases are git tags `vX.Y.Z`; CI builds them into the image tags `X.Y.Z`,
   (Europe + all regions) is kept for 12 h (configurable). Via the
   "🛰 FCI archive" button any region — including newly created ones — can
   be rendered at any archived time in any image type.
+- **Border overlay**: country/administrative borders and worldwide coastlines
+  (including islands). Enabling borders or upgrading the overlay updates
+  historical archive PNGs and JPEGs without deleting their scans. On startup,
+  missing FCI images are rebuilt from retained raw data. Already deleted scans
+  without retained raw data cannot be recovered. Moving a location or disabling
+  baked-in borders still invalidates its rendered archive.
 - **History**: rolling ring buffer per region under
   `<storage location>/{region}/`, duration configurable in the UI (default
   60 minutes), plus a storage limit (MB) as an emergency brake. Old frames

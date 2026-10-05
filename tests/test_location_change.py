@@ -111,7 +111,8 @@ def test_draw_borders_lonlat_draws_thin_black_lines():
     pixels = list(image.get_flattened_data()) if hasattr(image, "get_flattened_data") else list(image.getdata())
     changed = [p for p in pixels if p != background]
     assert changed and all(p[0] <= 120 and p[1] <= 200 and p[2] <= 80 for p in changed)
-    assert len(changed) < 0.15 * len(pixels)
+    # Coastlines add many hairlines around Europe's islands and fjords.
+    assert len(changed) < 0.25 * len(pixels)
 
 
 # -- Satellite map -----------------------------------------------------------------

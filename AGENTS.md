@@ -138,8 +138,9 @@ Browsing is therefore as fast as the normal viewer; nothing is rendered on
 demand. Cleanup by age (`archive.render_retention_hours`, default 24 h) and
 by a storage limit (`archive.render_max_storage_mb`, default 2000 MB, oldest
 first); regions that no longer exist are dropped, and a region whose cut-out
-changed (position, radius, size, borders — see `region_signature`) loses its
-archived images because they no longer match.
+changed (position, radius, size — see `region_signature`) loses its
+archived images because they no longer match. Enabling borders or upgrading
+the overlay updates existing images in place, retaining their scan timestamps.
 
 Rendering runs strictly serialized under the **global render lock**, one
 image at a time (memory!), in the scheduler jobs `archive-<source>`; an
@@ -161,17 +162,20 @@ request (the result lands in the archive).
 
 Per region, `borders: true` (default, checkbox "Draw country and regional
 borders") makes the render child process draw worldwide national borders
-(black, ~1 px) and worldwide administrative borders (states, provinces and
+and coastlines including islands (black, ~1 px) and worldwide administrative borders (states, provinces and
 similar regions; black, fainter, ~0.75 px) as anti-aliased hairlines into the
 image (`overlay.py`, 4× supersampled), for SEVIRI and FCI (also archive
 renders; the cache name contains the switch). Data: Natural Earth 1:10m
-`admin_0_boundary_lines_land` + `admin_1_states_provinces_lines` (public
-domain), packed in `overlay_data/borders_10m.json.gz` (~2.2 MB, regenerate
+`admin_0_boundary_lines_land` + `admin_1_states_provinces_lines` + `coastline` (public
+domain), packed in `overlay_data/borders_10m.json.gz` (~4.1 MB, regenerate
 with `scripts/build_borders.py`). Projected into the same LAEA as the target
-region — no pycoast/GSHHS needed. No coastlines. Toggling counts like a
+region — no pycoast/GSHHS needed. Toggling counts like a
 composite change (the frame remembers `borders`) and re-renders immediately.
-Existing archive images for a changed region are regenerated from available
-source data; retained FCI raw slots are backfilled.
+Enabling borders updates existing archive PNGs and JPEGs without needing the
+original raw data; overlay upgrades add only missing layers. Disabling baked-in
+borders invalidates the archive and regenerates from available source data.
+At startup, retained FCI raw slots are backfilled even with `render_all` off.
+Already deleted images without retained raw data cannot be recovered.
 
 ### MTG FCI and raw-data archive (mtg_fci)
 
@@ -310,7 +314,7 @@ docker compose up -d
 
 - Semantic version in `src/ha_satellite/__init__.py` (`__version__`) and
   `pyproject.toml`; both must match (`tests/test_version.py`). Current:
-  **1.2.1**.
+  **1.2.3**.
 - Shown in the web UI footer and returned by `GET /api/version`.
 - Releases are git tags `vX.Y.Z`; CI builds them into the image tags
   `X.Y.Z`, `X.Y` and `latest`.

@@ -40,7 +40,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from ha_satellite import media
 from ha_satellite.archive import get_render_archive, region_signature
 from ha_satellite.buffer import BufferManager
-from ha_satellite.config import DOWNLOAD_DRIVERS, AppConfig, ConfigStore
+from ha_satellite.config import DEFAULT_FCI_COLLECTION, DOWNLOAD_DRIVERS, AppConfig, ConfigStore
 from ha_satellite.sources import (
     SOURCE_REGISTRY,
     NoNewData,
@@ -245,6 +245,24 @@ class RenderScheduler:
                 max_instances=1,
                 coalesce=True,
             )
+        if not self._initialized:
+            # Upgrades can change overlay signatures without an API save.
+            # Also recover FCI images deleted by older versions from retained raw slots.
+            from ha_satellite.sources.fci_archive import get_archive
+
+            existing = get_render_archive(render_archive_root(config))
+            raw = get_archive(archive_root(config))
+            recover_raw = any(
+                entry.enabled and entry.driver == "mtg_fci"
+                and raw.slots(entry.collection or DEFAULT_FCI_COLLECTION)
+                for entry in config.sources.catalog
+            )
+            refresh = {
+                region.name for region in config.regions
+                if region.name in existing.regions() or config.archive.render_all or recover_raw
+            }
+            if refresh:
+                self.refresh_archived_regions(refresh)
         self._initialized = True
         logger.info(
             "Scheduler reconfigured: download cycles %s; otherwise poll interval %d min",
@@ -421,6 +439,14 @@ class RenderScheduler:
         archive = get_render_archive(render_archive_root(config))
         sources: set[str] = set()
         regions = {region.name: region for region in config.regions}
+        if config.archive.render_all:
+            sources.update(self.archive_sources(config))
+        from ha_satellite.sources.fci_archive import get_archive
+
+        raw = get_archive(archive_root(config))
+        for entry in config.sources.catalog:
+            if entry.enabled and entry.driver == "mtg_fci" and raw.slots(entry.collection or DEFAULT_FCI_COLLECTION):
+                sources.add(entry.id)
         with self.exclusive(timeout=LOCK_TIMEOUT_SECONDS):
             for name in region_names:
                 region = regions.get(name)
@@ -502,7 +528,10 @@ class RenderScheduler:
         source_id = entry.id
         stored = 0
         for region in config.regions:
-            archive.sync_region(region.name, region_signature(region))
+            with self.exclusive(timeout=LOCK_TIMEOUT_SECONDS):
+                if self._config_store.get() is not config:
+                    return stored
+                archive.sync_region(region.name, region_signature(region))
             for composite in composites:
                 if archive.has(region.name, source_id, composite, sensing):
                     continue
@@ -511,7 +540,14 @@ class RenderScheduler:
                     return stored
                 started = time.monotonic()
                 try:
+                    if self._config_store.get() is not config:
+                        return stored
                     rendered = render_with(entry, region, composite, config)
+                    if self._config_store.get() is not config:
+                        return stored
+                    image = archive.store(
+                        region.name, source_id, composite, rendered.sensing_time, rendered.png
+                    )
                 except NoNewData:
                     continue
                 except RenderError as exc:
@@ -528,9 +564,6 @@ class RenderScheduler:
                     continue
                 finally:
                     self._render_lock.release()
-                image = archive.store(
-                    region.name, source_id, composite, rendered.sensing_time, rendered.png
-                )
                 if image is not None:
                     stored += 1
                     logger.info(
@@ -563,8 +596,11 @@ class RenderScheduler:
             collection = entry.collection or DEFAULT_FCI_COLLECTION
             retention = config.archive.render_retention_hours
             needed = {region.name: chunks_for_region(region) for region in config.regions}
-            for region in config.regions:
-                archive.sync_region(region.name, region_signature(region))
+            with self.exclusive(timeout=LOCK_TIMEOUT_SECONDS):
+                if self._config_store.get() is not config:
+                    return 0
+                for region in config.regions:
+                    archive.sync_region(region.name, region_signature(region))
             # Combinations already rendered, existing or failed in this run
             # (keeps the re-scan after every image cheap).
             handled: set[tuple[str, str, str]] = set()
@@ -605,6 +641,10 @@ class RenderScheduler:
                     if archive.has(region.name, entry.id, composite, slot.sensing_end):
                         continue  # rendered on request meanwhile; finally releases the lock
                     rendered = render_fci_slot(slot, region, composite)
+                    if self._config_store.get() is not config:
+                        break
+                    # Named after the raw slot, so the viewer finds it as pre-rendered.
+                    image = archive.store(region.name, entry.id, composite, slot.sensing_end, rendered.png)
                 except (RenderError, FileNotFoundError) as exc:
                     logger.error(
                         "Archive %s / %s / %s %s failed: %s",
@@ -619,8 +659,6 @@ class RenderScheduler:
                     continue
                 finally:
                     self._render_lock.release()
-                # Named after the raw slot, so the viewer finds it as pre-rendered.
-                image = archive.store(region.name, entry.id, composite, slot.sensing_end, rendered.png)
                 if image is None:
                     continue
                 stored += 1

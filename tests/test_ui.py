@@ -726,9 +726,14 @@ def test_toggle_borders_rerenders(ui, live_server):
     assert latest["borders"] is False
 
     previous_path = archive.images("wien", "dummy", "cloudtop")[0].path
+    previous_png = previous_path.read_bytes()
     box.check()
     expect(ui.get_by_test_id("refresh-message-wien")).to_contain_text("Country borders enabled")
-    wait_for_archive_rerender(previous_path)
+    deadline = time.monotonic() + 20
+    while time.monotonic() < deadline and previous_path.read_bytes() == previous_png:
+        time.sleep(0.1)
+    assert previous_path.exists()
+    assert previous_path.read_bytes() != previous_png
 
     ui.reload()
     expect(ui.get_by_test_id("region-borders-wien")).to_be_checked()
@@ -740,6 +745,60 @@ def test_borders_checkbox_on_mobile(mobile_page, live_server):
     expect(box).to_be_visible()
     box.tap()
     expect(mobile_page.get_by_test_id("refresh-message-wien")).to_contain_text("Country borders disabled")
+
+
+@pytest.mark.parametrize("page_fixture", ["ui", "mobile_page"])
+def test_enabling_borders_keeps_island_archive_history(request, page_fixture, live_server):
+    import io
+
+    from PIL import Image
+
+    from ha_satellite.archive import RenderArchive, region_signature
+    from ha_satellite.config import RegionConfig
+
+    page = request.getfixturevalue(page_fixture)
+    page.goto(live_server.url + "/")
+    box = page.get_by_test_id("region-borders-mallorca")
+    box.uncheck()
+    expect(page.get_by_test_id("refresh-message-mallorca")).to_contain_text("Country borders disabled")
+    region = RegionConfig(**next(
+        r for r in _stored(live_server)["regions"] if r["name"] == "mallorca"
+    ))
+    archive = RenderArchive(live_server.data_dir / "frames" / "_renders")
+    marker = archive.root / "mallorca" / "region.json"
+    deadline = time.monotonic() + 20
+    while time.monotonic() < deadline:
+        if marker.exists() and marker.read_text() == region_signature(region):
+            break
+        time.sleep(0.1)
+    assert marker.read_text() == region_signature(region)
+    out = io.BytesIO()
+    Image.new("RGB", (300, 300), "white").save(out, format="PNG")
+    original = out.getvalue()
+    captures = [datetime.now(timezone.utc) - timedelta(minutes=m) for m in (10, 20, 30)]
+    for capture in captures:
+        archive.store("mallorca", "dummy", "cloudtop", capture, original)
+    old_slots = {image.slot for image in archive.images("mallorca", "dummy", "cloudtop")}
+    box.check()
+    expect(page.get_by_test_id("refresh-message-mallorca")).to_contain_text("Country borders enabled")
+    deadline = time.monotonic() + 20
+    while time.monotonic() < deadline:
+        if marker.read_text() == region_signature(region.model_copy(update={"borders": True})):
+            break
+        time.sleep(0.1)
+    images = archive.images("mallorca", "dummy", "cloudtop")
+    assert old_slots <= {image.slot for image in images}
+    for image in images:
+        if image.slot in old_slots:
+            assert Image.open(image.path).getextrema()[0][0] < 100
+            assert Image.open(image.jpeg_path).getextrema()[0][0] < 100
+    page.get_by_test_id("archive-mallorca").click()
+    page.get_by_test_id("viewer-composite").select_option("cloudtop")
+    _image_loaded(page, "viewer-image")
+    page.get_by_test_id("viewer-format").select_option("png")
+    _image_loaded(page, "viewer-image")
+    page.get_by_test_id("viewer-prev").click()
+    _image_loaded(page, "viewer-image")
 
 
 def test_placeholder_source_is_marked(ui, live_server):
@@ -881,7 +940,7 @@ def test_archive_viewer_browses_sources_and_image_types(ui, live_server):
 
     # Format selection works here too (both are pre-rendered).
     ui.get_by_test_id("viewer-format").select_option("png")
-    expect(image).to_have_attribute("src", re.compile(r"\.png$"))
+    expect(image).to_have_attribute("src", re.compile(r"\.png\?v=\d+$"))
     _image_loaded(ui, "viewer-image")
 
     ui.get_by_test_id("viewer-mode").click()  # back to the normal history

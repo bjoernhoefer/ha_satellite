@@ -1,6 +1,6 @@
 """Country and administrative borders as an overlay on a rendered region image.
 
-Country and administrative borders worldwide. The lines come from Natural
+Country and administrative borders and coastlines worldwide. The lines come from Natural
 Earth 1:10m (public domain, generated with
 ``scripts/build_borders.py``) and are shipped packed in the package. They
 are projected into the same Lambert azimuthal projection as the target
@@ -16,6 +16,7 @@ from functools import lru_cache
 from pathlib import Path
 
 BORDERS_FILE = Path(__file__).resolve().parent / "overlay_data" / "borders_10m.json.gz"
+OVERLAY_VERSION = "coastlines-v1"
 # Anti-aliased hairlines: drawn at SUPERSAMPLE times the size and
 # downscaled. Width in target pixels = line width / SUPERSAMPLE.
 SUPERSAMPLE = 4
@@ -33,7 +34,7 @@ def _border_data() -> dict:
     return json.loads(gzip.decompress(BORDERS_FILE.read_bytes()))
 
 
-@lru_cache(maxsize=2)
+@lru_cache(maxsize=3)
 def _border_lines(kind: str = "lines"):
     import numpy as np
 
@@ -49,7 +50,8 @@ def border_segments(
 ):
     """Border lines as pixel polylines [(x, y), ...] in the target image.
 
-    ``kind``: ``"lines"`` = country borders, ``"state_lines"`` = states.
+    ``kind``: ``"lines"`` = country borders, ``"state_lines"`` = states,
+    ``"coast_lines"`` = coastlines (including islands).
     """
     import numpy as np
     from pyproj import Transformer
@@ -141,11 +143,19 @@ def _draw_layers(image, layers, scale: int = SUPERSAMPLE):
 
 
 def draw_borders(image, lat: float, lon: float, radius_km: float):
-    """Draw state and country borders as anti-aliased hairlines."""
+    """Draw state/country borders and coastlines as anti-aliased hairlines."""
     width, height = image.size
     return _draw_layers(image, [
         (border_segments(lat, lon, radius_km, width, height, "state_lines"), STATE_COLOR, STATE_WIDTH),
         (border_segments(lat, lon, radius_km, width, height, "lines"), BORDER_COLOR, BORDER_WIDTH),
+        (border_segments(lat, lon, radius_km, width, height, "coast_lines"), BORDER_COLOR, BORDER_WIDTH),
+    ])
+
+
+def draw_coastlines(image, lat: float, lon: float, radius_km: float):
+    """Add only the new layer to archived images that already have borders."""
+    return _draw_layers(image, [
+        (border_segments(lat, lon, radius_km, *image.size, "coast_lines"), BORDER_COLOR, BORDER_WIDTH),
     ])
 
 
@@ -159,6 +169,7 @@ def draw_borders_lonlat(image, extent, scale: int = 2):
     return _draw_layers(image, [
         (border_segments_lonlat(extent, width, height, "state_lines"), STATE_COLOR, STATE_WIDTH),
         (border_segments_lonlat(extent, width, height, "lines"), BORDER_COLOR, BORDER_WIDTH),
+        (border_segments_lonlat(extent, width, height, "coast_lines"), BORDER_COLOR, BORDER_WIDTH),
     ], scale)
 
 

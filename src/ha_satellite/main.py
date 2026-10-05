@@ -473,7 +473,8 @@ ARCHIVE_RENDER_LOCK_TIMEOUT = 600
 
 @app.get("/regions/{region_name}/archive/{source}/{composite}/{slot_name}.{ext}")
 async def archive_image(
-    region_name: str, source: str, composite: str, slot_name: str, ext: str
+    region_name: str, source: str, composite: str, slot_name: str, ext: str,
+    v: str | None = None,
 ):
     """Archived image; MTG FCI raw slots are rendered on request and stored."""
     if ext not in ("png", "jpg"):
@@ -486,9 +487,12 @@ async def archive_image(
     path = archive.path_for(region_name, source, composite, slot_name, ext)
     if path is None:
         raise HTTPException(status_code=400, detail="Invalid archive address")
-    headers = {"Cache-Control": "public, max-age=31536000, immutable"}
+    # Archive overlays can be updated at the same scan URL.
+    headers = {"Cache-Control": "no-cache"}
     media_type = "image/png" if ext == "png" else "image/jpeg"
     if path.exists():
+        if v is not None and v == str(path.stat().st_mtime_ns):
+            headers = {"Cache-Control": "public, max-age=31536000, immutable"}
         return Response(content=path.read_bytes(), media_type=media_type, headers=headers)
 
     entry = config.sources.get(source)
