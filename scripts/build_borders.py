@@ -1,11 +1,12 @@
 """Generates ``src/ha_satellite/overlay_data/borders_10m.json.gz``.
 
-Source: Natural Earth 1:10m "Admin 0 - Boundary Lines" (country borders) and
+Source: Natural Earth 1:10m "Admin 0 - Boundary Lines" (country borders),
 "Admin 1 - States, Provinces" lines (administrative boundaries worldwide),
+and "Coastline" (including islands),
 public domain (https://www.naturalearthdata.com/about/terms-of-use/).
 
     python scripts/build_borders.py ne_10m_admin_0_boundary_lines_land.geojson \
-        ne_10m_admin_1_states_provinces_lines.geojson
+        ne_10m_admin_1_states_provinces_lines.geojson ne_10m_coastline.geojson
 
 Coordinates are rounded to 3 decimal places (~100 m); consecutive
 duplicate points are dropped.
@@ -45,20 +46,23 @@ def _read_lines(source: str, keep=lambda props: True) -> list:
     return lines
 
 
-def main(countries: str, states: str) -> None:
+def main(countries: str, states: str, coastlines: str) -> None:
     lines = _read_lines(countries)
     state_lines = _read_lines(states)
+    coast_lines = _read_lines(coastlines)
     payload = json.dumps(
         {
-            "source": "Natural Earth 1:10m admin_0_boundary_lines_land + worldwide admin_1_states_provinces_lines",
+            "source": "Natural Earth 1:10m admin_0_boundary_lines_land + worldwide admin_1_states_provinces_lines + coastline",
             "lines": lines,
             "state_lines": state_lines,
+            "coast_lines": coast_lines,
         },
         separators=(",", ":"),
     )
     TARGET.write_bytes(gzip.compress(payload.encode(), 9, mtime=0))
-    print(f"{len(lines)} + {len(state_lines)} lines, {TARGET.stat().st_size // 1024} KB -> {TARGET}")
+    print(f"{len(lines)} + {len(state_lines)} + {len(coast_lines)} lines, "
+          f"{TARGET.stat().st_size // 1024} KB -> {TARGET}")
 
 
 if __name__ == "__main__":
-    main(sys.argv[1], sys.argv[2])
+    main(sys.argv[1], sys.argv[2], sys.argv[3])

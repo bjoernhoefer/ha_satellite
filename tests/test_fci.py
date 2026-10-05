@@ -535,3 +535,53 @@ def test_archive_run_for_fci_does_not_run_twice_at_once(tmp_path, monkeypatch):
     guard = scheduler._archive_locks.setdefault("mtg_fci", threading.Lock())
     with guard:
         assert scheduler.archive_capture("mtg_fci", datetime.now(timezone.utc)) == 0
+
+
+def test_startup_recovers_deleted_images_from_retained_fci_slots(tmp_path, monkeypatch):
+    from ha_satellite.archive import RenderArchive
+    from ha_satellite.config import ConfigStore
+    from ha_satellite.scheduler import RenderScheduler
+    from ha_satellite.sources import archive_composites
+    from ha_satellite.status import StatusStore
+
+    store = ConfigStore(tmp_path / "config.yaml")
+    config = _fci_config(tmp_path)
+    config.archive.render_all = False
+    store.update(config)
+    frames = tmp_path / "frames"
+    now = datetime.now(timezone.utc).replace(second=0, microsecond=0)
+    names = [(now - timedelta(minutes=m)).strftime("%Y%m%dT%H%M%SZ") for m in (0, 10)]
+    for name in names:
+        write_fci_slot(frames, name)
+    calls = []
+
+    def fake_render(slot, region, composite):
+        calls.append((slot.name, region.name, composite))
+        return RenderedFrame(_tiny_png(), slot.sensing_end)
+
+    monkeypatch.setattr("ha_satellite.scheduler.render_fci_slot", fake_render)
+    monkeypatch.setattr(
+        sources.MtgFciSource, "fetch",
+        lambda *args: pytest.fail("recovery must not require a network download"),
+    )
+    scheduler = RenderScheduler(store, BufferManager(frames), StatusStore())
+    scheduler._reschedule()
+    recovery = [job for job in scheduler._scheduler.get_jobs() if job.id.startswith("archive-borders-")]
+    assert len(recovery) == 1
+    recovery[0].func(*recovery[0].args)
+    composites = archive_composites(store.get().sources.get("mtg_fci"))
+    assert len(calls) == len(names) * len(store.get().regions) * len(composites)
+    assert RenderArchive(frames / "_renders").count() == len(calls)
+    scheduler._reschedule()
+    assert len([job for job in scheduler._scheduler.get_jobs() if job.id.startswith("archive-borders-")]) == 1
+
+
+@pytest.mark.parametrize("collection", ["../outside", "/tmp/outside", "..", ".", "a/b", "a\\b"])
+def test_collection_directory_cannot_escape_archive_root(tmp_path, collection):
+    from ha_satellite.sources.fci_archive import FciArchive
+
+    archive = FciArchive(tmp_path / "_archive")
+    directory = archive.collection_dir(collection)
+    assert directory.parent == archive.root
+    assert directory.resolve().is_relative_to(archive.root.resolve())
+    assert archive.slots(collection) == []

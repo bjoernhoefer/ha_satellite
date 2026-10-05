@@ -20,6 +20,7 @@ rendered only once per combination. Cleanup is by age
 
 from __future__ import annotations
 
+import io
 import logging
 import re
 import shutil
@@ -27,6 +28,8 @@ import threading
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+
+from ha_satellite.overlay import OVERLAY_VERSION
 
 logger = logging.getLogger(__name__)
 
@@ -62,7 +65,7 @@ def region_signature(region) -> str:
         str(v)
         for v in (
             region.lat, region.lon, region.radius_km,
-            region.width, region.height, region.borders,
+            region.width, region.height, region.borders, OVERLAY_VERSION,
         )
     )
 
@@ -84,6 +87,8 @@ class ArchivedImage:
         base = (
             f"/regions/{region_name}/archive/{self.source}/{self.composite}/{self.slot}"
         )
+        version = self.path.stat().st_mtime_ns
+        jpeg_version = self.jpeg_path.stat().st_mtime_ns if self.jpeg_path.exists() else version
         return {
             "name": self.slot,
             "created_at": self.created_at.isoformat(),
@@ -91,8 +96,8 @@ class ArchivedImage:
             "composite": self.composite,
             "available": True,
             "cached": True,
-            "url": f"{base}.png",
-            "jpeg_url": f"{base}.jpg",
+            "url": f"{base}.png?v={version}",
+            "jpeg_url": f"{base}.jpg?v={jpeg_version}",
         }
 
 
@@ -198,28 +203,72 @@ class RenderArchive:
 
     # -- Region signature ---------------------------------------------------
     def sync_region(self, region_name: str, signature: str) -> bool:
-        """Drop the region's archive when its geometry/borders changed.
+        """Update overlays in place; drop images only for incompatible cut-outs.
 
-        Archived images are keyed by capture time only, so a changed cut-out
-        (position, radius, size, borders) would otherwise mix old and new
-        images. Returns ``True`` when something was removed.
+        Geometry changes and removing baked-in borders invalidate the archive.
+        Adding borders must not delete historical scans: SEVIRI raw products
+        are not retained. Legacy five-field signatures predate borders.
+        Returns ``True`` when the signature changed.
         """
         if not _valid(region_name):
             return False
-        base = self.root / region_name
-        marker = base / "region.json"
-        try:
-            current = marker.read_text(encoding="utf-8")
-        except OSError:
-            current = None
-        if current == signature:
+        with self._lock:
+            base = self.root / region_name
+            marker = base / "region.json"
+            try:
+                current = marker.read_text(encoding="utf-8")
+            except OSError:
+                current = None
+            if current == signature:
+                return False
+            old = current.split("|") if current else []
+            new = signature.split("|")
+            same_geometry = len(old) in (5, 6, 7) and old[:5] == new[:5]
+            had_borders = len(old) >= 6 and old[5] == "True"
+            has_borders = len(new) >= 6 and new[5] == "True"
+            if same_geometry and (has_borders or not had_borders):
+                if has_borders:
+                    self._update_overlays(region_name, signature, had_borders)
+            elif current is not None or (base.is_dir() and any(p.is_dir() for p in base.iterdir())):
+                shutil.rmtree(base, ignore_errors=True)
+                logger.info("Archive %s: cut-out changed - archived images removed", region_name)
+            base.mkdir(parents=True, exist_ok=True)
+            self._write_atomic(marker, signature.encode("utf-8"))
             return True
-        if current is not None or (base.is_dir() and any(p.is_dir() for p in base.iterdir())):
-            shutil.rmtree(base, ignore_errors=True)
-            logger.info("Archive %s: region changed - archived images removed", region_name)
-        base.mkdir(parents=True, exist_ok=True)
-        marker.write_text(signature, encoding="utf-8")
-        return True
+
+    def _update_overlays(self, region: str, signature: str, had_borders: bool) -> None:
+        from PIL import Image, PngImagePlugin
+
+        from ha_satellite.media import to_jpeg
+        from ha_satellite.overlay import draw_borders, draw_coastlines
+
+        lat, lon, radius = map(float, signature.split("|")[:3])
+        draw = draw_coastlines if had_borders else draw_borders
+        updated = 0
+        for source, composites in self.combinations(region).items():
+            for composite in composites:
+                for archived in self.images(region, source, composite):
+                    with Image.open(archived.path) as original:
+                        # A retry after an interrupted migration must not darken
+                        # already updated anti-aliased lines again.
+                        if original.info.get("archive_overlay") == signature:
+                            self._write_atomic(
+                                archived.jpeg_path, to_jpeg(archived.path.read_bytes(), None)
+                            )
+                            continue
+                        image = original.convert("RGB")
+                    draw(image, lat, lon, radius)
+                    metadata = PngImagePlugin.PngInfo()
+                    metadata.add_text("archive_overlay", signature)
+                    png = io.BytesIO()
+                    image.save(png, format="PNG", pnginfo=metadata)
+                    data = png.getvalue()
+                    self._write_atomic(archived.path, data)
+                    # Keep the region marker unchanged if either write fails,
+                    # so an interrupted upgrade resumes on the next run.
+                    self._write_atomic(archived.jpeg_path, to_jpeg(data, None))
+                    updated += 1
+        logger.info("Archive %s: updated borders on %d historical images", region, updated)
 
     def used_bytes(self) -> int:
         if not self.root.is_dir():

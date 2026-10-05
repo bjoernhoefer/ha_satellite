@@ -6,6 +6,7 @@ import io
 from datetime import datetime, timedelta, timezone
 
 import httpx
+import pytest
 import yaml
 from PIL import Image
 
@@ -41,10 +42,25 @@ def test_store_writes_png_and_jpeg_and_is_listed(tmp_path):
     assert archive.has("wien", "msg_seviri", "cloudtop", NOW + timedelta(minutes=5)) is False
     listed = archive.images("wien", "msg_seviri", "cloudtop")
     assert [i.slot for i in listed] == ["20260926T142000Z"]
-    assert listed[0].as_dict("wien")["url"] == (
+    assert listed[0].as_dict("wien")["url"].split("?")[0] == (
         "/regions/wien/archive/msg_seviri/cloudtop/20260926T142000Z.png"
     )
     assert archive.count() == 1 and archive.used_bytes() > 0
+
+
+def test_archive_cache_headers_require_current_image_version(live_server):
+    archive = archive_of(live_server)
+    image = archive.store("wien", "dummy", "cloudtop", NOW, png("white"))
+    urls = image.as_dict("wien")
+    unversioned = urls["url"].split("?")[0]
+    assert httpx.get(live_server.url + unversioned).headers["cache-control"] == "no-cache"
+    for key in ("url", "jpeg_url"):
+        assert "immutable" in httpx.get(live_server.url + urls[key]).headers["cache-control"]
+    archive.store("wien", "dummy", "cloudtop", NOW, png("blue"))
+    assert httpx.get(live_server.url + urls["url"]).headers["cache-control"] == "no-cache"
+    new_url = archive.images("wien", "dummy", "cloudtop")[0].as_dict("wien")["url"]
+    assert new_url != urls["url"]
+    assert "immutable" in httpx.get(live_server.url + new_url).headers["cache-control"]
 
 
 def test_images_are_sorted_newest_first(tmp_path):
@@ -114,6 +130,69 @@ def test_region_signature_change_clears_the_archive(tmp_path):
     moved = region.model_copy(update={"radius_km": 300})
     archive.sync_region("wien", region_signature(moved))
     assert archive.count() == 0
+
+
+@pytest.mark.parametrize("previous_borders", [None, False, True])
+def test_overlay_upgrade_preserves_all_historical_scans(tmp_path, previous_borders):
+    archive = RenderArchive(tmp_path)
+    region = RegionConfig(name="mallorca", lat=39.6, lon=2.9, radius_km=100)
+    fields = region_signature(region).split("|")[:5]
+    if previous_borders is not None:
+        fields.append(str(previous_borders))
+    directory = tmp_path / region.name
+    directory.mkdir()
+    (directory / "region.json").write_text("|".join(fields))
+    original = png("white", 200)
+    for source in ("msg_seviri", "mtg_fci"):
+        for minutes in (0, 10):
+            archive.store(region.name, source, "cloudtop", NOW + timedelta(minutes=minutes), original)
+    previous_url = archive.images(region.name, "msg_seviri", "cloudtop")[0].as_dict(region.name)["url"]
+    assert archive.sync_region(region.name, region_signature(region))
+    assert archive.count() == 4
+    for source in ("msg_seviri", "mtg_fci"):
+        assert [image.created_at for image in archive.images(region.name, source, "cloudtop")] == [
+            NOW + timedelta(minutes=10), NOW,
+        ]
+        for image in archive.images(region.name, source, "cloudtop"):
+            assert image.path.read_bytes() != original
+            assert Image.open(image.path).getextrema()[0][0] < 100
+            assert Image.open(image.jpeg_path).getextrema()[0][0] < 100
+    migrated = archive.images(region.name, "msg_seviri", "cloudtop")[0]
+    assert migrated.as_dict(region.name)["url"] != previous_url
+    before = migrated.path.read_bytes()
+    assert not archive.sync_region(region.name, region_signature(region))
+    assert migrated.path.read_bytes() == before
+
+
+@pytest.mark.parametrize("failed_extension", [".png", ".jpg"])
+def test_interrupted_overlay_upgrade_can_resume_without_redrawing(tmp_path, monkeypatch, failed_extension):
+    archive = RenderArchive(tmp_path)
+    region = RegionConfig(name="mallorca", lat=39.6, lon=2.9, radius_km=100)
+    archive.sync_region(region.name, "|".join(region_signature(region).split("|")[:5]))
+    for minutes in (0, 10):
+        archive.store(region.name, "msg_seviri", "cloudtop", NOW + timedelta(minutes=minutes), png("white", 200))
+    write = archive._write_atomic
+    calls = 0
+
+    def fail_second(path, data):
+        nonlocal calls
+        if path.suffix == failed_extension:
+            calls += 1
+            if calls == 2:
+                raise OSError("disk unavailable")
+        return write(path, data)
+
+    monkeypatch.setattr(archive, "_write_atomic", fail_second)
+    with pytest.raises(OSError):
+        archive.sync_region(region.name, region_signature(region))
+    newest = archive.images(region.name, "msg_seviri", "cloudtop")[0].path
+    updated = newest.read_bytes()
+    monkeypatch.setattr(archive, "_write_atomic", write)
+    archive.sync_region(region.name, region_signature(region))
+    assert newest.read_bytes() == updated
+    assert archive.count() == 2
+    for image in archive.images(region.name, "msg_seviri", "cloudtop"):
+        assert Image.open(image.jpeg_path).getextrema()[0][0] < 100
 
 
 def test_summary_reports_images_per_region(tmp_path):

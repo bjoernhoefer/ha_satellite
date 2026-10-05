@@ -1,9 +1,10 @@
 from importlib.resources import files
 
+import pytest
 from PIL import Image
 
 from ha_satellite.config import RegionConfig
-from ha_satellite.overlay import border_segments, draw_borders
+from ha_satellite.overlay import border_segments, border_segments_lonlat, draw_borders
 
 VIENNA = (48.21, 16.37, 250)
 
@@ -23,8 +24,20 @@ def test_vienna_has_borders_near_bratislava():
     assert all(-800 <= x <= 1600 and -800 <= y <= 1600 for x, y in points)
 
 
-def test_island_without_land_borders_stays_empty():
-    assert border_segments(39.6, 2.9, 100, 800, 800) == []  # Mallorca
+@pytest.mark.parametrize("lat,lon,radius", [
+    (39.6, 2.9, 100),  # Mallorca
+    (38.98, 1.43, 40),  # Ibiza
+    (39.98, 4.07, 40),  # Menorca
+])
+def test_islands_have_coastlines_on_region_and_location_maps(lat, lon, radius):
+    assert border_segments(lat, lon, radius, 800, 800, kind="coast_lines")
+    assert border_segments_lonlat(
+        (lon - 0.5, lat - 0.5, lon + 0.5, lat + 0.5),
+        800, 800, kind="coast_lines",
+    )
+    image = Image.new("RGB", (800, 800), "white")
+    draw_borders(image, lat, lon, radius)
+    assert image.getextrema()[0][0] < 100
 
 
 def test_austrian_states_near_vienna():

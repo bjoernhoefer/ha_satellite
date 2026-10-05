@@ -3,6 +3,21 @@
 All notable changes to this project are documented in this file.
 The project follows [Semantic Versioning](https://semver.org/).
 
+## [1.3.1] — 2026-10-05
+
+### Fixed
+
+- Adding country borders or upgrading the overlay no longer deletes historical
+  archive images. Borders are applied to existing PNGs and their JPEGs are
+  regenerated, preserving all scan timestamps even without retained raw data.
+  Existing bordered images receive only the missing coastline layer.
+- On startup, missing FCI archive images are backfilled from retained raw slots,
+  even when "Download all sources" is off. Images already deleted by older
+  versions can only be recovered while their raw data is still available.
+- The border overlay now includes worldwide coastlines, including Mallorca,
+  Ibiza and Menorca, on satellite images and the location map.
+- Updated archive URLs invalidate browser caches after an overlay update.
+
 ## [1.3.0] — 2026-10-05
 
 ### Added
