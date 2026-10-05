@@ -407,28 +407,73 @@ class RenderScheduler:
         logger.info("Archive run requested for %s", ", ".join(sources) or "no source")
         return len(sources)
 
-    def _archive_source(self, source_id: str, sensing: datetime | None) -> None:
+    def refresh_archived_regions(self, region_names: set[str]) -> None:
+        """Re-render cached archive images after a region's borders changed."""
+        self._scheduler.add_job(
+            self._refresh_archived_regions,
+            args=[region_names],
+            id=f"{ARCHIVE_JOB_PREFIX}borders-{next(self._job_counter)}",
+            misfire_grace_time=None,
+        )
+
+    def _refresh_archived_regions(self, region_names: set[str]) -> None:
+        config = self._config_store.get()
+        archive = get_render_archive(render_archive_root(config))
+        sources: set[str] = set()
+        regions = {region.name: region for region in config.regions}
+        with self.exclusive(timeout=LOCK_TIMEOUT_SECONDS):
+            for name in region_names:
+                region = regions.get(name)
+                if region is None:
+                    continue
+                sources.update(archive.combinations(name))
+                archive.sync_region(name, region_signature(region))
+        for source_id in sorted(sources):
+            state = self._downloads.get(source_id)
+            self._archive_source(
+                source_id, state.last_sensing if state else None, allow_disabled=True
+            )
+
+    def _archive_source(
+        self, source_id: str, sensing: datetime | None, allow_disabled: bool = False
+    ) -> None:
         """Fetch the capture first if it is not known yet, then archive it."""
         config = self._config_store.get()
         entry = config.sources.get(source_id)
-        if entry is None or not entry.enabled:
+        if entry is None or (not entry.enabled and not allow_disabled):
             return
         if not self._downloads_for(entry.driver):
             # Placeholder sources have no capture time of their own.
-            self.archive_capture(source_id, datetime.now(timezone.utc))
+            self.archive_capture(
+                source_id, datetime.now(timezone.utc), allow_disabled=allow_disabled
+            )
+            return
+        if allow_disabled and entry.driver == "mtg_fci":
+            self.archive_capture(
+                source_id, sensing or datetime.now(timezone.utc), allow_disabled=True
+            )
             return
         if sensing is None:
-            self.download(source_id)
-            state = self._downloads.get(source_id)
-            sensing = state.last_sensing if state else None
+            if allow_disabled:
+                try:
+                    sensing = get_source(entry.driver).fetch(entry, config)
+                except Exception as exc:
+                    logger.error("Archive refresh %s could not fetch a capture: %s", source_id, exc)
+                    return
+            else:
+                self.download(source_id)
+                state = self._downloads.get(source_id)
+                sensing = state.last_sensing if state else None
             if sensing is None:
                 return
             # A fresh download already queued the archive run when render_all is on.
-            if config.archive.render_all:
+            if config.archive.render_all and not allow_disabled:
                 return
-        self.archive_capture(source_id, sensing)
+        self.archive_capture(source_id, sensing, allow_disabled=allow_disabled)
 
-    def archive_capture(self, source_id: str, sensing: datetime) -> int:
+    def archive_capture(
+        self, source_id: str, sensing: datetime, allow_disabled: bool = False
+    ) -> int:
         """Render every region in every image type of the source (one at a time).
 
         Runs under the global render lock like any other render, so it never
@@ -436,7 +481,7 @@ class RenderScheduler:
         """
         config = self._config_store.get()
         entry = config.sources.get(source_id)
-        if entry is None or not entry.enabled or not config.regions:
+        if entry is None or (not entry.enabled and not allow_disabled) or not config.regions:
             return 0
         archive = get_render_archive(render_archive_root(config))
         composites = archive_composites(entry)

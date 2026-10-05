@@ -31,8 +31,11 @@ def test_austrian_states_near_vienna():
     points = [p for s in border_segments(*VIENNA, 800, 800, kind="state_lines") for p in s]
     # Vienna is its own state: border with Lower Austria around the image center.
     assert any(abs(x - 400) < 15 and abs(y - 400) < 15 for x, y in points)
-    # Austria only: no administrative borders on Mallorca.
-    assert border_segments(39.6, 2.9, 100, 800, 800, kind="state_lines") == []
+
+
+def test_administrative_borders_are_available_worldwide():
+    # California has internal state/county borders, despite not being in Europe.
+    assert border_segments(37.25, -119.5, 400, 800, 800, kind="state_lines")
 
 
 def test_draw_borders_draws_thin_dark_lines():
@@ -46,7 +49,7 @@ def test_draw_borders_draws_thin_dark_lines():
     assert changed and all(p[0] <= 120 and p[1] <= 200 and p[2] <= 80 for p in changed)
     assert any(sum(p) < 100 for p in changed)
     # Thin: roughly one pixel wide along the lines, no wide edge.
-    assert len(changed) < 0.05 * len(pixels)
+    assert len(changed) < 0.06 * len(pixels)
 
 
 def test_region_draws_borders_by_default():

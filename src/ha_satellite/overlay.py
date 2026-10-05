@@ -1,8 +1,7 @@
-"""Country and state borders as an overlay on a rendered region image.
+"""Country and administrative borders as an overlay on a rendered region image.
 
-Country borders worldwide, state borders only for Austria
-(``STATE_COUNTRIES`` in ``scripts/build_borders.py``). The border lines
-come from Natural Earth 1:10m (public domain, generated with
+Country and administrative borders worldwide. The lines come from Natural
+Earth 1:10m (public domain, generated with
 ``scripts/build_borders.py``) and are shipped packed in the package. They
 are projected into the same Lambert azimuthal projection as the target
 region (``satpy_render.target_area``), so lines and image match exactly -

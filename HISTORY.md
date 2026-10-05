@@ -40,15 +40,18 @@ this ran directly in the render job: every run took longer, runs queued up
 **Goal:** Orientation in inland regions (Vienna) — for Mallorca the coast
 shows where you are. pycoast was rejected: it needs the GSHHS/WDBII dataset
 (~150 MB download at runtime or in the image). Instead Natural Earth 1:10m
-land borders, rounded to ~100 m and gzip-packed (~370 KB) in the package,
+land borders, rounded to ~100 m and gzip-packed (~2.2 MB) in the package,
 projected with pyproj into the region's LAEA and drawn with PIL. Points
 outside 1.5 × radius are discarded (line split) to avoid huge pixel values.
 
 Follow-up after rollout: 1 px yellow with a 3 px black outline looked too
 thick (zoomed in the browser), yellow on green landscape had too little
 contrast → black hairlines, drawn 4× supersampled and downscaled
-(anti-aliased, ~1 px); plus the Austrian federal states (Natural Earth
-admin_1, AUT only), fainter.
+(anti-aliased, ~1 px); plus Natural Earth admin_1 boundaries worldwide
+(states, provinces and similar regions), fainter.
+The packaged data makes overlays available immediately without a runtime
+download. Changing the setting also refreshes archived images from available
+source data (including retained FCI raw slots).
 
 ## MTG FCI with raw-data archive (Europe chunks)
 

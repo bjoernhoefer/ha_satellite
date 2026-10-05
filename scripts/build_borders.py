@@ -1,7 +1,7 @@
 """Generates ``src/ha_satellite/overlay_data/borders_10m.json.gz``.
 
 Source: Natural Earth 1:10m "Admin 0 - Boundary Lines" (country borders) and
-"Admin 1 - States, Provinces" lines (states, only ``STATE_COUNTRIES``),
+"Admin 1 - States, Provinces" lines (administrative boundaries worldwide),
 public domain (https://www.naturalearthdata.com/about/terms-of-use/).
 
     python scripts/build_borders.py ne_10m_admin_0_boundary_lines_land.geojson \
@@ -20,14 +20,12 @@ TARGET = Path(__file__).resolve().parent.parent / "src/ha_satellite/overlay_data
 
 
 def _lines(geometry):
+    if not geometry:
+        return
     if geometry["type"] == "LineString":
         yield geometry["coordinates"]
     elif geometry["type"] == "MultiLineString":
         yield from geometry["coordinates"]
-
-
-# Countries whose internal administrative borders (states) are included.
-STATE_COUNTRIES = {"AUT"}
 
 
 def _read_lines(source: str, keep=lambda props: True) -> list:
@@ -49,11 +47,10 @@ def _read_lines(source: str, keep=lambda props: True) -> list:
 
 def main(countries: str, states: str) -> None:
     lines = _read_lines(countries)
-    state_lines = _read_lines(states, lambda props: props.get("ADM0_A3") in STATE_COUNTRIES)
+    state_lines = _read_lines(states)
     payload = json.dumps(
         {
-            "source": "Natural Earth 1:10m admin_0_boundary_lines_land + admin_1_states_provinces_lines",
-            "state_countries": sorted(STATE_COUNTRIES),
+            "source": "Natural Earth 1:10m admin_0_boundary_lines_land + worldwide admin_1_states_provinces_lines",
             "lines": lines,
             "state_lines": state_lines,
         },

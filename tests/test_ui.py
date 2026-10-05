@@ -11,7 +11,10 @@ from __future__ import annotations
 import json
 import os
 import re
+import time
+from datetime import datetime, timedelta, timezone
 
+import httpx
 import pytest
 import yaml
 
@@ -678,6 +681,31 @@ def test_change_composite_rerenders_and_updates_preview(ui, live_server):
 
 def test_toggle_borders_rerenders(ui, live_server):
     live_server.ensure_frames("wien", 1)
+    from ha_satellite.archive import RenderArchive, region_signature
+    from ha_satellite.config import RegionConfig
+
+    archive = RenderArchive(live_server.data_dir / "frames" / "_renders")
+    wien = next(
+        region for region in httpx.get(f"{live_server.url}/api/config").json()["regions"]
+        if region["name"] == "wien"
+    )
+    region = RegionConfig(**wien)
+    archive.sync_region("wien", region_signature(region))
+    sensing = datetime.now(timezone.utc) - timedelta(minutes=1)
+    original = archive.store(
+        "wien", "dummy", "cloudtop", sensing,
+        httpx.get(f"{live_server.url}/regions/wien/latest.png").content,
+    )
+    assert original is not None
+
+    def wait_for_archive_rerender(previous_path) -> None:
+        deadline = time.monotonic() + 20
+        while time.monotonic() < deadline:
+            if not previous_path.exists() and archive.images("wien", "dummy", "cloudtop"):
+                return
+            time.sleep(0.1)
+        raise AssertionError("Archived images were not regenerated after changing borders")
+
     before = {f["filename"] for f in live_server.frames("wien")}
     box = ui.get_by_test_id("region-borders-wien")
     expect(box).to_be_checked()
@@ -687,6 +715,7 @@ def test_toggle_borders_rerenders(ui, live_server):
     regions = {r["name"]: r for r in _stored(live_server)["regions"]}
     assert regions["wien"]["borders"] is False
     assert regions["mallorca"]["borders"] is True
+    wait_for_archive_rerender(original.path)
 
     ui.wait_for_function(
         "(n) => document.querySelectorAll('[data-testid^=\"history-item-wien-\"]').length > n",
@@ -696,8 +725,13 @@ def test_toggle_borders_rerenders(ui, live_server):
     assert latest["filename"] not in before
     assert latest["borders"] is False
 
+    previous_path = archive.images("wien", "dummy", "cloudtop")[0].path
+    box.check()
+    expect(ui.get_by_test_id("refresh-message-wien")).to_contain_text("Country borders enabled")
+    wait_for_archive_rerender(previous_path)
+
     ui.reload()
-    expect(ui.get_by_test_id("region-borders-wien")).not_to_be_checked()
+    expect(ui.get_by_test_id("region-borders-wien")).to_be_checked()
 
 
 def test_borders_checkbox_on_mobile(mobile_page, live_server):
