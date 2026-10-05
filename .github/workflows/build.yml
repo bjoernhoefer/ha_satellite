@@ -19,6 +19,8 @@ jobs:
   build:
     needs: test
     runs-on: ubuntu-latest
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
     permissions:
       contents: read
       packages: write
@@ -57,6 +59,7 @@ jobs:
             type=raw,value=${{ env.APP_VERSION }},enable={{is_default_branch}}
 
       - name: Build (and push, except for PRs)
+        id: build
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -69,6 +72,48 @@ jobs:
             VERSION=${{ env.APP_VERSION }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  deploy:
+    needs: build
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: [self-hosted, linux, ARM64, deploy-satellite]
+    permissions: {}
+    concurrency:
+      group: deploy-ha_satellite
+      cancel-in-progress: false
+    timeout-minutes: 20
+    steps:
+      - name: Skip if superseded
+        id: superseded
+        env:
+          REPOSITORY: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          MAIN_SHA=$(git ls-remote --exit-code "https://github.com/${REPOSITORY}" refs/heads/main | cut -f1)
+          if [[ -z "$MAIN_SHA" ]]; then
+            echo "::error::Could not determine the current main SHA"
+            exit 1
+          fi
+          if [[ "$MAIN_SHA" != "$GITHUB_SHA" ]]; then
+            echo "::notice::Skipping superseded build $GITHUB_SHA (main is $MAIN_SHA)"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Deploy
+        if: steps.superseded.outputs.skip == 'false'
+        env:
+          DIGEST: ${{ needs.build.outputs.digest }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "::error::Invalid image digest"
+            exit 1
+          fi
+          sudo -n -u bjoern /usr/local/bin/ha-deploy ha_satellite "ghcr.io/bjoernhoefer/ha_satellite@${DIGEST}" "${GITHUB_SHA}"
 
   test:
     runs-on: ubuntu-latest

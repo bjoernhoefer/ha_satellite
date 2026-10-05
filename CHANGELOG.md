@@ -3,6 +3,22 @@
 All notable changes to this project are documented in this file.
 The project follows [Semantic Versioning](https://semver.org/).
 
+## [1.3.0] — 2026-10-05
+
+### Added
+
+- Continuous deployment after successful tests and GHCR image publication
+  on `main`, using a self-hosted ARM64 runner labelled `deploy-satellite`.
+  Deployments use the exact build digest and skip superseded builds.
+  The separately installed host script `ha-deploy` performs health checks,
+  rollback on failure and host-wide deployment locking.
+
+### Changed
+
+- Replaced the optional Watchtower service with GitHub Actions deployment.
+  The application now explicitly opts out of host-wide Watchtower updates.
+  Manual updates with Docker Compose remain supported.
+
 ## [1.2.2] — 2026-10-03
 
 ### Fixed
