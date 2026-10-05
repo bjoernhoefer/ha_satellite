@@ -121,7 +121,7 @@ def _as_utc(value: datetime) -> datetime:
 
 
 def _safe_name(collection_id: str) -> str:
-    return collection_id.replace(":", "_")
+    return re.sub(r"[^A-Za-z0-9_-]", "_", collection_id) or "_"
 
 
 def chunk_of(filename: str) -> int | None:

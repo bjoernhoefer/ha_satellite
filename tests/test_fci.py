@@ -574,3 +574,14 @@ def test_startup_recovers_deleted_images_from_retained_fci_slots(tmp_path, monke
     assert RenderArchive(frames / "_renders").count() == len(calls)
     scheduler._reschedule()
     assert len([job for job in scheduler._scheduler.get_jobs() if job.id.startswith("archive-borders-")]) == 1
+
+
+@pytest.mark.parametrize("collection", ["../outside", "/tmp/outside", "..", ".", "a/b", "a\\b"])
+def test_collection_directory_cannot_escape_archive_root(tmp_path, collection):
+    from ha_satellite.sources.fci_archive import FciArchive
+
+    archive = FciArchive(tmp_path / "_archive")
+    directory = archive.collection_dir(collection)
+    assert directory.parent == archive.root
+    assert directory.resolve().is_relative_to(archive.root.resolve())
+    assert archive.slots(collection) == []
