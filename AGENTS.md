@@ -18,7 +18,7 @@
 | Item | Value |
 |---|---|
 | Host | Any Docker host, `linux/amd64` or `linux/arm64` (e.g. Raspberry Pi 5) |
-| Operation | Docker Compose (`docker-compose.yml`), optional Watchtower for auto updates |
+| Operation | Docker Compose (`docker-compose.yml`), GitHub Actions for auto updates |
 | Consumers | One or more Home Assistant instances (see `docs/homeassistant.md`) |
 | Network | Private network; remote sites via any VPN/routing that reaches `<host>:6060` |
 | Auth | None — private network only |
@@ -288,21 +288,25 @@ docker compose up -d
 - **Image:** a multi-arch image (`linux/amd64`, `linux/arm64`) is built by
   `.github/workflows/build.yml` and pushed to
   `ghcr.io/bjoernhoefer/ha_satellite` on every push to `main` and on tags.
-  Private package: hosts (and Watchtower) need `docker login ghcr.io` and
-  Watchtower must mount `~/.docker/config.json` as `/config.json:ro`.
-- **Auto updates:** `docker-compose.yml` includes an optional `watchtower`
-  service (`containrrr/watchtower`). It only updates containers labelled
-  `com.centurylinklabs.watchtower.enable=true`, polls every
-  `WATCHTOWER_POLL_INTERVAL` seconds (default `3600`) and runs with
-  `--cleanup`. Other containers on the host are not touched. Opt-in via
-  `docker compose --profile watchtower up -d` (container
-  `ha_satellite_watchtower`); skip it if the host already runs Watchtower.
+  If the package is private, the deployment user needs `docker login ghcr.io`.
+- **Auto updates:** tests → GHCR image → deploy job on a self-hosted ARM64
+  runner labelled `deploy-satellite` → host-installed `ha-deploy` with a
+  health check and rollback on failure (nonzero exit). Only pushes and manual
+  workflow runs on `main` deploy; stale builds are skipped. The runner runs
+  as dedicated user `gh-deploy`, without Docker access, and may only call
+  `/usr/local/bin/ha-deploy` via sudo as `bjoern`. It checks out no repository
+  code and runs no third-party actions. Host setup is separate; `ha-deploy`
+  uses a host-wide `flock` lock and tags the build digest locally as `latest`
+  before `docker compose up -d --no-build --pull never --wait` for this
+  service. The CD host uses `HA_SATELLITE_TAG=latest`. Fork PR workflows
+  require manual approval and never deploy. Watchtower is explicitly disabled
+  by the container label. Manual updates remain
+  `docker compose pull && docker compose up -d`.
 - **Compose `.env` variables:** `HOST_DATA_DIR` (host data directory,
   default `./data`), `HA_SATELLITE_TAG` (image tag, default `latest`; pin
   e.g. `1.0` to stay on a minor line), `HA_SATELLITE_PORT` (default `6060`),
-  `WATCHTOWER_POLL_INTERVAL` (default `3600`), `TZ`, plus the optional
-  EUMETSAT credentials. `HA_SATELLITE_DATA_DIR` is an in-container app
-  variable, not the host path.
+  plus the optional EUMETSAT credentials. `HA_SATELLITE_DATA_DIR` is an
+  in-container app variable, not the host path.
 - Memory limit in Compose (`deploy.resources.limits.memory: 768M`), so the
   service coexists with other workloads on small hosts.
 
@@ -310,7 +314,7 @@ docker compose up -d
 
 - Semantic version in `src/ha_satellite/__init__.py` (`__version__`) and
   `pyproject.toml`; both must match (`tests/test_version.py`). Current:
-  **1.2.1**.
+  **1.3.0**.
 - Shown in the web UI footer and returned by `GET /api/version`.
 - Releases are git tags `vX.Y.Z`; CI builds them into the image tags
   `X.Y.Z`, `X.Y` and `latest`.

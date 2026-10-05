@@ -4,7 +4,7 @@ Containerised service that downloads EUMETSAT satellite imagery, renders it
 into regional crops and exposes it to **Home Assistant** as camera entities
 (still image, history, MJPEG loop, GIF/MP4 animation).
 
-> **Status:** Version 1.2.0. `msg_seviri` delivers
+> **Status:** Version 1.3.0. `msg_seviri` delivers
 > real images from MSG SEVIRI (Rapid Scan every 5 minutes or 0°), `mtg_fci`
 > from MTG FCI (1 km, with a raw-data archive for rendering after the fact),
 > both rendered with Satpy; `data_tailor` still delivers placeholder images
@@ -16,7 +16,7 @@ into regional crops and exposes it to **Home Assistant** as camera entities
 ```bash
 git clone https://github.com/bjoernhoefer/ha_satellite.git
 cd ha_satellite
-cp .env.example .env   # optional: EUMETSAT credentials, data directory, Watchtower interval
+cp .env.example .env   # optional: EUMETSAT credentials, data directory
 docker compose up -d --build
 ```
 
@@ -57,8 +57,6 @@ to build locally.
 | `HOST_DATA_DIR` | `./data` | Host directory mounted to `/data` |
 | `HA_SATELLITE_TAG` | `latest` | Image tag (pin e.g. `1.0` to stay on a minor line) |
 | `HA_SATELLITE_PORT` | `6060` | Published web port |
-| `WATCHTOWER_POLL_INTERVAL` | `3600` | Watchtower check interval in seconds |
-| `TZ` | | Time zone |
 | `EUMETSAT_CONSUMER_KEY` / `EUMETSAT_CONSUMER_SECRET` | | Optional credentials (override the UI) |
 
 ### Configuration persistence
@@ -73,31 +71,47 @@ Because the container itself is stateless, the configuration survives image
 updates, `docker compose pull` / `up -d` and container recreation.
 **Backup** = copy that directory (e.g. `tar czf ha_satellite-backup.tgz data/`).
 
-### Automatic updates (Watchtower)
+### Automatic updates (GitHub Actions)
 
-`docker-compose.yml` contains an optional `watchtower` service
-([containrrr/watchtower](https://containrrr.dev/watchtower/)). It only
-updates containers labelled `com.centurylinklabs.watchtower.enable=true`
-(the `ha_satellite` service carries this label; other containers on the
-host are left alone), checks every `WATCHTOWER_POLL_INTERVAL` seconds
-(default `3600`) and removes old images (`--cleanup`). It is opt-in via a
-Compose profile: `docker compose --profile watchtower up -d`.
+The rollout is **tests (including UI click tests) → multi-arch image in
+GHCR → deploy job on a self-hosted runner → health check / rollback**.
+`.github/workflows/build.yml` deploys only pushes to `main` and manual
+`workflow_dispatch` runs on `main`, never pull requests or release tags.
+The runner must have labels `self-hosted`, `linux`, `ARM64` and
+`deploy-satellite`. Fork PRs require manual approval before their workflows
+run; PR builds stay on GitHub-hosted runners.
 
-If the host **already runs Watchtower**, do not start a second one - the
-existing instance updates `ha_satellite` too. If the package is private,
-it needs the registry login: mount the host's `~/.docker/config.json` into
-it as `/config.json:ro` (after `docker login ghcr.io` on the host).
+Host setup is separate from this repository: the runner runs as the
+dedicated user `gh-deploy`, without Docker access, and may only invoke
+`/usr/local/bin/ha-deploy` via sudo as `bjoern`. The deploy job does not
+check out the repository or execute third-party actions on the host.
+Before deployment it checks the current `main` SHA and skips superseded
+builds. Deployments are serialized and use the validated, immutable image
+digest from the build job.
 
-GitHub Actions (`.github/workflows/build.yml`) builds a multi-arch image
-(`linux/amd64`, `linux/arm64`) and publishes it to GHCR on every push to
-`main` and on every release tag. Once the GHCR package is public, no
-credentials are needed at all.
+The host-installed `ha-deploy` script pulls that digest, tags it locally
+as `:latest` and runs `docker compose up -d --no-build --pull never --wait`
+for `ha_satellite` only. It holds a host-wide `flock` lock; a failed health
+check rolls back to the previous image and exits nonzero. The CD host must
+use `HA_SATELLITE_TAG=latest` (the default). Compose explicitly sets
+`com.centurylinklabs.watchtower.enable=false`, including protection from a
+host-wide Watchtower instance.
+
+Manual updates remain available from the installation directory:
+
+```bash
+docker compose pull && docker compose up -d
+```
+
+When migrating, stop and remove any previously installed
+`ha_satellite_watchtower` container. GitHub Actions still publishes images
+for release tags; tag builds do not trigger deployment.
 
 ### Versioning and releases
 
 ha_satellite uses [semantic versioning](https://semver.org/). The version is
 defined in `src/ha_satellite/__init__.py` (`__version__`) and in
-`pyproject.toml` (both must match; current: **1.2.0**). It is shown in the
+`pyproject.toml` (both must match; current: **1.3.0**). It is shown in the
 web UI footer and returned by `GET /api/version`.
 
 Releases are git tags `vX.Y.Z`; CI builds them into the image tags `X.Y.Z`,
