@@ -187,6 +187,12 @@ async def post_config(payload: dict):
 
 async def _save_config(old: AppConfig, new: AppConfig, move_existing: bool) -> int:
     """Saves the configuration; switches the storage location if needed."""
+    old_regions = {region.name: region for region in old.regions}
+    changed_borders = {
+        region.name
+        for region in new.regions
+        if region.name in old_regions and region.borders != old_regions[region.name].borders
+    }
     try:
         location_change.check_locations(old, new)
     except location_change.LocationError as exc:
@@ -227,6 +233,8 @@ async def _save_config(old: AppConfig, new: AppConfig, move_existing: bool) -> i
     else:
         config_store.update(new)
     scheduler.reload()
+    if changed_borders:
+        scheduler.refresh_archived_regions(changed_borders)
     return moved
 
 

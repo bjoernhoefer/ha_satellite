@@ -211,7 +211,7 @@
         <label class="inline">
           <input type="checkbox" class="region-borders" data-region="{{ region.name }}"
                  data-testid="region-borders-{{ region.name }}" {% if region.borders %}checked{% endif %}>
-          Draw country borders (incl. Austrian states)
+          Draw country and regional borders
         </label>
         <div class="warning" data-testid="region-warning-{{ region.name }}"
              {% if config.sources.is_enabled(region.source) %}hidden{% endif %}>

@@ -159,17 +159,19 @@ request (the result lands in the archive).
 
 ### Country border overlay
 
-Per region, `borders: true` (default, checkbox "Draw country borders") makes
-the render child process draw the national borders (black, ~1 px) and the
-Austrian federal states (black, fainter, ~0.75 px) as anti-aliased hairlines
-into the image (`overlay.py`, 4× supersampled), for SEVIRI and FCI (also
-archive renders; the cache name contains the switch). Data: Natural Earth
-1:10m `admin_0_boundary_lines_land` + `admin_1_states_provinces_lines` (only
-`STATE_COUNTRIES` = AUT, public domain), packed in
-`overlay_data/borders_10m.json.gz` (~370 KB, regenerate with
-`scripts/build_borders.py`). Projected into the same LAEA as the target
+Per region, `borders: true` (default, checkbox "Draw country and regional
+borders") makes the render child process draw worldwide national borders
+(black, ~1 px) and worldwide administrative borders (states, provinces and
+similar regions; black, fainter, ~0.75 px) as anti-aliased hairlines into the
+image (`overlay.py`, 4× supersampled), for SEVIRI and FCI (also archive
+renders; the cache name contains the switch). Data: Natural Earth 1:10m
+`admin_0_boundary_lines_land` + `admin_1_states_provinces_lines` (public
+domain), packed in `overlay_data/borders_10m.json.gz` (~2.2 MB, regenerate
+with `scripts/build_borders.py`). Projected into the same LAEA as the target
 region — no pycoast/GSHHS needed. No coastlines. Toggling counts like a
 composite change (the frame remembers `borders`) and re-renders immediately.
+Existing archive images for a changed region are regenerated from available
+source data; retained FCI raw slots are backfilled.
 
 ### MTG FCI and raw-data archive (mtg_fci)
 
