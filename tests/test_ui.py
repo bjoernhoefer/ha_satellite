@@ -965,6 +965,52 @@ def test_archive_viewer_on_the_phone(mobile_page, live_server):
     expect(mobile_page.get_by_test_id("viewer")).to_be_hidden()
 
 
+@pytest.mark.parametrize("page_fixture", ["page", "mobile_page"])
+def test_fci_archive_renders_once_when_browsing_and_reopening(request, page_fixture, fci_server):
+    from ha_satellite.archive import RenderArchive
+    from ha_satellite.config import DEFAULT_FCI_COMPOSITE
+
+    page = request.getfixturevalue(page_fixture)
+    url, calls, frames, names = fci_server
+    archive = RenderArchive(frames / "_renders")
+    archive.store("wien", "dummy", "cloudtop", datetime(2026, 9, 26, tzinfo=timezone.utc), _png("blue"))
+    errors = []
+    page.on("pageerror", lambda error: errors.append(str(error)))
+    page.goto(url + "/")
+    page.get_by_test_id("archive-wien").click()
+    page.get_by_test_id("viewer-source").select_option("mtg_fci")
+    image = page.get_by_test_id("viewer-image")
+    expect(image).to_have_attribute("src", re.compile(names[1]))
+    _image_loaded(page, "viewer-image")
+    page.get_by_test_id("viewer-prev").click()
+    expect(image).to_have_attribute("src", re.compile(names[0]))
+    _image_loaded(page, "viewer-image")
+    assert len(calls) == 2
+
+    for _ in range(2):
+        page.get_by_test_id("viewer-close").click()
+        page.get_by_test_id("archive-wien").click()
+        page.get_by_test_id("viewer-source").select_option("mtg_fci")
+        for ext in ("jpg", "png"):
+            page.get_by_test_id("viewer-format").select_option(ext)
+            _image_loaded(page, "viewer-image")
+            page.get_by_test_id("viewer-prev").click()
+            _image_loaded(page, "viewer-image")
+            page.get_by_test_id("viewer-next").click()
+            _image_loaded(page, "viewer-image")
+        expect(page.get_by_test_id("viewer-loading")).to_be_hidden()
+    page.reload()  # Deep link restores the same source/composite and cache.
+    expect(page.get_by_test_id("viewer-source")).to_have_value("mtg_fci")
+    _image_loaded(page, "viewer-image")
+    listing = httpx.get(f"{url}/api/regions/wien/archive", params={
+        "source": "mtg_fci", "composite": DEFAULT_FCI_COMPOSITE,
+    }).json()
+    assert {item["name"] for item in listing["images"]} == set(names)
+    assert all(item["cached"] for item in listing["images"])
+    assert len(calls) == 2
+    assert errors == []
+
+
 def test_archive_deep_link_restores_source_and_image_type(ui, live_server):
     _archive_images(live_server, composite="airmass")
     ui.goto(ui.url.split("#")[0] + "#archive=wien&s=dummy&c=airmass&f=png")
@@ -1003,16 +1049,23 @@ def test_archive_settings_are_saved(ui, live_server):
 
 
 def test_archive_all_now_renders_every_image_type(ui, live_server):
+    from ha_satellite.config import default_config
+    from ha_satellite.sources import archive_composites
+
+    expected_types = sorted(archive_composites(default_config().sources.get("dummy")))
     ui.get_by_test_id("archive-render-now").click()
     expect(ui.get_by_test_id("archive-render-message")).to_contain_text("Archiving")
 
     renders = live_server.data_dir / "frames" / "_renders" / "wien" / "dummy"
     for _ in range(60):
-        if renders.is_dir() and len(list(renders.iterdir())) > 1:
+        if all(
+            (renders / composite).is_dir() and any((renders / composite).glob("*.jpg"))
+            for composite in expected_types
+        ):
             break
         ui.wait_for_timeout(500)
     types = sorted(p.name for p in renders.iterdir() if p.is_dir())
-    assert len(types) > 1, types
+    assert types == expected_types
 
     ui.reload()
     ui.get_by_test_id("archive-wien").click()

@@ -456,7 +456,7 @@ def _pending_fci_slots(config, region, entry, composite: str, known: set[str]) -
         base = f"/regions/{region.name}/archive/{entry.id}/{composite}/{slot.name}"
         items.append({
             "name": slot.name,
-            "created_at": slot.sensing_end.isoformat(),
+            "created_at": slot.archive_time.isoformat(),
             "source": entry.id,
             "composite": composite,
             "available": True,
@@ -495,21 +495,25 @@ async def archive_image(
             headers = {"Cache-Control": "public, max-age=31536000, immutable"}
         return Response(content=path.read_bytes(), media_type=media_type, headers=headers)
 
-    entry = config.sources.get(source)
-    if entry is None or entry.driver != "mtg_fci":
-        raise HTTPException(status_code=404, detail="Image not (or no longer) in the archive")
-    slot = get_archive(archive_root(config)).slot(entry.collection or "", slot_name)
-    if slot is None:
-        raise HTTPException(status_code=404, detail="Slot not (or no longer) in the archive")
-
     def _render() -> bytes:
         with scheduler.exclusive(timeout=ARCHIVE_RENDER_LOCK_TIMEOUT):
             if path.exists():  # created by another request while waiting
                 return path.read_bytes()
+            png_path = path.with_suffix(".png")
+            if ext == "jpg" and png_path.exists():
+                # JPEGs are derived from the cached PNG, never from raw data.
+                archive._write_atomic(path, media.to_jpeg(png_path.read_bytes(), None))
+                return path.read_bytes()
+            entry = config.sources.get(source)
+            if entry is None or entry.driver != "mtg_fci":
+                raise HTTPException(status_code=404, detail="Image not (or no longer) in the archive")
+            slot = get_archive(archive_root(config)).slot(entry.collection or "", slot_name)
+            if slot is None:
+                raise HTTPException(status_code=404, detail="Slot not (or no longer) in the archive")
             logger.info("Archive render %s / %s / %s started", region.name, slot.name, composite)
             frame = render_fci_slot(slot, region, composite)
-        archive.store(region_name, source, composite, slot.sensing_end, frame.png)
-        return path.read_bytes() if path.exists() else frame.png
+            archive.store(region_name, source, composite, slot.archive_time, frame.png)
+            return path.read_bytes()
 
     try:
         payload = await run_in_threadpool(_render)
