@@ -79,6 +79,15 @@ def test_page_shows_all_core_sections(ui):
     expect(ui.get_by_test_id("consumer-secret")).to_have_attribute("type", "password")
 
 
+def test_satellite_favicon_is_loaded(ui):
+    expect(ui.locator('link[rel="icon"]')).to_have_attribute("href", "/favicon.svg")
+
+    response = ui.request.get(ui.url.rstrip("/") + "/favicon.svg")
+    assert response.status == 200
+    assert response.headers["content-type"].startswith("image/svg+xml")
+    assert "🛰" in response.text()
+
+
 def test_enter_and_save_credentials(ui, live_server):
     ui.get_by_test_id("consumer-key").fill("my-consumer-key")
     ui.get_by_test_id("consumer-secret").fill("my-consumer-secret-ABCD")

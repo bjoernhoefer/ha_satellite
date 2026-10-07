@@ -3,6 +3,12 @@
 All notable changes to this project are documented in this file.
 The project follows [Semantic Versioning](https://semver.org/).
 
+## [1.4.0] — 2026-10-07
+
+### Added
+
+- Added the satellite emoji favicon to the web UI.
+
 ## [1.3.2] — 2026-10-05
 
 ### Fixed
