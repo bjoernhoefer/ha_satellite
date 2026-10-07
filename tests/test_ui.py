@@ -82,7 +82,7 @@ def test_page_shows_all_core_sections(ui):
 def test_satellite_favicon_is_loaded(ui):
     expect(ui.locator('link[rel="icon"]')).to_have_attribute("href", "/favicon.svg")
 
-    response = ui.request.get(ui.url + "/favicon.svg")
+    response = ui.request.get(ui.url.rstrip("/") + "/favicon.svg")
     assert response.status == 200
     assert response.headers["content-type"].startswith("image/svg+xml")
     assert "🛰" in response.text()
