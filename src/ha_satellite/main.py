@@ -12,6 +12,7 @@ from pathlib import Path
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import (
+    FileResponse,
     HTMLResponse,
     JSONResponse,
     PlainTextResponse,
@@ -92,6 +93,11 @@ async def lifespan(_app: FastAPI):
 
 
 app = FastAPI(title="ha_satellite", version=__version__, lifespan=lifespan)
+
+
+@app.get("/favicon.svg", include_in_schema=False)
+async def favicon():
+    return FileResponse(BASE_DIR / "static" / "favicon.svg", media_type="image/svg+xml")
 
 
 def _get_region_or_404(config: AppConfig, region_name: str):
