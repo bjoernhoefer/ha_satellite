@@ -18,6 +18,8 @@ Uses APScheduler with its own thread pool so the FastAPI web server
 - **Maintenance:** during a scheduled EUMETSAT maintenance window
   (``maintenance.py``) affected sources are not queried; their regions
   show a black "Currently unavailable due to maintenance" frame instead.
+  Once per hour the source is still queried to verify it is really down;
+  if it delivers a new capture, the window is ended early for that source.
 - After each new frame, thumbnail, JPEG and animations are pre-generated
   (``media.prewarm``) so playback starts immediately.
 
@@ -88,6 +90,8 @@ RETRY_INTERVAL = timedelta(minutes=1)
 # After an error (auth, timeout, ...) retry at the latest after this.
 ERROR_RETRY = timedelta(minutes=5)
 MIN_GAP = timedelta(seconds=15)
+# During maintenance: query the source this often to verify it is still down.
+MAINTENANCE_PROBE_INTERVAL = timedelta(hours=1)
 
 
 def _parse_timestamp(value: str) -> datetime | None:
@@ -114,6 +118,12 @@ class DownloadState:
     last_error: str | None = None
     # Active maintenance window (no Data Store queries meanwhile).
     maintenance: Window | None = None
+    # Hourly verification query during maintenance.
+    next_probe_at: datetime | None = None
+    last_probe_at: datetime | None = None
+    last_probe_result: str | None = None
+    # Window during which the source delivered again (ended early).
+    maintenance_override: Window | None = None
     # Delay between end of capture and availability (recent products);
     # the minimum approximates the real delivery latency.
     latencies: deque = field(default_factory=lambda: deque(maxlen=12))
@@ -308,11 +318,64 @@ class RenderScheduler:
 
     # -- Maintenance -----------------------------------------------------------
     def _maintenance_window(self, config: AppConfig, entry: SourceDefinition | None) -> Window | None:
+        """Active maintenance window, unless the source proved to be back early."""
         if self._maintenance is None or entry is None or entry.driver != "msg_seviri":
             return None
-        return self._maintenance.window_for(
+        window = self._maintenance.window_for(
             entry.collection, config.sources.maintenance_check_hours
         )
+        state = self._downloads.get(entry.id)
+        if window is not None and state is not None and state.maintenance_override == window:
+            return None
+        return window
+
+    def _probe_during_maintenance(
+        self, config: AppConfig, entry: SourceDefinition, state: DownloadState, window: Window
+    ) -> datetime | None:
+        """Hourly query to verify the source is still down.
+
+        Returns the sensing time of a new capture if the source delivers
+        again (the window is then ended early for this source), else ``None``.
+        Failures are expected during maintenance and only logged at INFO.
+        """
+        now = datetime.now(timezone.utc)
+        if state.maintenance != window or state.next_probe_at is None:
+            # Window just started: first verification after one interval.
+            state.next_probe_at = now + MAINTENANCE_PROBE_INTERVAL
+            state.last_probe_at = None
+            state.last_probe_result = None
+            return None
+        if now < state.next_probe_at:
+            return None
+        state.next_probe_at = now + MAINTENANCE_PROBE_INTERVAL
+        state.last_probe_at = now
+        try:
+            sensing = get_source(entry.driver).fetch(entry, config)
+        except Exception as exc:
+            state.last_probe_result = "down"
+            logger.info(
+                "Source %s: maintenance check - still unavailable (%s), next check %s",
+                entry.id, exc, state.next_probe_at.strftime("%H:%M"),
+            )
+            return None
+        if sensing.tzinfo is None:
+            sensing = sensing.replace(tzinfo=timezone.utc)
+        baseline = max(state.last_sensing or window.start, window.start)
+        if sensing <= baseline:
+            state.last_probe_result = "down"
+            logger.info(
+                "Source %s: maintenance check - no new capture (newest %s), next check %s",
+                entry.id, sensing.strftime("%Y-%m-%d %H:%M"), state.next_probe_at.strftime("%H:%M"),
+            )
+            return None
+        state.last_probe_result = "up"
+        state.maintenance_override = window
+        logger.info(
+            "Source %s: new capture %s although maintenance is announced until %s - "
+            "resuming downloads",
+            entry.id, sensing.strftime("%Y-%m-%d %H:%M"), window.end.strftime("%Y-%m-%d %H:%M UTC"),
+        )
+        return sensing
 
     def _pause_for_maintenance(
         self, config: AppConfig, entry: SourceDefinition, state: DownloadState, window: Window
@@ -324,7 +387,10 @@ class RenderScheduler:
         state.last_error = None
         state.next_expected = window.end
         # Re-check at the cycle (cheap, no network) in case the schedule changes.
-        state.due = max(min(window.end, now + cycle), now + MIN_GAP)
+        due = min(window.end, now + cycle)
+        if state.next_probe_at is not None:
+            due = min(due, state.next_probe_at)
+        state.due = max(due, now + MIN_GAP)
         if state.maintenance == window:
             return
         state.maintenance = window
@@ -359,17 +425,22 @@ class RenderScheduler:
         with self._download_lock:
             state = self._downloads.setdefault(source_id, DownloadState())
         window = self._maintenance_window(config, entry)
+        probed = None
         if window is not None:
-            self._pause_for_maintenance(config, entry, state, window)
-            return False
+            probed = self._probe_during_maintenance(config, entry, state, window)
+            if probed is None:
+                self._pause_for_maintenance(config, entry, state, window)
+                return False
         if state.maintenance is not None:
-            logger.info("Source %s: maintenance over - resuming downloads", source_id)
+            if probed is None:
+                logger.info("Source %s: maintenance over - resuming downloads", source_id)
             state.maintenance = None
+            state.next_probe_at = None
         cycle = timedelta(minutes=config.sources.cycle_for(source_id))
         checked = datetime.now(timezone.utc)
         state.last_check_at = checked
         try:
-            sensing = get_source(entry.driver).fetch(entry, config)
+            sensing = probed or get_source(entry.driver).fetch(entry, config)
         except Exception as exc:
             if isinstance(exc, RenderError):
                 logger.error("Download %s failed: %s", source_id, exc)
@@ -448,7 +519,17 @@ class RenderScheduler:
         )
         if window is None:
             return None
-        return {**window.as_dict(), "active": window.active(datetime.now(timezone.utc))}
+        state = self._downloads.get(entry.id)
+        overridden = state is not None and state.maintenance_override == window
+        paused = state is not None and state.maintenance == window
+        return {
+            **window.as_dict(),
+            "active": window.active(datetime.now(timezone.utc)) and not overridden,
+            "ended_early": overridden,
+            "last_probe_at": _iso(state.last_probe_at) if state else None,
+            "last_probe_result": state.last_probe_result if state else None,
+            "next_probe_at": _iso(state.next_probe_at) if paused else None,
+        }
 
     # -- Render ---------------------------------------------------------------
     def _queue_render(self, region_name: str) -> None:

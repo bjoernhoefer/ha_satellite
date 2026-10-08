@@ -106,6 +106,12 @@ publication/update dates are ignored).
 
 During an active window the download job does **not** query the Data Store
 (no error, no warning; INFO log once per window) and re-checks at the cycle.
+Once per hour (`MAINTENANCE_PROBE_INTERVAL`, first one hour after the window
+started) it still queries the source to verify it is down; failures or no
+scan newer than the window start/last scan only log at INFO. A newer scan
+ends the window early for that source (`DownloadState.maintenance_override`):
+the probe's result is processed like a normal download and regions render
+real images again.
 Every region of the source gets one black frame "Currently unavailable due to
 maintenance" + "From <start> to <end> UTC" (composite `maintenance`, so the
 first real scan afterwards renders immediately). Active/next window per

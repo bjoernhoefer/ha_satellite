@@ -132,7 +132,9 @@ Releases are git tags `vX.Y.Z`; CI builds them into the image tags `X.Y.Z`,
   [RSS schedule](https://user.eumetsat.int/resources/service-statuses/rss-schedule)
   is checked regularly. During a maintenance window Rapid Scan sources are not
   queried and their regions show a black "Currently unavailable due to
-  maintenance" image with the start and end of the window.
+  maintenance" image with the start and end of the window. Once per hour
+  the source is still checked; if it delivers again, normal images resume
+  early.
 - **Regions**: name, centre (lat/lon), radius in km (the bounding box is
   derived from it), output size, composite, source. Preconfigured examples:
   `wien` (Vienna) and `mallorca` with the composite

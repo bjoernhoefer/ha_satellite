@@ -15,6 +15,9 @@ The project follows [Semantic Versioning](https://semver.org/).
   image "Currently unavailable due to maintenance" with the start and end of
   the window. Active and upcoming windows are shown in the source table and
   returned by `GET /api/sources`. Downloads resume automatically afterwards.
+- During a maintenance window the source is still queried once per hour to
+  verify that it is down (logged at INFO, no error). If it delivers a new
+  scan before the announced end, downloads and normal images resume early.
 
 ## [1.4.0] — 2026-10-07
 

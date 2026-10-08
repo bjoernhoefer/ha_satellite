@@ -632,9 +632,15 @@
       const window_ = ((sourcesState.downloads || {})[entry.id] || {}).maintenance;
       if (!window_) return "";
       const span = fmtTime(window_.start, true) + " – " + fmtTime(window_.end, true);
+      let text = (window_.active ? "Maintenance, queries paused: " : "Next maintenance: ") + span;
+      if (window_.ended_early) text = "Maintenance " + span + " – source delivers again, downloads resumed";
+      else if (window_.active) {
+        if (window_.last_probe_at) text += " · last check " + fmtTime(window_.last_probe_at)
+          + (window_.last_probe_result === "down" ? " (still down)" : "");
+        if (window_.next_probe_at) text += " · next check " + fmtTime(window_.next_probe_at);
+      }
       return el("div", { class: "badge " + (window_.active ? "warn" : ""),
-        "data-testid": "source-maintenance-" + entry.id,
-        text: (window_.active ? "Maintenance, queries paused: " : "Next maintenance: ") + span });
+        "data-testid": "source-maintenance-" + entry.id, text });
     }
     let jsonDirty = false;
 

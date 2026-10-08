@@ -242,3 +242,67 @@ def test_upcoming_maintenance_is_reported_but_not_applied(tmp_path, monkeypatch,
     assert info["start"] == (now + timedelta(days=1)).isoformat()
     # Other collections are not affected by the RSS schedule.
     assert scheduler.download_status()["msg_seviri_0deg"]["maintenance"] is None
+
+
+def test_source_is_checked_hourly_during_maintenance(tmp_path, monkeypatch, schedule_page):
+    now = datetime.now(UTC).replace(second=0, microsecond=0)
+    schedule_page.body = _page_for(now - timedelta(hours=1), now + timedelta(hours=5))
+    store = ConfigStore(tmp_path / "config.yaml")
+    buffers = BufferManager(tmp_path / "frames")
+    schedule = MaintenanceSchedule(tmp_path / "maintenance.json")
+    scheduler = RenderScheduler(store, buffers, StatusStore(), maintenance=schedule)
+    source = _FetchSource()
+    old_scan = now - timedelta(hours=2)  # newest product before the window
+    source.fetch = lambda entry, config: (setattr(source, "fetches", source.fetches + 1), old_scan)[1]
+    monkeypatch.setattr("ha_satellite.scheduler.get_source", lambda name: source)
+    queued: list[str] = []
+    monkeypatch.setattr(scheduler, "_queue_render", queued.append)
+
+    # Window starts: no query, the first check follows after one hour.
+    assert scheduler.download("msg_seviri") is False
+    state = scheduler._downloads["msg_seviri"]
+    assert source.fetches == 0
+    assert abs((state.next_probe_at - (datetime.now(UTC) + timedelta(hours=1))).total_seconds()) < 5
+    assert state.due <= state.next_probe_at
+    # Before the hour is up: still no query.
+    assert scheduler.download("msg_seviri") is False
+    assert source.fetches == 0
+
+    # Hour is up, the source delivers nothing new: still down, no error.
+    state.next_probe_at = datetime.now(UTC) - timedelta(seconds=1)
+    queued.clear()
+    assert scheduler.download("msg_seviri") is False
+    assert source.fetches == 1
+    assert state.last_error is None and state.last_probe_result == "down"
+    assert state.next_probe_at > datetime.now(UTC) + timedelta(minutes=59)
+    assert queued == []  # maintenance image stays
+    info = scheduler.download_status()["msg_seviri"]["maintenance"]
+    assert info["active"] is True and info["last_probe_result"] == "down"
+    assert info["next_probe_at"]
+
+    # Query fails (typical during maintenance): still down, no error recorded.
+    def failing(entry, config):
+        source.fetches += 1
+        raise RuntimeError("no product")
+
+    source.fetch = failing
+    state.next_probe_at = datetime.now(UTC) - timedelta(seconds=1)
+    assert scheduler.download("msg_seviri") is False
+    assert source.fetches == 2 and state.last_error is None
+
+    # Source delivers again before the announced end: maintenance ended early.
+    fresh = datetime.now(UTC) - timedelta(minutes=2)
+    source.fetch = lambda entry, config: (setattr(source, "fetches", source.fetches + 1), fresh)[1]
+    state.next_probe_at = datetime.now(UTC) - timedelta(seconds=1)
+    assert scheduler.download("msg_seviri") is True
+    assert source.fetches == 3  # the check's result is used, no second query
+    assert sorted(queued) == ["mallorca", "wien"]
+    assert state.maintenance is None and state.last_sensing == fresh
+    info = scheduler.download_status()["msg_seviri"]["maintenance"]
+    assert info["active"] is False and info["ended_early"] is True
+
+    # Normal operation for the rest of the window: real frames, regular downloads.
+    scheduler._run_region("wien")
+    assert buffers.get("wien", 10, 500).latest().composite != MAINTENANCE_COMPOSITE
+    scheduler.download("msg_seviri")
+    assert source.fetches == 4

@@ -657,6 +657,7 @@ def test_maintenance_window_pauses_source_and_shows_image(page, start_server, fa
     badge = page.get_by_test_id("source-maintenance-msg_seviri")
     expect(badge).to_be_visible()
     expect(badge).to_contain_text("Maintenance, queries paused")
+    expect(badge).to_contain_text("next check")
     expect(page.get_by_test_id("source-download-error-msg_seviri")).to_have_count(0)
     _image_loaded(page, "preview-wien")
     # No Data Store query (and so no warning/error) while in maintenance.
