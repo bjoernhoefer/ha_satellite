@@ -3,6 +3,19 @@
 All notable changes to this project are documented in this file.
 The project follows [Semantic Versioning](https://semver.org/).
 
+## [1.5.0] — 2026-10-08
+
+### Added
+
+- Scheduled EUMETSAT maintenance of the Rapid Scan Service is honoured: the
+  [RSS schedule](https://user.eumetsat.int/resources/service-statuses/rss-schedule)
+  is checked every `sources.maintenance_check_hours` hours (default 6, 0 = off,
+  editable in the UI). During a maintenance window RSS sources are not queried
+  (no download errors/warnings in the log) and their regions show a black
+  image "Currently unavailable due to maintenance" with the start and end of
+  the window. Active and upcoming windows are shown in the source table and
+  returned by `GET /api/sources`. Downloads resume automatically afterwards.
+
 ## [1.4.0] — 2026-10-07
 
 ### Added

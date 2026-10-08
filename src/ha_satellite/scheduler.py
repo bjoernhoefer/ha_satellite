@@ -15,6 +15,9 @@ Uses APScheduler with its own thread pool so the FastAPI web server
   important on small hosts that share resources with other services.
   Sources without downloads (placeholders) keep rendering at a fixed
   interval.
+- **Maintenance:** during a scheduled EUMETSAT maintenance window
+  (``maintenance.py``) affected sources are not queried; their regions
+  show a black "Currently unavailable due to maintenance" frame instead.
 - After each new frame, thumbnail, JPEG and animations are pre-generated
   (``media.prewarm``) so playback starts immediately.
 
@@ -40,7 +43,19 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from ha_satellite import media
 from ha_satellite.archive import get_render_archive, region_signature
 from ha_satellite.buffer import BufferManager
-from ha_satellite.config import DEFAULT_FCI_COLLECTION, DOWNLOAD_DRIVERS, AppConfig, ConfigStore
+from ha_satellite.config import (
+    DEFAULT_FCI_COLLECTION,
+    DOWNLOAD_DRIVERS,
+    AppConfig,
+    ConfigStore,
+    SourceDefinition,
+)
+from ha_satellite.maintenance import (
+    MAINTENANCE_COMPOSITE,
+    MaintenanceSchedule,
+    Window,
+    render_maintenance_png,
+)
 from ha_satellite.sources import (
     SOURCE_REGISTRY,
     NoNewData,
@@ -97,6 +112,8 @@ class DownloadState:
     last_new_at: datetime | None = None
     next_expected: datetime | None = None
     last_error: str | None = None
+    # Active maintenance window (no Data Store queries meanwhile).
+    maintenance: Window | None = None
     # Delay between end of capture and availability (recent products);
     # the minimum approximates the real delivery latency.
     latencies: deque = field(default_factory=lambda: deque(maxlen=12))
@@ -112,11 +129,13 @@ class RenderScheduler:
         buffer_manager: BufferManager,
         status_store: StatusStore,
         source_sync: "SourceSync | None" = None,
+        maintenance: MaintenanceSchedule | None = None,
     ) -> None:
         self._config_store = config_store
         self._buffers = buffer_manager
         self._status = status_store
         self._source_sync = source_sync
+        self._maintenance = maintenance
         self._render_lock = threading.Lock()
         self._scheduler = BackgroundScheduler()
         # Region -> settings at the last setup (detects changes).
@@ -287,6 +306,40 @@ class RenderScheduler:
             coalesce=True,
         )
 
+    # -- Maintenance -----------------------------------------------------------
+    def _maintenance_window(self, config: AppConfig, entry: SourceDefinition | None) -> Window | None:
+        if self._maintenance is None or entry is None or entry.driver != "msg_seviri":
+            return None
+        return self._maintenance.window_for(
+            entry.collection, config.sources.maintenance_check_hours
+        )
+
+    def _pause_for_maintenance(
+        self, config: AppConfig, entry: SourceDefinition, state: DownloadState, window: Window
+    ) -> None:
+        """Skip the Data Store query; show the maintenance frame once per window."""
+        now = datetime.now(timezone.utc)
+        cycle = timedelta(minutes=config.sources.cycle_for(entry.id))
+        state.last_check_at = now
+        state.last_error = None
+        state.next_expected = window.end
+        # Re-check at the cycle (cheap, no network) in case the schedule changes.
+        state.due = max(min(window.end, now + cycle), now + MIN_GAP)
+        if state.maintenance == window:
+            return
+        state.maintenance = window
+        regions = [
+            r.name for r in config.regions
+            if r.source == entry.id and config.sources.is_enabled(r.source)
+        ]
+        logger.info(
+            "Source %s: scheduled maintenance %s - Data Store queries paused, "
+            "showing maintenance image for %s",
+            entry.id, window.describe(), ", ".join(regions) or "no region",
+        )
+        for name in regions:
+            self._queue_render(name)
+
     # -- Download --------------------------------------------------------------
     def _tick_download(self, source_id: str) -> None:
         state = self._downloads.setdefault(source_id, DownloadState())
@@ -305,6 +358,13 @@ class RenderScheduler:
             return False
         with self._download_lock:
             state = self._downloads.setdefault(source_id, DownloadState())
+        window = self._maintenance_window(config, entry)
+        if window is not None:
+            self._pause_for_maintenance(config, entry, state, window)
+            return False
+        if state.maintenance is not None:
+            logger.info("Source %s: maintenance over - resuming downloads", source_id)
+            state.maintenance = None
         cycle = timedelta(minutes=config.sources.cycle_for(source_id))
         checked = datetime.now(timezone.utc)
         state.last_check_at = checked
@@ -375,8 +435,20 @@ class RenderScheduler:
                 "latency_seconds": int(state.latency().total_seconds())
                 if state and state.latencies else None,
                 "last_error": state.last_error if state else None,
+                "maintenance": self._maintenance_info(config, entry),
             }
         return result
+
+    def _maintenance_info(self, config: AppConfig, entry: SourceDefinition) -> dict | None:
+        """Active or next maintenance window of the source (no fetch)."""
+        if self._maintenance is None or entry.driver != "msg_seviri":
+            return None
+        window = self._maintenance.next_window_for(
+            entry.collection, config.sources.maintenance_check_hours
+        )
+        if window is None:
+            return None
+        return {**window.as_dict(), "active": window.active(datetime.now(timezone.utc))}
 
     # -- Render ---------------------------------------------------------------
     def _queue_render(self, region_name: str) -> None:
@@ -480,6 +552,9 @@ class RenderScheduler:
             )
             return
         if sensing is None:
+            if self._maintenance_window(config, entry) is not None:
+                logger.info("Archive %s skipped: source under maintenance", source_id)
+                return
             if allow_disabled:
                 try:
                     sensing = get_source(entry.driver).fetch(entry, config)
@@ -686,6 +761,8 @@ class RenderScheduler:
 
         next_run_at = self._next_run_for(config, region.source)
         new_frame = None
+        # Checked before taking the lock: may fetch the schedule page.
+        window = self._maintenance_window(config, config.sources.get(region.source))
 
         if not self._render_lock.acquire(timeout=LOCK_TIMEOUT_SECONDS):
             logger.warning("Could not acquire render lock, skipping %s this cycle", region_name)
@@ -700,38 +777,42 @@ class RenderScheduler:
                 region.name, config.max_frames_for(region), config.history.max_storage_mb
             )
             latest = buffer.latest()
-            # Only compare if the newest frame comes from the same source with the
-            # same composite - otherwise (source/composite switch) render
-            # immediately, even if the capture is older (0° lags Rapid Scan by
-            # ~15 min).
-            same_origin = (
-                latest is not None
-                and latest.source == region.source
-                and latest.composite == region.composite
-                and bool(latest.borders) == region.borders
-            )
-            last_sensing = _parse_timestamp(latest.created_at) if same_origin else None
-            logger.info(
-                "Render %s started (source %s, driver %s, composite %s)",
-                region.name, definition.id, definition.driver, region.composite,
-            )
-            try:
-                rendered = source.render(region, config, last_sensing)
-            except NoNewData as info:
-                logger.info("No new capture for %s: %s", region_name, info)
+            if window is not None:
+                new_frame = self._add_maintenance_frame(region, buffer, latest, window)
+                next_run_at = window.end
             else:
-                new_frame = buffer.add_frame(
-                    rendered.png,
-                    timestamp=rendered.sensing_time,
-                    source=region.source,
-                    composite=region.composite,
-                    borders=region.borders,
+                # Only compare if the newest frame comes from the same source with the
+                # same composite - otherwise (source/composite switch) render
+                # immediately, even if the capture is older (0° lags Rapid Scan by
+                # ~15 min).
+                same_origin = (
+                    latest is not None
+                    and latest.source == region.source
+                    and latest.composite == region.composite
+                    and bool(latest.borders) == region.borders
                 )
+                last_sensing = _parse_timestamp(latest.created_at) if same_origin else None
                 logger.info(
-                    "Render %s finished in %.1f s: %s (%d KB), %d frames in buffer",
-                    region.name, time.monotonic() - started, new_frame.filename,
-                    len(rendered.png) // 1024, len(buffer),
+                    "Render %s started (source %s, driver %s, composite %s)",
+                    region.name, definition.id, definition.driver, region.composite,
                 )
+                try:
+                    rendered = source.render(region, config, last_sensing)
+                except NoNewData as info:
+                    logger.info("No new capture for %s: %s", region_name, info)
+                else:
+                    new_frame = buffer.add_frame(
+                        rendered.png,
+                        timestamp=rendered.sensing_time,
+                        source=region.source,
+                        composite=region.composite,
+                        borders=region.borders,
+                    )
+                    logger.info(
+                        "Render %s finished in %.1f s: %s (%d KB), %d frames in buffer",
+                        region.name, time.monotonic() - started, new_frame.filename,
+                        len(rendered.png) // 1024, len(buffer),
+                    )
             self._status.record_success(region.name, len(buffer), next_run_at)
         except RenderError as exc:
             logger.error("Rendering for %s failed: %s", region_name, exc)
@@ -753,8 +834,34 @@ class RenderScheduler:
                 misfire_grace_time=None,
             )
             # Sources without a download job (placeholders) archive here.
-            if config.archive.render_all and region.source not in self.download_sources(config):
+            if (
+                config.archive.render_all and window is None
+                and region.source not in self.download_sources(config)
+            ):
                 self._queue_archive(region.source, datetime.now(timezone.utc))
+
+    @staticmethod
+    def _add_maintenance_frame(region, buffer, latest, window: Window):
+        """Black "unavailable due to maintenance" frame, once per window."""
+        if (
+            latest is not None
+            and latest.composite == MAINTENANCE_COMPOSITE
+            and latest.source == region.source
+            and (_parse_timestamp(latest.created_at) or window.start) >= window.start
+        ):
+            return None
+        frame = buffer.add_frame(
+            render_maintenance_png(region.width, region.height, window),
+            timestamp=datetime.now(timezone.utc),
+            source=region.source,
+            composite=MAINTENANCE_COMPOSITE,
+            borders=region.borders,
+        )
+        logger.info(
+            "Region %s: source %s under maintenance (%s) - maintenance image shown",
+            region.name, region.source, window.describe(),
+        )
+        return frame
 
     def _prewarm(self, region_name: str, buffer, fps: float) -> None:
         try:
