@@ -22,6 +22,7 @@ def deploy_job():
 def test_deployment_contract(deploy_job):
     workflow = yaml.safe_load((ROOT / ".github/workflows/build.yml").read_text())
     build = workflow["jobs"]["build"]
+    assert workflow["env"]["IMAGE_NAME"] == "${{ github.repository_owner }}/ha_satimage"
     assert build["outputs"]["digest"] == "${{ steps.build.outputs.digest }}"
     assert any(
         step.get("id") == "build" and step["uses"] == "docker/build-push-action@v6"

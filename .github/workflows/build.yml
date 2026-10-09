@@ -10,7 +10,7 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}
+  IMAGE_NAME: ${{ github.repository_owner }}/ha_satimage
 
 permissions:
   contents: read
@@ -113,7 +113,7 @@ jobs:
             echo "::error::Invalid image digest"
             exit 1
           fi
-          sudo -n -u bjoern /usr/local/bin/ha-deploy ha_satimage "ghcr.io/bjoernhoefer/ha_satimage@${DIGEST}" "${GITHUB_SHA}"
+          sudo -n -u bjoern /usr/local/bin/ha-deploy ha_satimage "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${DIGEST}" "${GITHUB_SHA}"
 
   test:
     runs-on: ubuntu-latest
