@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from ha_satellite.config import (
+from ha_satimage.config import (
     VALID_DRIVERS,
     AppConfig,
     ConfigStore,
@@ -78,7 +78,7 @@ def test_legacy_active_list_is_migrated_to_catalog():
 def test_storage_path_must_be_absolute():
     with pytest.raises(ValueError, match="absolute"):
         StorageConfig(frames_dir="relative/path")
-    assert StorageConfig(frames_dir="/mnt/data/ha_satellite/").frames_dir == "/mnt/data/ha_satellite"
+    assert StorageConfig(frames_dir="/mnt/data/ha_satimage/").frames_dir == "/mnt/data/ha_satimage"
     assert StorageConfig(frames_dir="").frames_dir == ""
 
 

@@ -1,4 +1,4 @@
-"""Generates ``src/ha_satellite/overlay_data/europe_land_50m.json.gz``.
+"""Generates ``src/ha_satimage/overlay_data/europe_land_50m.json.gz``.
 
 Land polygons for the location map of Europe (web UI, "location_change").
 Source: Natural Earth 1:50m "Land", public domain
@@ -16,9 +16,9 @@ import json
 import sys
 from pathlib import Path
 
-TARGET = Path(__file__).resolve().parent.parent / "src/ha_satellite/overlay_data/europe_land_50m.json.gz"
+TARGET = Path(__file__).resolve().parent.parent / "src/ha_satimage/overlay_data/europe_land_50m.json.gz"
 
-# Must cover ha_satellite.location_change.EUROPE_EXTENT (lon_min, lat_min, lon_max, lat_max).
+# Must cover ha_satimage.location_change.EUROPE_EXTENT (lon_min, lat_min, lon_max, lat_max).
 EXTENT = (-27.0, 31.0, 47.0, 74.0)
 
 

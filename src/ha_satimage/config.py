@@ -1,7 +1,7 @@
 """Configuration handling: YAML persistence in /data with env var override.
 
 The configuration is stored as a YAML file (default path
-``/data/config.yaml``, overridable via the ``HA_SATELLITE_CONFIG``
+``/data/config.yaml``, overridable via the ``HA_SATIMAGE_CONFIG``
 environment variable). EUMETSAT credentials can additionally be set via
 environment variables (``EUMETSAT_CONSUMER_KEY`` / ``EUMETSAT_CONSUMER_SECRET``);
 these take precedence over the values stored in the file but are never
@@ -18,9 +18,9 @@ from typing import Any
 import yaml
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from ha_satellite.geometry import bounding_box
+from ha_satimage.geometry import bounding_box
 
-DEFAULT_CONFIG_PATH_ENV = "HA_SATELLITE_CONFIG"
+DEFAULT_CONFIG_PATH_ENV = "HA_SATIMAGE_CONFIG"
 DEFAULT_CONFIG_PATH = "/data/config.yaml"
 
 ENV_CONSUMER_KEY = "EUMETSAT_CONSUMER_KEY"
@@ -310,7 +310,7 @@ class StorageConfig(BaseModel):
     def _validate_frames_dir(cls, value: str) -> str:
         value = value.strip()
         if value and not value.startswith("/"):
-            raise ValueError("The storage location must be an absolute path (e.g. /mnt/data/ha_satellite)")
+            raise ValueError("The storage location must be an absolute path (e.g. /mnt/data/ha_satimage)")
         return value.rstrip("/") or ("/" if value else "")
 
 

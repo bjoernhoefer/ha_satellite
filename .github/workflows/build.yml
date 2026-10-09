@@ -10,7 +10,7 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}
+  IMAGE_NAME: ${{ github.repository_owner }}/ha_satimage
 
 permissions:
   contents: read
@@ -43,7 +43,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Read app version
-        run: echo "APP_VERSION=$(sed -n 's/^__version__ = \"\(.*\)\"/\1/p' src/ha_satellite/__init__.py)" >> "$GITHUB_ENV"
+        run: echo "APP_VERSION=$(sed -n 's/^__version__ = \"\(.*\)\"/\1/p' src/ha_satimage/__init__.py)" >> "$GITHUB_ENV"
 
       - name: Metadata (tags/labels)
         id: meta
@@ -79,7 +79,7 @@ jobs:
     runs-on: [self-hosted, linux, ARM64, deploy-satellite]
     permissions: {}
     concurrency:
-      group: deploy-ha_satellite
+      group: deploy-ha_satimage
       cancel-in-progress: false
     timeout-minutes: 20
     steps:
@@ -106,6 +106,7 @@ jobs:
         if: steps.superseded.outputs.skip == 'false'
         env:
           DIGEST: ${{ needs.build.outputs.digest }}
+          IMAGE: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
         shell: bash
         run: |
           set -euo pipefail
@@ -113,7 +114,7 @@ jobs:
             echo "::error::Invalid image digest"
             exit 1
           fi
-          sudo -n -u bjoern /usr/local/bin/ha-deploy ha_satellite "ghcr.io/bjoernhoefer/ha_satellite@${DIGEST}" "${GITHUB_SHA}"
+          sudo -n -u bjoern /usr/local/bin/ha-deploy ha_satimage "${IMAGE}@${DIGEST}" "${GITHUB_SHA}"
 
   test:
     runs-on: ubuntu-latest
@@ -131,7 +132,7 @@ jobs:
 
       - name: Verify version (tag must match __version__)
         run: |
-          VERSION=$(python -c "import ha_satellite; print(ha_satellite.__version__)")
+          VERSION=$(python -c "import ha_satimage; print(ha_satimage.__version__)")
           echo "Version: $VERSION"
           if [[ "$GITHUB_REF" == refs/tags/v* && "${GITHUB_REF#refs/tags/v}" != "$VERSION" ]]; then
             echo "::error::Tag ${GITHUB_REF#refs/tags/} does not match version $VERSION"; exit 1
@@ -142,7 +143,7 @@ jobs:
 
       - name: Run tests (including UI click tests)
         env:
-          HA_SATELLITE_REQUIRE_UI_TESTS: "1"
+          HA_SATIMAGE_REQUIRE_UI_TESTS: "1"
         run: pytest -q --tracing retain-on-failure
       - name: Upload Playwright traces on failure
         if: failure()

@@ -34,7 +34,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 logger = logging.getLogger(__name__)
 
-URL_ENV = "HA_SATELLITE_MAINTENANCE_URL"
+URL_ENV = "HA_SATIMAGE_MAINTENANCE_URL"
 DEFAULT_URL = "https://user.eumetsat.int/resources/service-statuses/rss-schedule"
 REQUEST_TIMEOUT = 20
 # After a failed fetch, try again at the latest after this.
@@ -188,7 +188,7 @@ def parse_schedule(page: str) -> list[Window]:
 
 def _fetch(url: str) -> str:
     request = urllib.request.Request(
-        url, headers={"Accept": "text/html,application/json", "User-Agent": "ha_satellite"}
+        url, headers={"Accept": "text/html,application/json", "User-Agent": "ha_satimage"}
     )
     with urllib.request.urlopen(request, timeout=REQUEST_TIMEOUT) as response:  # noqa: S310
         charset = response.headers.get_content_charset() or "utf-8"

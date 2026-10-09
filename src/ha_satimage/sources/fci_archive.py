@@ -24,8 +24,8 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from ha_satellite.archive import SLOT_FORMAT, slot_name, slot_time
-from ha_satellite.config import (
+from ha_satimage.archive import SLOT_FORMAT, slot_name, slot_time
+from ha_satimage.config import (
     FCI_CHUNK_COUNT,
     AppConfig,
     EumetsatCredentials,

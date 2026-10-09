@@ -11,10 +11,10 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import pytest
 from PIL import Image
 
-from ha_satellite import maintenance
-from ha_satellite.buffer import BufferManager
-from ha_satellite.config import ConfigStore
-from ha_satellite.maintenance import (
+from ha_satimage import maintenance
+from ha_satimage.buffer import BufferManager
+from ha_satimage.config import ConfigStore
+from ha_satimage.maintenance import (
     MAINTENANCE_COMPOSITE,
     MaintenanceSchedule,
     Window,
@@ -22,9 +22,9 @@ from ha_satellite.maintenance import (
     parse_schedule,
     render_maintenance_png,
 )
-from ha_satellite.scheduler import RenderScheduler
-from ha_satellite.sources import RenderedFrame
-from ha_satellite.status import StatusStore
+from ha_satimage.scheduler import RenderScheduler
+from ha_satimage.sources import RenderedFrame
+from ha_satimage.status import StatusStore
 
 UTC = timezone.utc
 
@@ -183,7 +183,7 @@ def test_scheduler_pauses_queries_and_shows_maintenance_frame(tmp_path, monkeypa
     schedule = MaintenanceSchedule(tmp_path / "maintenance.json")
     scheduler = RenderScheduler(store, buffers, StatusStore(), maintenance=schedule)
     source = _FetchSource()
-    monkeypatch.setattr("ha_satellite.scheduler.get_source", lambda name: source)
+    monkeypatch.setattr("ha_satimage.scheduler.get_source", lambda name: source)
     queued: list[str] = []
     monkeypatch.setattr(scheduler, "_queue_render", queued.append)
 
@@ -232,7 +232,7 @@ def test_upcoming_maintenance_is_reported_but_not_applied(tmp_path, monkeypatch,
     schedule = MaintenanceSchedule(tmp_path / "maintenance.json")
     scheduler = RenderScheduler(store, BufferManager(tmp_path / "frames"), StatusStore(), maintenance=schedule)
     source = _FetchSource()
-    monkeypatch.setattr("ha_satellite.scheduler.get_source", lambda name: source)
+    monkeypatch.setattr("ha_satimage.scheduler.get_source", lambda name: source)
     monkeypatch.setattr(scheduler, "_queue_render", lambda name: None)
 
     assert scheduler.download("msg_seviri") is True
@@ -254,7 +254,7 @@ def test_source_is_checked_hourly_during_maintenance(tmp_path, monkeypatch, sche
     source = _FetchSource()
     old_scan = now - timedelta(hours=2)  # newest product before the window
     source.fetch = lambda entry, config: (setattr(source, "fetches", source.fetches + 1), old_scan)[1]
-    monkeypatch.setattr("ha_satellite.scheduler.get_source", lambda name: source)
+    monkeypatch.setattr("ha_satimage.scheduler.get_source", lambda name: source)
     queued: list[str] = []
     monkeypatch.setattr(scheduler, "_queue_render", queued.append)
 

@@ -2,7 +2,7 @@ import math
 
 import pytest
 
-from ha_satellite.geometry import bounding_box
+from ha_satimage.geometry import bounding_box
 
 
 def test_bounding_box_symmetric_at_equator():

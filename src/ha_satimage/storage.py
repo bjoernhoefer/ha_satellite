@@ -16,9 +16,9 @@ import shutil
 import uuid
 from pathlib import Path
 
-STORAGE_ROOTS_ENV = "HA_SATELLITE_STORAGE_ROOTS"
+STORAGE_ROOTS_ENV = "HA_SATIMAGE_STORAGE_ROOTS"
 DEFAULT_STORAGE_ROOTS = "/mnt:/media"
-SUBDIR = "ha_satellite"
+SUBDIR = "ha_satimage"
 
 
 class StorageError(Exception):

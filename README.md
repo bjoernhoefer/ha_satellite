@@ -1,4 +1,4 @@
-# ha_satellite
+# ha_satimage
 
 Containerised service that downloads EUMETSAT satellite imagery, renders it
 into regional crops and exposes it to **Home Assistant** as camera entities
@@ -14,8 +14,8 @@ into regional crops and exposes it to **Home Assistant** as camera entities
 ## Quick start
 
 ```bash
-git clone https://github.com/bjoernhoefer/ha_satellite.git
-cd ha_satellite
+git clone https://github.com/bjoernhoefer/ha_satimage.git
+cd ha_satimage
 cp .env.example .env   # optional: EUMETSAT credentials, data directory
 docker compose up -d --build
 ```
@@ -37,12 +37,12 @@ variables (`EUMETSAT_CONSUMER_KEY` / `EUMETSAT_CONSUMER_SECRET`, see
 
 The target host needs no source code — only `docker-compose.yml` (and
 optionally `.env`). The image is published publicly to
-`ghcr.io/bjoernhoefer/ha_satellite`, so no registry login is required:
+`ghcr.io/bjoernhoefer/ha_satimage`, so no registry login is required:
 
 ```bash
-mkdir -p ~/ha_satellite && cd ~/ha_satellite
-curl -sO https://raw.githubusercontent.com/bjoernhoefer/ha_satellite/main/docker-compose.yml
-curl -s -o .env https://raw.githubusercontent.com/bjoernhoefer/ha_satellite/main/.env.example
+mkdir -p ~/ha_satimage && cd ~/ha_satimage
+curl -sO https://raw.githubusercontent.com/bjoernhoefer/ha_satimage/main/docker-compose.yml
+curl -s -o .env https://raw.githubusercontent.com/bjoernhoefer/ha_satimage/main/.env.example
 docker compose up -d
 ```
 
@@ -55,8 +55,8 @@ to build locally.
 | Variable | Default | Purpose |
 |---|---|---|
 | `HOST_DATA_DIR` | `./data` | Host directory mounted to `/data` |
-| `HA_SATELLITE_TAG` | `latest` | Image tag (pin e.g. `1.0` to stay on a minor line) |
-| `HA_SATELLITE_PORT` | `6060` | Published web port |
+| `HA_SATIMAGE_TAG` | `latest` | Image tag (pin e.g. `1.0` to stay on a minor line) |
+| `HA_SATIMAGE_PORT` | `6060` | Published web port |
 | `EUMETSAT_CONSUMER_KEY` / `EUMETSAT_CONSUMER_SECRET` | | Optional credentials (override the UI) |
 
 ### Configuration persistence
@@ -69,7 +69,7 @@ bind-mounted to `/data` in the container. Its path is set via
 
 Because the container itself is stateless, the configuration survives image
 updates, `docker compose pull` / `up -d` and container recreation.
-**Backup** = copy that directory (e.g. `tar czf ha_satellite-backup.tgz data/`).
+**Backup** = copy that directory (e.g. `tar czf ha_satimage-backup.tgz data/`).
 
 ### Automatic updates (GitHub Actions)
 
@@ -91,9 +91,9 @@ digest from the build job.
 
 The host-installed `ha-deploy` script pulls that digest, tags it locally
 as `:latest` and runs `docker compose up -d --no-build --pull never --wait`
-for `ha_satellite` only. It holds a host-wide `flock` lock; a failed health
+for `ha_satimage` only. It holds a host-wide `flock` lock; a failed health
 check rolls back to the previous image and exits nonzero. The CD host must
-use `HA_SATELLITE_TAG=latest` (the default). Compose explicitly sets
+use `HA_SATIMAGE_TAG=latest` (the default). Compose explicitly sets
 `com.centurylinklabs.watchtower.enable=false`, including protection from a
 host-wide Watchtower instance.
 
@@ -104,18 +104,18 @@ docker compose pull && docker compose up -d
 ```
 
 When migrating, stop and remove any previously installed
-`ha_satellite_watchtower` container. GitHub Actions still publishes images
+`ha_satimage_watchtower` container. GitHub Actions still publishes images
 for release tags; tag builds do not trigger deployment.
 
 ### Versioning and releases
 
-ha_satellite uses [semantic versioning](https://semver.org/). The version is
-defined in `src/ha_satellite/__init__.py` (`__version__`) and in
+ha_satimage uses [semantic versioning](https://semver.org/). The version is
+defined in `src/ha_satimage/__init__.py` (`__version__`) and in
 `pyproject.toml` (both must match; current: **1.3.0**). It is shown in the
 web UI footer and returned by `GET /api/version`.
 
 Releases are git tags `vX.Y.Z`; CI builds them into the image tags `X.Y.Z`,
-`X.Y` and `latest`. Select the tag with `HA_SATELLITE_TAG` in `.env`
+`X.Y` and `latest`. Select the tag with `HA_SATIMAGE_TAG` in `.env`
 (default `latest`; pin e.g. `1.0` to stay on a minor line). Changes are listed in [CHANGELOG.md](CHANGELOG.md).
 
 ## Features
@@ -164,7 +164,7 @@ Releases are git tags `vX.Y.Z`; CI builds them into the image tags `X.Y.Z`,
   60 minutes), plus a storage limit (MB) as an emergency brake. Old frames
   and orphans are cleaned up automatically.
 - **Storage location** of the frames selectable in the UI (e.g.
-  `/mnt/data/ha_satellite`; `docker-compose.yml` mounts `/mnt` for this),
+  `/mnt/data/ha_satimage`; `docker-compose.yml` mounts `/mnt` for this),
   including moving existing frames and a warning for the system disk or
   non-persistent paths.
 - **Web API** (details in [AGENTS.md](AGENTS.md)):
@@ -192,7 +192,7 @@ python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev,ui]"
 playwright install chromium   # for the UI click tests
 pytest -q
-uvicorn ha_satellite.main:app --reload --port 6060
+uvicorn ha_satimage.main:app --reload --port 6060
 ```
 
 Architecture, deployment and operating rules: [AGENTS.md](AGENTS.md).

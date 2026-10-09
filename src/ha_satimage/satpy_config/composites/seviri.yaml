@@ -7,7 +7,7 @@ composites:
   # channel (~1 km), hue is preserved (see sources/hrv_composite.py).
   # Can only be computed after resampling (different grids).
   natural_color_hrv:
-    compositor: !!python/name:ha_satellite.sources.hrv_composite.HrvLuminanceSharpenedRGB
+    compositor: !!python/name:ha_satimage.sources.hrv_composite.HrvLuminanceSharpenedRGB
     prerequisites:
       - name: IR_016
         modifiers: [sunz_corrected]

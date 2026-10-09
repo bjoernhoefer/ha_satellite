@@ -18,9 +18,9 @@ import httpx
 import pytest
 import yaml
 
-from ha_satellite import sources
-from ha_satellite.buffer import BufferManager
-from ha_satellite.config import (
+from ha_satimage import sources
+from ha_satimage.buffer import BufferManager
+from ha_satimage.config import (
     DEFAULT_FCI_COMPOSITE,
     AppConfig,
     ArchiveConfig,
@@ -28,14 +28,14 @@ from ha_satellite.config import (
     RegionConfig,
     default_config,
 )
-from ha_satellite.sources import (
+from ha_satimage.sources import (
     MtgFciSource,
     NoNewData,
     RenderError,
     RenderedFrame,
     render_fci_slot,
 )
-from ha_satellite.sources.fci_archive import (
+from ha_satimage.sources.fci_archive import (
     ArchiveError,
     FciArchive,
     _geos_y,
@@ -259,7 +259,7 @@ def test_mtg_fci_renders_only_region_chunks(tmp_path, monkeypatch):
         requests.append(request)
         return b"PNG", SENSING.replace(tzinfo=None)
 
-    monkeypatch.setattr("ha_satellite.sources.satpy_render.render_in_subprocess", fake_render)
+    monkeypatch.setattr("ha_satimage.sources.satpy_render.render_in_subprocess", fake_render)
     config = _fci_config(tmp_path)
     region = config.region("wien")
     region.composite = "natural_color_hrv_with_night_ir"  # SEVIRI name -> FCI counterpart
@@ -291,7 +291,7 @@ def test_render_fci_slot_reports_missing_chunks(tmp_path, monkeypatch):
 
 
 def test_fci_is_no_placeholder_and_has_own_composites():
-    from ha_satellite.config import PLACEHOLDER_DRIVERS, composites_for, default_composite_for
+    from ha_satimage.config import PLACEHOLDER_DRIVERS, composites_for, default_composite_for
 
     assert "mtg_fci" not in PLACEHOLDER_DRIVERS
     assert DEFAULT_FCI_COMPOSITE in composites_for("mtg_fci")
@@ -301,7 +301,7 @@ def test_fci_is_no_placeholder_and_has_own_composites():
 
 def test_fci_composite_is_registered_in_satpy_config():
     pytest.importorskip("satpy")
-    from ha_satellite.sources.satpy_render import SATPY_CONFIG_DIR
+    from ha_satimage.sources.satpy_render import SATPY_CONFIG_DIR
 
     text = (SATPY_CONFIG_DIR / "composites" / "visir.yaml").read_text(encoding="utf-8")
     assert yaml.safe_load(text.replace("!!python/name:", ""))["composites"][DEFAULT_FCI_COMPOSITE]
@@ -334,7 +334,7 @@ def write_fci_slot(frames_dir, name="20260926T142000Z", chunks=range(32, 41), ca
     for c in chunks:
         (slot_dir / _entry(c)).write_bytes(b"x")
     if cached:
-        from ha_satellite.archive import RenderArchive
+        from ha_satimage.archive import RenderArchive
 
         archive = RenderArchive(frames_dir / "_renders")
         for key, png in cached.items():
@@ -368,7 +368,7 @@ def test_archive_api_lists_slots_and_serves_cached_renders(live_server):
     assert {s["id"] for s in listing["sources"]} >= {"dummy", "mtg_fci"}
 
     # An already rendered image is served from the archive (without Satpy).
-    from ha_satellite.archive import RenderArchive
+    from ha_satimage.archive import RenderArchive
 
     archive = RenderArchive(frames_dir / "_renders")
     archive.store("wien", "mtg_fci", "cloudtop", SENSING, _tiny_png())
@@ -404,7 +404,7 @@ def test_archive_api_lists_slots_and_serves_cached_renders(live_server):
 ])
 @pytest.mark.parametrize("extension", ["png", "jpg"])
 def test_on_demand_fci_render_is_cached_under_raw_slot_time(tmp_path, monkeypatch, sensing_end, extension):
-    from ha_satellite import main
+    from ha_satimage import main
 
     config = _fci_config(tmp_path)
     frames_dir = tmp_path / "frames"
@@ -441,7 +441,7 @@ def test_on_demand_fci_render_is_cached_under_raw_slot_time(tmp_path, monkeypatc
         assert len(listing["images"]) == 1
 
         # A fresh archive reader (as after restart) must find the same identity.
-        from ha_satellite.archive import RenderArchive
+        from ha_satimage.archive import RenderArchive
 
         monkeypatch.setattr(main, "_render_archive", lambda config: RenderArchive(frames_dir / "_renders"))
         for ext in ("png", "jpg", extension):
@@ -471,8 +471,8 @@ def test_parallel_archive_requests_publish_cache_under_render_lock(fci_server, m
 
     from PIL import Image
 
-    from ha_satellite import main
-    from ha_satellite.archive import RenderArchive
+    from ha_satimage import main
+    from ha_satimage.archive import RenderArchive
 
     url, calls, frames, names = fci_server
     original_store = RenderArchive.store
@@ -526,7 +526,7 @@ def test_storage_api_sets_archive_settings_and_prunes(live_server):
     assert bad.status_code == 400
 
     # Settings of the rendered-image archive, including retention pruning.
-    from ha_satellite.archive import RenderArchive
+    from ha_satimage.archive import RenderArchive
 
     renders = RenderArchive(frames_dir / "_renders")
     renders.store("wien", "dummy", "cloudtop", datetime(2026, 9, 20, tzinfo=timezone.utc), _tiny_png())
@@ -549,11 +549,11 @@ def test_storage_api_sets_archive_settings_and_prunes(live_server):
 @pytest.mark.parametrize("metadata_offset", [0, 37, 7200])
 def test_archive_run_prerenders_every_archived_fci_slot(tmp_path, monkeypatch, metadata_offset):
     """Not only the newest capture: every raw slot without images gets rendered."""
-    from ha_satellite.archive import RenderArchive
-    from ha_satellite.config import ConfigStore
-    from ha_satellite.scheduler import RenderScheduler
-    from ha_satellite.sources import archive_composites
-    from ha_satellite.status import StatusStore
+    from ha_satimage.archive import RenderArchive
+    from ha_satimage.config import ConfigStore
+    from ha_satimage.scheduler import RenderScheduler
+    from ha_satimage.sources import archive_composites
+    from ha_satimage.status import StatusStore
 
     store = ConfigStore(tmp_path / "config.yaml")
     config = _fci_config(tmp_path)
@@ -571,7 +571,7 @@ def test_archive_run_prerenders_every_archived_fci_slot(tmp_path, monkeypatch, m
     # Older than the render retention: would be pruned at once, not rendered.
     write_fci_slot(frames, (now - timedelta(hours=30)).strftime("%Y%m%dT%H%M%SZ"))
     renders = RenderArchive(frames / "_renders")
-    from ha_satellite.archive import region_signature
+    from ha_satimage.archive import region_signature
 
     for region in store.get().regions:
         renders.sync_region(region.name, region_signature(region))
@@ -588,7 +588,7 @@ def test_archive_run_prerenders_every_archived_fci_slot(tmp_path, monkeypatch, m
             raise RenderError("broken slot")
         return sources.RenderedFrame(_tiny_png(), slot.sensing_end)
 
-    monkeypatch.setattr("ha_satellite.scheduler.render_fci_slot", fake_render)
+    monkeypatch.setattr("ha_satimage.scheduler.render_fci_slot", fake_render)
     scheduler = RenderScheduler(store, BufferManager(frames), StatusStore())
     composites = archive_composites(store.get().sources.get("mtg_fci"))
     regions = [r.name for r in store.get().regions]
@@ -620,15 +620,15 @@ def test_archive_run_prerenders_every_archived_fci_slot(tmp_path, monkeypatch, m
 def test_archive_run_for_fci_does_not_run_twice_at_once(tmp_path, monkeypatch):
     import threading
 
-    from ha_satellite.config import ConfigStore
-    from ha_satellite.scheduler import RenderScheduler
-    from ha_satellite.status import StatusStore
+    from ha_satimage.config import ConfigStore
+    from ha_satimage.scheduler import RenderScheduler
+    from ha_satimage.status import StatusStore
 
     store = ConfigStore(tmp_path / "config.yaml")
     store.update(_fci_config(tmp_path))
     write_fci_slot(tmp_path / "frames", datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ"))
     monkeypatch.setattr(
-        "ha_satellite.scheduler.render_fci_slot",
+        "ha_satimage.scheduler.render_fci_slot",
         lambda *a: pytest.fail("must not render while another run is active"),
     )
     scheduler = RenderScheduler(store, BufferManager(tmp_path / "frames"), StatusStore())
@@ -638,11 +638,11 @@ def test_archive_run_for_fci_does_not_run_twice_at_once(tmp_path, monkeypatch):
 
 
 def test_startup_recovers_deleted_images_from_retained_fci_slots(tmp_path, monkeypatch):
-    from ha_satellite.archive import RenderArchive
-    from ha_satellite.config import ConfigStore
-    from ha_satellite.scheduler import RenderScheduler
-    from ha_satellite.sources import archive_composites
-    from ha_satellite.status import StatusStore
+    from ha_satimage.archive import RenderArchive
+    from ha_satimage.config import ConfigStore
+    from ha_satimage.scheduler import RenderScheduler
+    from ha_satimage.sources import archive_composites
+    from ha_satimage.status import StatusStore
 
     store = ConfigStore(tmp_path / "config.yaml")
     config = _fci_config(tmp_path)
@@ -659,7 +659,7 @@ def test_startup_recovers_deleted_images_from_retained_fci_slots(tmp_path, monke
         calls.append((slot.name, region.name, composite))
         return RenderedFrame(_tiny_png(), slot.sensing_end)
 
-    monkeypatch.setattr("ha_satellite.scheduler.render_fci_slot", fake_render)
+    monkeypatch.setattr("ha_satimage.scheduler.render_fci_slot", fake_render)
     monkeypatch.setattr(
         sources.MtgFciSource, "fetch",
         lambda *args: pytest.fail("recovery must not require a network download"),
@@ -678,7 +678,7 @@ def test_startup_recovers_deleted_images_from_retained_fci_slots(tmp_path, monke
 
 @pytest.mark.parametrize("collection", ["../outside", "/tmp/outside", "..", ".", "a/b", "a\\b"])
 def test_collection_directory_cannot_escape_archive_root(tmp_path, collection):
-    from ha_satellite.sources.fci_archive import FciArchive
+    from ha_satimage.sources.fci_archive import FciArchive
 
     archive = FciArchive(tmp_path / "_archive")
     directory = archive.collection_dir(collection)

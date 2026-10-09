@@ -22,10 +22,10 @@ from fastapi.responses import (
 )
 from fastapi.templating import Jinja2Templates
 
-from ha_satellite import __version__, location_change, logbuffer, media, storage
-from ha_satellite.archive import RenderArchive, get_render_archive
-from ha_satellite.buffer import BufferManager
-from ha_satellite.config import (
+from ha_satimage import __version__, location_change, logbuffer, media, storage
+from ha_satimage.archive import RenderArchive, get_render_archive
+from ha_satimage.buffer import BufferManager
+from ha_satimage.config import (
     COMPOSITES,
     PLACEHOLDER_DRIVERS,
     VALID_DRIVERS,
@@ -37,25 +37,25 @@ from ha_satellite.config import (
     env_overrides,
     resolve_fci_composite,
 )
-from ha_satellite.scheduler import RenderScheduler
-from ha_satellite.sources import (
+from ha_satimage.scheduler import RenderScheduler
+from ha_satimage.sources import (
     RenderError,
     archive_root,
     render_archive_root,
     render_fci_slot,
 )
-from ha_satellite.sources.fci_archive import (
+from ha_satimage.sources.fci_archive import (
     chunks_for_region,
     format_chunks,
     get_archive,
     wanted_chunks,
 )
-from ha_satellite.maintenance import MaintenanceSchedule
-from ha_satellite.source_sync import SourceSync
-from ha_satellite.status import StatusStore
+from ha_satimage.source_sync import SourceSync
+from ha_satimage.status import StatusStore
+from ha_satimage.maintenance import MaintenanceSchedule
 
 BASE_DIR = Path(__file__).resolve().parent
-DATA_DIR = Path(os.environ.get("HA_SATELLITE_DATA_DIR", "/data"))
+DATA_DIR = Path(os.environ.get("HA_SATIMAGE_DATA_DIR", "/data"))
 DEFAULT_FRAMES_DIR = DATA_DIR / "frames"
 
 log_buffer = logbuffer.install(log_dir=DATA_DIR / "logs")
@@ -82,7 +82,7 @@ templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     logger.info(
-        "ha_satellite %s starting: data in %s, frames in %s (UID %d / GID %d)",
+        "ha_satimage %s starting: data in %s, frames in %s (UID %d / GID %d)",
         __version__, DATA_DIR, buffer_manager.base_dir, os.getuid(), os.getgid(),
     )
     try:
@@ -96,7 +96,7 @@ async def lifespan(_app: FastAPI):
         scheduler.shutdown()
 
 
-app = FastAPI(title="ha_satellite", version=__version__, lifespan=lifespan)
+app = FastAPI(title="ha_satimage", version=__version__, lifespan=lifespan)
 
 
 @app.get("/favicon.svg", include_in_schema=False)

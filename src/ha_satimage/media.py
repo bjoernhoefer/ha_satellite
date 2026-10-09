@@ -21,7 +21,7 @@ from pathlib import Path
 
 from PIL import Image
 
-from ha_satellite.buffer import CACHE_DIRNAME, Frame, RingBuffer
+from ha_satimage.buffer import CACHE_DIRNAME, Frame, RingBuffer
 
 logger = logging.getLogger(__name__)
 

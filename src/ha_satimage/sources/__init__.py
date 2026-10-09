@@ -19,11 +19,11 @@ from typing import TYPE_CHECKING
 
 from PIL import Image, ImageDraw
 
-from ha_satellite.config import AppConfig, RegionConfig
+from ha_satimage.config import AppConfig, RegionConfig
 
 if TYPE_CHECKING:
-    from ha_satellite.config import SourceDefinition
-    from ha_satellite.sources.eumetsat import ProductCache
+    from ha_satimage.config import SourceDefinition
+    from ha_satimage.sources.eumetsat import ProductCache
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +44,7 @@ class RenderedFrame:
 
 
 def data_dir() -> Path:
-    return Path(os.environ.get("HA_SATELLITE_DATA_DIR", "/data"))
+    return Path(os.environ.get("HA_SATIMAGE_DATA_DIR", "/data"))
 
 
 class Source(ABC):
@@ -87,7 +87,7 @@ class Source(ABC):
         draw = ImageDraw.Draw(image)
         timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
         lines = [
-            f"ha_satellite ({self.name})",
+            f"ha_satimage ({self.name})",
             f"Region: {region.name}",
             f"Composite: {region.composite}",
             f"BBox: {bbox.lat_min:.2f},{bbox.lon_min:.2f} .. {bbox.lat_max:.2f},{bbox.lon_max:.2f}",
@@ -115,7 +115,7 @@ _product_caches: dict[Path, ProductCache] = {}
 
 
 def _product_cache() -> ProductCache:
-    from ha_satellite.sources.eumetsat import ProductCache
+    from ha_satimage.sources.eumetsat import ProductCache
 
     cache_dir = data_dir() / "cache"
     if cache_dir not in _product_caches:
@@ -136,7 +136,7 @@ class MsgSeviriSource(Source):
     downloads = True
 
     def _download(self, collection: str, config: AppConfig):
-        from ha_satellite.sources.eumetsat import DataStoreError
+        from ha_satimage.sources.eumetsat import DataStoreError
 
         try:
             return _product_cache().latest(collection, config.eumetsat, self.entry_suffix)
@@ -147,7 +147,7 @@ class MsgSeviriSource(Source):
         return self._download(entry.collection or "", config).sensing_end
 
     def render(self, region, config, last_sensing=None) -> RenderedFrame:
-        from ha_satellite.sources.satpy_render import (
+        from ha_satimage.sources.satpy_render import (
             RenderRequest,
             SatpyRenderError,
             render_in_subprocess,
@@ -206,7 +206,7 @@ def render_with(
     product is rendered once per image type, independent of the region's
     own configuration.
     """
-    from ha_satellite.config import resolve_fci_composite
+    from ha_satimage.config import resolve_fci_composite
 
     if entry.driver == "mtg_fci":
         composite = resolve_fci_composite(composite)
@@ -216,7 +216,7 @@ def render_with(
 
 def archive_composites(entry: "SourceDefinition") -> list[str]:
     """Image types archived for a source (all choices of its driver)."""
-    from ha_satellite.config import composites_for, resolve_fci_composite
+    from ha_satimage.config import composites_for, resolve_fci_composite
 
     names = list(composites_for(entry.driver))
     if entry.driver == "mtg_fci":
@@ -229,22 +229,22 @@ def frames_root(config: AppConfig) -> Path:
 
 
 def archive_root(config: AppConfig) -> Path:
-    from ha_satellite.sources.fci_archive import ARCHIVE_SUBDIR
+    from ha_satimage.sources.fci_archive import ARCHIVE_SUBDIR
 
     return frames_root(config) / ARCHIVE_SUBDIR
 
 
 def render_archive_root(config: AppConfig) -> Path:
-    from ha_satellite.archive import RENDERS_SUBDIR
+    from ha_satimage.archive import RENDERS_SUBDIR
 
     return frames_root(config) / RENDERS_SUBDIR
 
 
 def render_fci_slot(slot, region: RegionConfig, composite: str) -> RenderedFrame:
     """Renders a region from an archived FCI slot."""
-    from ha_satellite.config import resolve_fci_composite
-    from ha_satellite.sources.fci_archive import chunks_for_region, format_chunks
-    from ha_satellite.sources.satpy_render import (
+    from ha_satimage.config import resolve_fci_composite
+    from ha_satimage.sources.fci_archive import chunks_for_region, format_chunks
+    from ha_satimage.sources.satpy_render import (
         RenderRequest,
         SatpyRenderError,
         render_in_subprocess,
@@ -283,8 +283,8 @@ def render_fci_slot(slot, region: RegionConfig, composite: str) -> RenderedFrame
 
 def sync_fci_archive(config: AppConfig, collection: str):
     """Download the newest FCI slot into the archive (idempotent), returns the slot."""
-    from ha_satellite.config import DEFAULT_FCI_COLLECTION
-    from ha_satellite.sources.fci_archive import ArchiveError, get_archive, wanted_chunks
+    from ha_satimage.config import DEFAULT_FCI_COLLECTION
+    from ha_satimage.sources.fci_archive import ArchiveError, get_archive, wanted_chunks
 
     try:
         return get_archive(archive_root(config)).sync(
@@ -313,8 +313,8 @@ class MtgFciSource(Source):
         return sync_fci_archive(config, entry.collection or "").sensing_end
 
     def render(self, region, config, last_sensing=None) -> RenderedFrame:
-        from ha_satellite.config import DEFAULT_FCI_COLLECTION
-        from ha_satellite.sources.fci_archive import chunks_for_region, get_archive
+        from ha_satimage.config import DEFAULT_FCI_COLLECTION
+        from ha_satimage.sources.fci_archive import chunks_for_region, get_archive
 
         collection = config.sources.collection_for(region.source, DEFAULT_FCI_COLLECTION)
         # Newest archived slot with all of the region's chunks (downloaded by

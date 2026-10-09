@@ -27,7 +27,7 @@ from functools import lru_cache
 from io import BytesIO
 from pathlib import Path
 
-from ha_satellite.config import AppConfig, RegionConfig, default_composite_for
+from ha_satimage.config import AppConfig, RegionConfig, default_composite_for
 
 logger = logging.getLogger(__name__)
 
@@ -103,7 +103,7 @@ def outline_png() -> bytes:
     """Land/sea map of Europe with graticule and country borders (PNG)."""
     from PIL import Image, ImageDraw
 
-    from ha_satellite.overlay import draw_borders_lonlat
+    from ha_satimage.overlay import draw_borders_lonlat
 
     scale = 2  # supersampled land edges
     image = Image.new("RGB", (MAP_WIDTH * scale, MAP_HEIGHT * scale), SEA_COLOR)
@@ -185,8 +185,8 @@ class SatelliteMap:
 
         The caller must hold the global render lock.
         """
-        from ha_satellite.sources import MsgSeviriSource, RenderError, _product_cache
-        from ha_satellite.sources.satpy_render import (
+        from ha_satimage.sources import MsgSeviriSource, RenderError, _product_cache
+        from ha_satimage.sources.satpy_render import (
             RenderRequest,
             SatpyRenderError,
             render_in_subprocess,

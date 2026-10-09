@@ -10,8 +10,8 @@ import pytest
 import yaml
 from PIL import Image
 
-from ha_satellite.archive import RenderArchive, region_signature, slot_name, slot_time
-from ha_satellite.config import RegionConfig
+from ha_satimage.archive import RenderArchive, region_signature, slot_name, slot_time
+from ha_satimage.config import RegionConfig
 
 NOW = datetime(2026, 9, 26, 14, 20, tzinfo=timezone.utc)
 

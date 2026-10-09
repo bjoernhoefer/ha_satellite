@@ -76,7 +76,7 @@ def install(capacity: int = 1000, log_dir: Path | None = None) -> LogBuffer:
         try:
             log_dir.mkdir(parents=True, exist_ok=True)
             file_handler = RotatingFileHandler(
-                log_dir / "ha_satellite.log", maxBytes=1_000_000, backupCount=3, encoding="utf-8"
+                log_dir / "ha_satimage.log", maxBytes=1_000_000, backupCount=3, encoding="utf-8"
             )
             file_handler.setLevel(logging.INFO)
             file_handler.setFormatter(logging.Formatter(LOG_FORMAT))

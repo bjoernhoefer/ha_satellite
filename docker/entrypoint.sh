@@ -7,7 +7,7 @@
 #
 # PUID/PGID (optional): UID/GID the service runs as. Should match the owner
 # of the host directories images are written to (e.g.
-# /mnt/data/ha_satellite), otherwise changing the storage location in the
+# /mnt/data/ha_satimage), otherwise changing the storage location in the
 # web UI fails with "not writable".
 set -euo pipefail
 
@@ -26,7 +26,7 @@ if [ "$(id -u)" = "0" ]; then
     # stays writable after a PUID/PGID change.
     frames_dir="$(/usr/local/bin/python3 - <<'PY' 2>/dev/null || true
 import os, yaml
-path = os.environ.get("HA_SATELLITE_CONFIG", "/data/config.yaml")
+path = os.environ.get("HA_SATIMAGE_CONFIG", "/data/config.yaml")
 try:
     with open(path, encoding="utf-8") as fh:
         config = yaml.safe_load(fh) or {}

@@ -127,7 +127,7 @@ region links; POST endpoints are only displayed.
 (600 km on 800 px) — every satellite pixel became a 5–8 px block.
 
 **Implementation:** New default composite `natural_color_hrv_with_night_ir`
-(`src/ha_satellite/satpy_config/composites/seviri.yaml`, included via
+(`src/ha_satimage/satpy_config/composites/seviri.yaml`, included via
 `satpy.config config_path`). By day the true colour channels are sharpened
 with the HRV channel (~1 km, in the same `.nat` file, no extra download),
 at night `cloudtop` as before (IR, ~3 km). Runtime on a Pi 5 ~8–9 s, peak
@@ -263,7 +263,7 @@ the host ownership of the mounted directory completely overrides the
 ownership set in the image — the build-time `chown` has no effect. Result:
 `PermissionError` on the first render attempt as soon as a fresh,
 root-owned data directory is mounted (reproduced and verified locally with
-`docker build` + `docker run -v ... ha_satellite:test`).
+`docker build` + `docker run -v ... ha_satimage:test`).
 
 **Solution:** `docker/entrypoint.sh` starts the container as `root` by
 default (no `USER` directive in the Dockerfile anymore), aligns the actual
@@ -295,7 +295,7 @@ them via the API useless too:
 Since then browser click tests (`tests/test_ui.py`, Playwright) secure the
 core UI features. Selectors use `data-testid` exclusively so layout changes
 do not break the tests — these IDs must be kept when reworking the UI. In
-CI `HA_SATELLITE_REQUIRE_UI_TESTS=1` enforces that the click tests run
+CI `HA_SATIMAGE_REQUIRE_UI_TESTS=1` enforces that the click tests run
 instead of being silently skipped.
 
 ## Web UI expansion: sources, viewer, live, logs, storage location

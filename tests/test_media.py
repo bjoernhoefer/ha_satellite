@@ -7,9 +7,9 @@ from datetime import datetime, timedelta, timezone
 
 from PIL import Image
 
-from ha_satellite import media
-from ha_satellite.buffer import RingBuffer
-from ha_satellite.scheduler import RenderScheduler
+from ha_satimage import media
+from ha_satimage.buffer import RingBuffer
+from ha_satimage.scheduler import RenderScheduler
 
 T0 = datetime(2026, 9, 27, 12, 0, tzinfo=timezone.utc)
 
@@ -95,10 +95,10 @@ def test_prewarm_creates_thumbnail_jpeg_and_animations(tmp_path):
 
 
 def test_scheduler_prewarms_after_new_frame(tmp_path, monkeypatch):
-    from ha_satellite.buffer import BufferManager
-    from ha_satellite.config import ConfigStore
-    from ha_satellite.sources import RenderedFrame
-    from ha_satellite.status import StatusStore
+    from ha_satimage.buffer import BufferManager
+    from ha_satimage.config import ConfigStore
+    from ha_satimage.sources import RenderedFrame
+    from ha_satimage.status import StatusStore
 
     class PngSource:
         def render(self, region, config, last_sensing=None):
@@ -107,7 +107,7 @@ def test_scheduler_prewarms_after_new_frame(tmp_path, monkeypatch):
     store = ConfigStore(tmp_path / "config.yaml")
     buffers = BufferManager(tmp_path / "frames")
     scheduler = RenderScheduler(store, buffers, StatusStore())
-    monkeypatch.setattr("ha_satellite.scheduler.get_source", lambda name: PngSource())
+    monkeypatch.setattr("ha_satimage.scheduler.get_source", lambda name: PngSource())
     scheduler._run_region("wien")
     job = scheduler._scheduler.get_job("media-wien")
     assert job is not None  # separate job, does not block the render run
