@@ -251,6 +251,13 @@
           <input id="auto-sync-hours" name="auto_sync_hours" type="number" min="0" step="1" required
                  data-testid="auto-sync-hours" value="{{ config.sources.auto_sync_hours }}">
         </div>
+        <div>
+          <label for="maintenance-check-hours">Check the
+            <a href="https://user.eumetsat.int/resources/service-statuses/rss-schedule" target="_blank"
+               rel="noopener">RSS maintenance schedule</a> (hours, 0 = off)</label>
+          <input id="maintenance-check-hours" name="maintenance_check_hours" type="number" min="0" step="1" required
+                 data-testid="maintenance-check-hours" value="{{ config.sources.maintenance_check_hours }}">
+        </div>
       </div>
       <button type="submit" data-testid="save-sources">Save</button>
       <div class="message" data-testid="sources-message" role="status"></div>
@@ -621,6 +628,20 @@
       }
       return parts.join(" · ");
     }
+    function maintenanceInfo(entry) {
+      const window_ = ((sourcesState.downloads || {})[entry.id] || {}).maintenance;
+      if (!window_) return "";
+      const span = fmtTime(window_.start, true) + " – " + fmtTime(window_.end, true);
+      let text = (window_.active ? "Maintenance, queries paused: " : "Next maintenance: ") + span;
+      if (window_.ended_early) text = "Maintenance " + span + " – source delivers again, downloads resumed";
+      else if (window_.active) {
+        if (window_.last_probe_at) text += " · last check " + fmtTime(window_.last_probe_at)
+          + (window_.last_probe_result === "down" ? " (still down)" : "");
+        if (window_.next_probe_at) text += " · next check " + fmtTime(window_.next_probe_at);
+      }
+      return el("div", { class: "badge " + (window_.active ? "warn" : ""),
+        "data-testid": "source-maintenance-" + entry.id, text });
+    }
     let jsonDirty = false;
 
     function renderSources() {
@@ -647,7 +668,8 @@
             el("div", { class: "muted", "data-testid": "source-cycle-" + entry.id, text: cycleInfo(entry) }),
             ((sourcesState.downloads || {})[entry.id] || {}).last_error
               ? el("div", { class: "badge err", "data-testid": "source-download-error-" + entry.id,
-                  text: "Download: " + sourcesState.downloads[entry.id].last_error }) : ""),
+                  text: "Download: " + sourcesState.downloads[entry.id].last_error }) : "",
+            maintenanceInfo(entry)),
           el("td", { class: "hide-mobile" }, el("code", { text: entry.driver }),
             PLACEHOLDER_DRIVERS.includes(entry.driver) ? el("span", { class: "badge warn", text: "placeholder" }) : ""),
           el("td", { "data-testid": "source-sync-status-" + entry.id }, syncCell)));
@@ -773,8 +795,10 @@
       const message = byTestId("sources-message");
       const poll = parseInt(document.getElementById("poll-interval").value, 10);
       const autoSync = parseInt(document.getElementById("auto-sync-hours").value, 10);
+      const maintenanceCheck = parseInt(document.getElementById("maintenance-check-hours").value, 10);
       try {
-        await postConfig({ sources: { poll_interval_minutes: poll, auto_sync_hours: autoSync } });
+        await postConfig({ sources: { poll_interval_minutes: poll, auto_sync_hours: autoSync,
+          maintenance_check_hours: maintenanceCheck } });
         showMessage(message, "Settings saved.", true);
         refreshStatus();
         loadSources();

@@ -41,6 +41,8 @@ src/ha_satimage/
   location_change.py  Locations (max. 4): map of Europe (outline + on-demand
                    satellite background), add/move/remove, history reset
   buffer.py        Ring buffer (frames per region, cleanup, storage limit, move)
+  maintenance.py   EUMETSAT RSS maintenance schedule (page parser, cache in
+                   maintenance.json) + black "unavailable" maintenance image
   status.py        Status store (last/next run, errors, frame count)
   scheduler.py     APScheduler jobs (non-blocking): download per source at its
                    scan cycle, render after a new scan, single render lock,
@@ -88,6 +90,33 @@ exists, time of the latest product, and newly available collections
 supported by a driver ("discovered", adoptable with one click — they are
 added disabled). Result in `/data/source_sync.json`, separate from the
 configuration.
+
+### Scheduled maintenance (maintenance.py)
+
+EUMETSAT announces planned Rapid Scan Service interruptions on
+`https://user.eumetsat.int/resources/service-statuses/rss-schedule`
+(env override `HA_SATIMAGE_MAINTENANCE_URL`, used by the tests). The page is
+fetched lazily — only when a `msg_seviri` source with an RSS collection
+(`AFFECTED_COLLECTIONS`, e.g. `EO:EUM:DAT:MSG:MSG15-RSS`) is downloaded or
+rendered — at most every `sources.maintenance_check_hours` hours (default 6,
+0 = off; after a fetch error every 30 min), and cached in
+`<data>/maintenance.json`. The parser is deliberately tolerant (common date
+notations, consecutive start/end pairs, max. 14 days, times in UTC;
+publication/update dates are ignored).
+
+During an active window the download job does **not** query the Data Store
+(no error, no warning; INFO log once per window) and re-checks at the cycle.
+Once per hour (`MAINTENANCE_PROBE_INTERVAL`, first one hour after the window
+started) it still queries the source to verify it is down; failures or no
+scan newer than the window start/last scan only log at INFO. A newer scan
+ends the window early for that source (`DownloadState.maintenance_override`):
+the probe's result is processed like a normal download and regions render
+real images again.
+Every region of the source gets one black frame "Currently unavailable due to
+maintenance" + "From <start> to <end> UTC" (composite `maintenance`, so the
+first real scan afterwards renders immediately). Active/next window per
+source: `GET /api/sources` → `downloads[<id>].maintenance`, shown in the
+source table; the raw page result is `GET /api/sources` → `maintenance`.
 
 ### Phase model
 
@@ -318,7 +347,7 @@ docker compose up -d
 
 - Semantic version in `src/ha_satimage/__init__.py` (`__version__`) and
   `pyproject.toml`; both must match (`tests/test_version.py`). Current:
-  **1.3.1**.
+  **1.5.0**.
 - Shown in the web UI footer and returned by `GET /api/version`.
 - Releases are git tags `vX.Y.Z`; CI builds them into the image tags
   `X.Y.Z`, `X.Y` and `latest`.
@@ -416,7 +445,7 @@ FCI archive stays PNG.
 | `POST /api/location-map/satellite` | Render the satellite background now (downloads the newest product if needed) |
 | `POST /api/regions/{region}/refresh` | Immediate render run ("Refresh now") |
 | `GET /api/regions/{region}/frames` | History: frames in the buffer (newest first) with stable URLs |
-| `GET /api/sources` | Source catalogue, result of the last sync, cycle/download status per source (`downloads`) |
+| `GET /api/sources` | Source catalogue, result of the last sync, cycle/download/maintenance status per source (`downloads`), RSS maintenance schedule (`maintenance`) |
 | `POST /api/sources/sync` | Sync with the EUMETSAT Data Store now |
 | `POST /api/sources/adopt` | Adopt a discovered collection (`{"collection": ...}`) into the catalogue |
 | `GET /api/storage` | Current storage location, usage, candidates with free space/warnings |
@@ -466,7 +495,8 @@ image from the dropdown, zoom in the viewer (+/−/reset, keys, drag,
 desktop + phone), format selection in the viewer (JPEG/PNG, live
 MJPEG/MP4/GIF, desktop + phone), live stream in the browser incl. deep link
 `/live/{region}`, logs at the bottom, source JSON (collapsed, editable,
-validation), enable sources, sync + adopt, change storage location incl.
+validation), enable sources, sync + adopt, scheduled maintenance (badge,
+maintenance image, check interval; desktop + phone), change storage location incl.
 move, no horizontal scrolling on phones, change image type/source per
 region (re-renders without another click), toggle country borders per
 region (desktop + phone), archive viewer (source and image type select,

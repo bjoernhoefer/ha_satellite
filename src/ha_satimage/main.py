@@ -52,6 +52,7 @@ from ha_satimage.sources.fci_archive import (
 )
 from ha_satimage.source_sync import SourceSync
 from ha_satimage.status import StatusStore
+from ha_satimage.maintenance import MaintenanceSchedule
 
 BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = Path(os.environ.get("HA_SATIMAGE_DATA_DIR", "/data"))
@@ -69,7 +70,10 @@ config_store = ConfigStore()
 buffer_manager = BufferManager(frames_dir_for(config_store.get()))
 status_store = StatusStore()
 source_sync = SourceSync(config_store, DATA_DIR / "source_sync.json")
-scheduler = RenderScheduler(config_store, buffer_manager, status_store, source_sync)
+maintenance_schedule = MaintenanceSchedule(DATA_DIR / "maintenance.json")
+scheduler = RenderScheduler(
+    config_store, buffer_manager, status_store, source_sync, maintenance_schedule
+)
 satellite_map = location_change.SatelliteMap(DATA_DIR / "location_map")
 
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
@@ -546,6 +550,8 @@ async def get_sources():
     return {
         "catalog": [entry.model_dump() for entry in config.sources.catalog],
         "auto_sync_hours": config.sources.auto_sync_hours,
+        "maintenance_check_hours": config.sources.maintenance_check_hours,
+        "maintenance": maintenance_schedule.state(),
         "sync": source_sync.state(),
         "downloads": scheduler.download_status(),
     }

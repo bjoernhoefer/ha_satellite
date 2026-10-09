@@ -55,6 +55,7 @@ def test_page_shows_all_core_sections(ui):
         "sources-form",
         "poll-interval",
         "auto-sync-hours",
+        "maintenance-check-hours",
         "sources-table",
         "sources-sync",
         "sources-json-details",
@@ -623,6 +624,73 @@ def test_sync_with_eumetsat_and_adopt(page, start_server, fake_eumetsat):
     expect(page.get_by_test_id("discovered-EO-EUM-DAT-MSG-HRSEVIRI-IODC")).to_have_count(0)
     catalog = {e["collection"]: e for e in _stored(server)["sources"]["catalog"]}
     assert catalog["EO:EUM:DAT:MSG:HRSEVIRI-IODC"]["enabled"] is False
+
+
+def _server_in_maintenance(start_server, fake_maintenance):
+    """Wien on Rapid Scan while the fake RSS schedule announces maintenance."""
+    server = start_server(env={"HA_SATIMAGE_MAINTENANCE_URL": fake_maintenance})
+    config = httpx.get(server.url + "/api/config").json()
+    for entry in config["sources"]["catalog"]:
+        if entry["id"] == "msg_seviri":
+            entry["enabled"] = True
+    for region in config["regions"]:
+        if region["name"] == "wien":
+            region["source"] = "msg_seviri"
+    response = httpx.post(server.url + "/api/config", json={
+        "sources": {"catalog": config["sources"]["catalog"]}, "regions": config["regions"],
+    })
+    assert response.status_code == 200, response.text
+    deadline = time.monotonic() + 20
+    while time.monotonic() < deadline:
+        frames = server.frames("wien")
+        if frames and frames[0]["composite"] == "maintenance":
+            return server
+        time.sleep(0.2)
+    raise AssertionError("No maintenance frame for wien")
+
+
+def test_maintenance_window_pauses_source_and_shows_image(page, start_server, fake_maintenance):
+    server = _server_in_maintenance(start_server, fake_maintenance)
+    errors: list[str] = []
+    page.on("pageerror", lambda exc: errors.append(str(exc)))
+    page.goto(server.url + "/#sec-sources")
+    badge = page.get_by_test_id("source-maintenance-msg_seviri")
+    expect(badge).to_be_visible()
+    expect(badge).to_contain_text("Maintenance, queries paused")
+    expect(badge).to_contain_text("next check")
+    expect(page.get_by_test_id("source-download-error-msg_seviri")).to_have_count(0)
+    _image_loaded(page, "preview-wien")
+    # No Data Store query (and so no warning/error) while in maintenance.
+    logs = httpx.get(server.url + "/api/logs?format=text").text
+    assert "scheduled maintenance" in logs
+    assert "Download msg_seviri failed" not in logs
+
+    page.get_by_test_id("maintenance-check-hours").fill("12")
+    page.get_by_test_id("save-sources").click()
+    expect(page.get_by_test_id("sources-message")).to_have_text("Settings saved.")
+    assert _stored(server)["sources"]["maintenance_check_hours"] == 12
+    # 0 switches the check off: the source no longer shows the window.
+    page.get_by_test_id("maintenance-check-hours").fill("0")
+    page.get_by_test_id("save-sources").click()
+    expect(page.get_by_test_id("source-maintenance-msg_seviri")).to_have_count(0)
+    assert errors == []
+
+
+def test_maintenance_window_on_mobile(browser, start_server, fake_maintenance):
+    server = _server_in_maintenance(start_server, fake_maintenance)
+    context = browser.new_context(
+        viewport={"width": 390, "height": 844}, device_scale_factor=3, is_mobile=True, has_touch=True
+    )
+    try:
+        page = context.new_page()
+        page.goto(server.url + "/#sec-sources")
+        expect(page.get_by_test_id("source-maintenance-msg_seviri")).to_be_visible()
+        expect(page.get_by_test_id("maintenance-check-hours")).to_be_visible()
+        _image_loaded(page, "preview-wien")
+        width = page.evaluate("() => document.documentElement.scrollWidth")
+        assert width <= 390
+    finally:
+        context.close()
 
 
 def test_sync_failure_is_shown(ui):
