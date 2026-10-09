@@ -33,7 +33,7 @@ def test_catalog_can_be_replaced_and_is_validated(live_server):
 
 
 def test_sync_reports_availability_and_discovers_collections(start_server, fake_eumetsat):
-    server = start_server(env={"HA_SATELLITE_EUMETSAT_API": fake_eumetsat})
+    server = start_server(env={"HA_SATIMAGE_EUMETSAT_API": fake_eumetsat})
     result = httpx.post(f"{server.url}/api/sources/sync", timeout=30).json()
     assert result["error"] is None
     assert result["sources"]["msg_seviri"]["status"] == "ok"
@@ -127,7 +127,7 @@ def test_sources_report_cycle_and_download_state(live_server):
 def test_storage_relocation_moves_frames(live_server):
     live_server.ensure_frames("wien", 2)
     before = live_server.frames("wien")
-    target = live_server.storage_root / "data2" / "ha_satellite"
+    target = live_server.storage_root / "data2" / "ha_satimage"
     (live_server.storage_root / "data2").mkdir()
 
     info = httpx.get(f"{live_server.url}/api/storage").json()
@@ -188,7 +188,7 @@ def test_logs_endpoint_shows_render_activity(live_server):
     assert all(e["id"] > last_id for e in newer)
     text = httpx.get(f"{live_server.url}/api/logs?format=text&limit=0").text
     assert "Render wien" in text
-    assert (live_server.data_dir / "logs" / "ha_satellite.log").exists()
+    assert (live_server.data_dir / "logs" / "ha_satimage.log").exists()
 
 
 def test_live_redirect_and_mjpeg_stream(live_server):

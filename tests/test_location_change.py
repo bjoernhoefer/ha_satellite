@@ -13,10 +13,10 @@ import pytest
 import yaml
 from PIL import Image
 
-from ha_satellite import location_change as lc
-from ha_satellite.config import AppConfig, default_config
-from ha_satellite.overlay import border_segments_lonlat, draw_borders_lonlat
-from ha_satellite.sources import RenderError
+from ha_satimage import location_change as lc
+from ha_satimage.config import AppConfig, default_config
+from ha_satimage.overlay import border_segments_lonlat, draw_borders_lonlat
+from ha_satimage.sources import RenderError
 
 VIENNA = (48.2082, 16.3738)
 BERLIN = (52.52, 13.405)
@@ -143,14 +143,14 @@ def _png(size=(lc.MAP_WIDTH, lc.MAP_HEIGHT)) -> bytes:
 
 def test_satellite_map_renders_lonlat_europe_from_latest_product(tmp_path, monkeypatch):
     cache = _Cache(_Product(tmp_path / "product.nat"))
-    monkeypatch.setattr("ha_satellite.sources._product_cache", lambda: cache)
+    monkeypatch.setattr("ha_satimage.sources._product_cache", lambda: cache)
     requests = []
 
     def fake_render(request, *args, **kwargs):
         requests.append(request)
         return _png(), datetime(2026, 10, 1, 12, 0)
 
-    monkeypatch.setattr("ha_satellite.sources.satpy_render.render_in_subprocess", fake_render)
+    monkeypatch.setattr("ha_satimage.sources.satpy_render.render_in_subprocess", fake_render)
     config = default_config()
     satellite = lc.SatelliteMap(tmp_path / "map")
     assert satellite.info()["available"] is False
@@ -174,13 +174,13 @@ def test_satellite_map_renders_lonlat_europe_from_latest_product(tmp_path, monke
 
 
 def test_satellite_map_error_is_reported(tmp_path, monkeypatch):
-    from ha_satellite.sources.eumetsat import DataStoreError
+    from ha_satimage.sources.eumetsat import DataStoreError
 
     class FailingCache(_Cache):
         def latest(self, *args):
             raise DataStoreError("no credentials")
 
-    monkeypatch.setattr("ha_satellite.sources._product_cache", lambda: FailingCache(None))
+    monkeypatch.setattr("ha_satimage.sources._product_cache", lambda: FailingCache(None))
     satellite = lc.SatelliteMap(tmp_path / "map")
     with pytest.raises(RenderError, match="no credentials"):
         satellite.render(default_config())
@@ -201,7 +201,7 @@ def test_map_source_prefers_enabled_msg_seviri_in_use():
 
 def test_lonlat_target_area_matches_map_geometry():
     pytest.importorskip("pyresample")
-    from ha_satellite.sources.satpy_render import RenderRequest, target_area
+    from ha_satimage.sources.satpy_render import RenderRequest, target_area
 
     request = RenderRequest("r", ("f",), "c", 0, 0, 1, lc.MAP_WIDTH, lc.MAP_HEIGHT, "Europe",
                             lonlat_extent=lc.EUROPE_EXTENT)
@@ -220,7 +220,7 @@ def test_rapid_scan_data_resamples_onto_the_whole_europe_map():
     from pyresample.geometry import AreaDefinition
     from pyresample.kd_tree import resample_nearest
 
-    from ha_satellite.sources.satpy_render import RenderRequest, source_window, target_area
+    from ha_satimage.sources.satpy_render import RenderRequest, source_window, target_area
 
     rss = AreaDefinition(
         "rss", "rss", "rss",

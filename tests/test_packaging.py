@@ -7,5 +7,5 @@ def test_index_template_is_packaged():
     The container only has the wheel - if `package-data` is missing from
     pyproject.toml, `GET /` fails with TemplateNotFound.
     """
-    template = files("ha_satellite").joinpath("templates/index.html")
+    template = files("ha_satimage").joinpath("templates/index.html")
     assert template.is_file()

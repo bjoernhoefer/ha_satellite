@@ -1,4 +1,4 @@
-# AGENTS.md — Operating manual for ha_satellite
+# AGENTS.md — Operating manual for ha_satimage
 
 > **MANDATORY for EVERY change (code, template, config, Docker):**
 > Before committing, **run the web UI click tests and make them pass**
@@ -9,7 +9,7 @@
 
 > **MANDATORY before creating a PR:** propose the next version number
 > (semver: patch = fix, minor = feature, major = breaking change), bump it
-> in **both** `src/ha_satellite/__init__.py` (`__version__`) and
+> in **both** `src/ha_satimage/__init__.py` (`__version__`) and
 > `pyproject.toml`, add a `CHANGELOG.md` entry, and verify with
 > `pytest tests/test_version.py` that both versions match.
 
@@ -31,7 +31,7 @@ Integration happens **in each Home Assistant instance** (see
 ## Architecture
 
 ```
-src/ha_satellite/
+src/ha_satimage/
   __init__.py     __version__ (semantic version, must match pyproject.toml)
   config.py       Configuration model (Pydantic) + YAML persistence + env override,
                    source catalogue, storage location, history
@@ -62,7 +62,7 @@ src/ha_satellite/
 State lives under `/data` (configuration `config.yaml`, `source_sync.json`,
 `logs/`, product cache `cache/`) and at the configured frame storage
 location (default `/data/frames`, changeable in the UI, e.g.
-`/mnt/data/ha_satellite`; the FCI archive lives there under `_archive/`).
+`/mnt/data/ha_satimage`; the FCI archive lives there under `_archive/`).
 `/data` is a host bind mount (`HOST_DATA_DIR`), so the container
 itself is stateless and can be recreated/updated at any time. Region names
 must not start with `_` (reserved for internal directories).
@@ -113,7 +113,7 @@ configuration.
 
 Default `natural_color_hrv_with_night_ir` (true colour by day, sharpened
 with the ~1 km HRV channel; IR clouds at night). Custom composites live in
-`src/ha_satellite/satpy_config/composites/seviri.yaml` (compositor in
+`src/ha_satimage/satpy_config/composites/seviri.yaml` (compositor in
 `sources/hrv_composite.py`) and are included in the child process via
 `satpy.config config_path`. Other working composites: `natural_color_hrv`
 (day only), `natural_color_raw_with_night_ir` (previous default, ~3 km),
@@ -283,15 +283,15 @@ docker compose up -d
   the internal user on start (see HISTORY.md, "Bind mount ownership").
 - **Frame storage location:** Compose mounts the host's `/mnt` at `/mnt`;
   in the web UI ("Storage location & history") choose e.g.
-  `/mnt/data/ha_satellite`, existing frames are moved on request. The
+  `/mnt/data/ha_satimage`, existing frames are moved on request. The
   service runs as `PUID`/`PGID` (default 1000) — the target directory must
   be writable for it, e.g. once
-  `sudo install -d -o 1000 -g 1000 /mnt/data/ha_satellite`. The UI warns if
+  `sudo install -d -o 1000 -g 1000 /mnt/data/ha_satimage`. The UI warns if
   a path is on the same disk as `/data` (system disk) or only in the
   container filesystem (not persistent).
 - **Image:** a multi-arch image (`linux/amd64`, `linux/arm64`) is built by
   `.github/workflows/build.yml` and pushed to
-  `ghcr.io/bjoernhoefer/ha_satellite` on every push to `main` and on tags.
+  `ghcr.io/bjoernhoefer/ha_satimage` on every push to `main` and on tags.
   If the package is private, the deployment user needs `docker login ghcr.io`.
 - **Auto updates:** tests → GHCR image → deploy job on a self-hosted ARM64
   runner labelled `deploy-satellite` → host-installed `ha-deploy` with a
@@ -302,21 +302,21 @@ docker compose up -d
   code and runs no third-party actions. Host setup is separate; `ha-deploy`
   uses a host-wide `flock` lock and tags the build digest locally as `latest`
   before `docker compose up -d --no-build --pull never --wait` for this
-  service. The CD host uses `HA_SATELLITE_TAG=latest`. Fork PR workflows
+  service. The CD host uses `HA_SATIMAGE_TAG=latest`. Fork PR workflows
   require manual approval and never deploy. Watchtower is explicitly disabled
   by the container label. Manual updates remain
   `docker compose pull && docker compose up -d`.
 - **Compose `.env` variables:** `HOST_DATA_DIR` (host data directory,
-  default `./data`), `HA_SATELLITE_TAG` (image tag, default `latest`; pin
-  e.g. `1.0` to stay on a minor line), `HA_SATELLITE_PORT` (default `6060`),
-  plus the optional EUMETSAT credentials. `HA_SATELLITE_DATA_DIR` is an
+  default `./data`), `HA_SATIMAGE_TAG` (image tag, default `latest`; pin
+  e.g. `1.0` to stay on a minor line), `HA_SATIMAGE_PORT` (default `6060`),
+  plus the optional EUMETSAT credentials. `HA_SATIMAGE_DATA_DIR` is an
   in-container app variable, not the host path.
 - Memory limit in Compose (`deploy.resources.limits.memory: 768M`), so the
   service coexists with other workloads on small hosts.
 
 ### Versioning and releases
 
-- Semantic version in `src/ha_satellite/__init__.py` (`__version__`) and
+- Semantic version in `src/ha_satimage/__init__.py` (`__version__`) and
   `pyproject.toml`; both must match (`tests/test_version.py`). Current:
   **1.3.1**.
 - Shown in the web UI footer and returned by `GET /api/version`.
@@ -392,7 +392,7 @@ FCI archive stays PNG.
 - **Logs** are central: render start/end, skipped runs, errors,
   configuration and storage changes, source sync are logged at
   INFO/WARNING. The UI shows them live at the bottom (`GET /api/logs`),
-  additionally rotating in `/data/logs/ha_satellite.log`. New features must
+  additionally rotating in `/data/logs/ha_satimage.log`. New features must
   log their relevant steps as well.
 - **No secrets in the repo.** `.env.example` documents the available
   variables; real values only in `.env` (gitignored) or in the web UI
@@ -476,5 +476,5 @@ phone), archive settings and "Archive all now", locations on the map of Europe (
 selected region and are clickable, version shown in the footer.
 Selectors use `data-testid` exclusively — markup and styling may change
 freely, the IDs must be kept. Without Playwright installed the click tests
-are skipped locally; in CI `HA_SATELLITE_REQUIRE_UI_TESTS=1` enforces that
+are skipped locally; in CI `HA_SATIMAGE_REQUIRE_UI_TESTS=1` enforces that
 they run.

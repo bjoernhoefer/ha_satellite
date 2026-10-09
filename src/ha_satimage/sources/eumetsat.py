@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from ha_satellite.config import EumetsatCredentials
+from ha_satimage.config import EumetsatCredentials
 
 logger = logging.getLogger(__name__)
 

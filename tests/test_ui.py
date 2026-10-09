@@ -18,9 +18,9 @@ import httpx
 import pytest
 import yaml
 
-# Skip locally without Playwright; in CI (HA_SATELLITE_REQUIRE_UI_TESTS=1)
+# Skip locally without Playwright; in CI (HA_SATIMAGE_REQUIRE_UI_TESTS=1)
 # a missing Playwright must fail hard instead of silently skipping.
-if os.environ.get("HA_SATELLITE_REQUIRE_UI_TESTS"):
+if os.environ.get("HA_SATIMAGE_REQUIRE_UI_TESTS"):
     import playwright.sync_api as playwright_api
 else:
     playwright_api = pytest.importorskip("playwright.sync_api")
@@ -610,7 +610,7 @@ def test_toggle_source_and_region_warning(ui, live_server):
 
 
 def test_sync_with_eumetsat_and_adopt(page, start_server, fake_eumetsat):
-    server = start_server(env={"HA_SATELLITE_EUMETSAT_API": fake_eumetsat})
+    server = start_server(env={"HA_SATIMAGE_EUMETSAT_API": fake_eumetsat})
     page.goto(server.url + "/")
     expect(page.get_by_test_id("sources-last-sync")).to_have_text("never")
     page.get_by_test_id("sources-sync").click()
@@ -635,7 +635,7 @@ def test_sync_failure_is_shown(ui):
 def test_change_storage_location_via_ui(page, live_server):
     live_server.ensure_frames("wien", 2)
     (live_server.storage_root / "data").mkdir()
-    target = live_server.storage_root / "data" / "ha_satellite"
+    target = live_server.storage_root / "data" / "ha_satimage"
     page.goto(live_server.url + "/")
     expect(page.get_by_test_id("storage-current")).to_have_text(str(live_server.data_dir / "frames"))
 
@@ -690,8 +690,8 @@ def test_change_composite_rerenders_and_updates_preview(ui, live_server):
 
 def test_toggle_borders_rerenders(ui, live_server):
     live_server.ensure_frames("wien", 1)
-    from ha_satellite.archive import RenderArchive, region_signature
-    from ha_satellite.config import RegionConfig
+    from ha_satimage.archive import RenderArchive, region_signature
+    from ha_satimage.config import RegionConfig
 
     archive = RenderArchive(live_server.data_dir / "frames" / "_renders")
     wien = next(
@@ -762,8 +762,8 @@ def test_enabling_borders_keeps_island_archive_history(request, page_fixture, li
 
     from PIL import Image
 
-    from ha_satellite.archive import RenderArchive, region_signature
-    from ha_satellite.config import RegionConfig
+    from ha_satimage.archive import RenderArchive, region_signature
+    from ha_satimage.config import RegionConfig
 
     page = request.getfixturevalue(page_fixture)
     page.goto(live_server.url + "/")
@@ -903,7 +903,7 @@ def _archive_images(live_server, region="wien", source="dummy",
     """Put pre-rendered images into the archive (as the scheduler would)."""
     from datetime import datetime, timedelta, timezone
 
-    from ha_satellite.archive import RenderArchive
+    from ha_satimage.archive import RenderArchive
 
     archive = RenderArchive(live_server.data_dir / "frames" / "_renders")
     base = datetime(2026, 9, 26, 14, 10, tzinfo=timezone.utc)
@@ -976,8 +976,8 @@ def test_archive_viewer_on_the_phone(mobile_page, live_server):
 
 @pytest.mark.parametrize("page_fixture", ["page", "mobile_page"])
 def test_fci_archive_renders_once_when_browsing_and_reopening(request, page_fixture, fci_server):
-    from ha_satellite.archive import RenderArchive
-    from ha_satellite.config import DEFAULT_FCI_COMPOSITE
+    from ha_satimage.archive import RenderArchive
+    from ha_satimage.config import DEFAULT_FCI_COMPOSITE
 
     page = request.getfixturevalue(page_fixture)
     url, calls, frames, names = fci_server
@@ -1058,8 +1058,8 @@ def test_archive_settings_are_saved(ui, live_server):
 
 
 def test_archive_all_now_renders_every_image_type(ui, live_server):
-    from ha_satellite.config import default_config
-    from ha_satellite.sources import archive_composites
+    from ha_satimage.config import default_config
+    from ha_satimage.sources import archive_composites
 
     expected_types = sorted(archive_composites(default_config().sources.get("dummy")))
     ui.get_by_test_id("archive-render-now").click()
@@ -1087,7 +1087,7 @@ def test_archive_all_now_renders_every_image_type(ui, live_server):
 # --- Version / language -----------------------------------------------------
 
 def test_app_version_is_shown(ui, live_server):
-    from ha_satellite import __version__
+    from ha_satimage import __version__
 
     expect(ui.get_by_test_id("app-version")).to_have_text(f"v{__version__}")
     expect(ui.get_by_test_id("api-link-version")).to_have_attribute("href", "/api/version")

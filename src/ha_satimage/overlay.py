@@ -56,7 +56,7 @@ def border_segments(
     import numpy as np
     from pyproj import Transformer
 
-    from ha_satellite.geometry import bounding_box
+    from ha_satimage.geometry import bounding_box
 
     lines, boxes = _border_lines(kind)
     if not lines:

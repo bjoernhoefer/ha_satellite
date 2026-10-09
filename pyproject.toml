@@ -3,7 +3,7 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "ha_satellite"
+name = "ha_satimage"
 version = "1.4.0"
 description = "EUMETSAT satellite images as camera entities for Home Assistant"
 readme = "README.md"
@@ -46,7 +46,7 @@ ui = [
 where = ["src"]
 
 [tool.setuptools.package-data]
-ha_satellite = ["templates/*.html", "static/*.svg", "satpy_config/composites/*.yaml", "overlay_data/*.json.gz"]
+ha_satimage = ["templates/*.html", "static/*.svg", "satpy_config/composites/*.yaml", "overlay_data/*.json.gz"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

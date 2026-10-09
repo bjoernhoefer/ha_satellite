@@ -27,11 +27,11 @@ import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
-from ha_satellite.config import ConfigStore, SourceDefinition
+from ha_satimage.config import ConfigStore, SourceDefinition
 
 logger = logging.getLogger(__name__)
 
-API_BASE_ENV = "HA_SATELLITE_EUMETSAT_API"
+API_BASE_ENV = "HA_SATIMAGE_EUMETSAT_API"
 DEFAULT_API_BASE = "https://api.eumetsat.int"
 REQUEST_TIMEOUT = 20
 

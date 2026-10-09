@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#0b1a2e">
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
-  <title>ha_satellite</title>
+  <title>ha_satimage</title>
   <style>
     :root { --border: #d9dee5; --muted: #6b7280; --accent: #1d4ed8; --ok: #1a7f37; --err: #c62828; --warn: #b45309; }
     * { box-sizing: border-box; }
@@ -143,7 +143,7 @@
 </head>
 <body>
   <header>
-    <h1>ha_satellite – satellite images for Home Assistant <small data-testid="app-version" style="font-weight:normal;opacity:.7">v{{ version }}</small></h1>
+    <h1>ha_satimage – satellite images for Home Assistant <small data-testid="app-version" style="font-weight:normal;opacity:.7">v{{ version }}</small></h1>
     <nav class="toc">
       <a href="#sec-regions">Regions</a><a href="#sec-sources">Sources</a><a href="#sec-storage">Storage</a>
       <a href="#sec-credentials">Credentials</a><a href="#sec-status">Status</a><a href="#sec-logs">Logs</a><a href="#sec-api">API</a>
@@ -289,7 +289,7 @@
     <form id="storage-form" data-testid="storage-form">
       <label for="storage-path">Image storage location</label>
       <input id="storage-path" type="text" data-testid="storage-path" autocomplete="off" spellcheck="false"
-             placeholder="/mnt/data/ha_satellite">
+             placeholder="/mnt/data/ha_satimage">
       <label class="inline"><input type="checkbox" id="storage-move" data-testid="storage-move" checked>
         move existing images to the new location</label>
       <div class="grid2">
@@ -419,7 +419,7 @@
         </select></label>
       <label class="inline"><input type="checkbox" id="logs-autoscroll" data-testid="logs-autoscroll" checked> auto-scroll</label>
       <button type="button" data-testid="logs-clear" style="margin-top:0.4rem">Clear display</button>
-      <a class="button" style="margin-top:0.4rem" href="/api/logs?format=text&amp;limit=0" download="ha_satellite.log"
+      <a class="button" style="margin-top:0.4rem" href="/api/logs?format=text&amp;limit=0" download="ha_satimage.log"
          data-testid="logs-download">Download</a>
     </div>
     <div class="logs" data-testid="logs" id="logs" aria-live="polite"></div>
@@ -440,7 +440,7 @@
     <ul class="api-links" data-testid="api-post-links"></ul>
   </section>
 
-    <footer class="muted" style="text-align:center">ha_satellite v{{ version }}</footer>
+    <footer class="muted" style="text-align:center">ha_satimage v{{ version }}</footer>
   </main>
 
   <div class="viewer" id="viewer" data-testid="viewer" hidden>
@@ -1048,7 +1048,7 @@
             const line = el("div", { class: "log-line " + e.level, "data-testid": "log-line", "data-level": e.level },
               el("span", { class: "ts", text: fmtTime(e.ts, true) + " " }),
               el("span", { class: "lvl", text: e.level.padEnd(7) + " " }),
-              el("span", { class: "src", text: e.logger.replace(/^ha_satellite\./, "") + ": " }),
+              el("span", { class: "src", text: e.logger.replace(/^ha_satimage\./, "") + ": " }),
               el("span", { class: "msg", text: e.message }));
             line.hidden = (LEVELS[e.level] || 0) < min;
             logsEl.append(line);
@@ -1082,7 +1082,7 @@
       archive: [["jpg", "JPEG · fast"], ["png", "PNG · Original"]],
       live: [["mjpeg", "MJPEG stream"], ["mp4", "MP4 video"], ["gif", "GIF animation"]],
     };
-    const FORMAT_KEY = "ha_satellite.viewer.format.";
+    const FORMAT_KEY = "ha_satimage.viewer.format.";
     const validFormat = (mode, value) => (FORMATS[mode] || []).some(([key]) => key === value);
     function loadFormat(mode) {
       let value = null;

@@ -1,8 +1,8 @@
 # Home Assistant integration
 
-`ha_satellite` runs without authentication and is meant for a private
+`ha_satimage` runs without authentication and is meant for a private
 network. Replace `<host>` with the address of the Docker host running
-ha_satellite as seen from your Home Assistant instance (container port:
+ha_satimage as seen from your Home Assistant instance (container port:
 `6060`). If Home Assistant runs at another site, any network path that
 makes `<host>:6060` reachable (VPN, routed LAN, …) works.
 
@@ -78,5 +78,5 @@ automation:
           title: "Satellite image Vienna stale"
           message: >
             The newest satellite image for Vienna is older than 30 minutes.
-            Please check /api/status on the ha_satellite host.
+            Please check /api/status on the ha_satimage host.
 ```

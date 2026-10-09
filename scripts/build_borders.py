@@ -1,4 +1,4 @@
-"""Generates ``src/ha_satellite/overlay_data/borders_10m.json.gz``.
+"""Generates ``src/ha_satimage/overlay_data/borders_10m.json.gz``.
 
 Source: Natural Earth 1:10m "Admin 0 - Boundary Lines" (country borders),
 "Admin 1 - States, Provinces" lines (administrative boundaries worldwide),
@@ -17,7 +17,7 @@ import json
 import sys
 from pathlib import Path
 
-TARGET = Path(__file__).resolve().parent.parent / "src/ha_satellite/overlay_data/borders_10m.json.gz"
+TARGET = Path(__file__).resolve().parent.parent / "src/ha_satimage/overlay_data/borders_10m.json.gz"
 
 
 def _lines(geometry):

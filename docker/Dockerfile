@@ -19,7 +19,7 @@ FROM mambaorg/micromamba:1.5-bookworm
 
 ARG VERSION=dev
 LABEL org.opencontainers.image.version=$VERSION \
-      org.opencontainers.image.source=https://github.com/bjoernhoefer/ha_satellite \
+      org.opencontainers.image.source=https://github.com/bjoernhoefer/ha_satimage \
       org.opencontainers.image.licenses=MIT
 
 USER root
@@ -27,7 +27,7 @@ WORKDIR /app
 
 ENV MAMBA_DOCKERFILE_ACTIVATE=1 \
     PYTHONUNBUFFERED=1 \
-    HA_SATELLITE_CONFIG=/data/config.yaml \
+    HA_SATIMAGE_CONFIG=/data/config.yaml \
     SATPY_DATA_DIR=/data/satpy \
     XDG_CACHE_HOME=/data/cache/xdg
 
@@ -48,8 +48,8 @@ RUN ln -sf /opt/conda/bin/python /usr/local/bin/python3
 
 RUN mkdir -p /data/frames /data/cache /data/satpy && chown -R $MAMBA_USER:$MAMBA_USER /data
 
-COPY docker/entrypoint.sh /usr/local/bin/ha_satellite-entrypoint.sh
-RUN chmod +x /usr/local/bin/ha_satellite-entrypoint.sh
+COPY docker/entrypoint.sh /usr/local/bin/ha_satimage-entrypoint.sh
+RUN chmod +x /usr/local/bin/ha_satimage-entrypoint.sh
 
 EXPOSE 6060
 VOLUME ["/data"]
@@ -57,5 +57,5 @@ VOLUME ["/data"]
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
     CMD /usr/local/bin/python3 -c "import urllib.request; urllib.request.urlopen('http://localhost:6060/healthz')"
 
-ENTRYPOINT ["/usr/local/bin/ha_satellite-entrypoint.sh"]
-CMD ["uvicorn", "ha_satellite.main:app", "--host", "0.0.0.0", "--port", "6060"]
+ENTRYPOINT ["/usr/local/bin/ha_satimage-entrypoint.sh"]
+CMD ["uvicorn", "ha_satimage.main:app", "--host", "0.0.0.0", "--port", "6060"]

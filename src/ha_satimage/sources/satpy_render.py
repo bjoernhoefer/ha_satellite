@@ -170,11 +170,11 @@ def render_png(request: RenderRequest) -> tuple[bytes, datetime]:
     pil_image = get_enhanced_image(data).pil_image().convert("RGB")
     sensing_end = data.attrs["end_time"]
     if request.borders and request.lonlat_extent is not None:
-        from ha_satellite.overlay import draw_borders_lonlat
+        from ha_satimage.overlay import draw_borders_lonlat
 
         draw_borders_lonlat(pil_image, request.lonlat_extent)
     elif request.borders:
-        from ha_satellite.overlay import draw_borders
+        from ha_satimage.overlay import draw_borders
 
         draw_borders(pil_image, request.lat, request.lon, request.radius_km)
     _annotate(pil_image, f"{request.label} · {sensing_end:%Y-%m-%d %H:%M} UTC · {request.composite}")

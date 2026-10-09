@@ -37,11 +37,11 @@ from typing import TYPE_CHECKING
 
 from apscheduler.schedulers.background import BackgroundScheduler
 
-from ha_satellite import media
-from ha_satellite.archive import get_render_archive, region_signature
-from ha_satellite.buffer import BufferManager
-from ha_satellite.config import DEFAULT_FCI_COLLECTION, DOWNLOAD_DRIVERS, AppConfig, ConfigStore
-from ha_satellite.sources import (
+from ha_satimage import media
+from ha_satimage.archive import get_render_archive, region_signature
+from ha_satimage.buffer import BufferManager
+from ha_satimage.config import DEFAULT_FCI_COLLECTION, DOWNLOAD_DRIVERS, AppConfig, ConfigStore
+from ha_satimage.sources import (
     SOURCE_REGISTRY,
     NoNewData,
     RenderError,
@@ -52,10 +52,10 @@ from ha_satellite.sources import (
     render_fci_slot,
     render_with,
 )
-from ha_satellite.status import StatusStore
+from ha_satimage.status import StatusStore
 
 if TYPE_CHECKING:
-    from ha_satellite.source_sync import SourceSync
+    from ha_satimage.source_sync import SourceSync
 
 logger = logging.getLogger(__name__)
 
@@ -248,7 +248,7 @@ class RenderScheduler:
         if not self._initialized:
             # Upgrades can change overlay signatures without an API save.
             # Also recover FCI images deleted by older versions from retained raw slots.
-            from ha_satellite.sources.fci_archive import get_archive
+            from ha_satimage.sources.fci_archive import get_archive
 
             existing = get_render_archive(render_archive_root(config))
             raw = get_archive(archive_root(config))
@@ -441,7 +441,7 @@ class RenderScheduler:
         regions = {region.name: region for region in config.regions}
         if config.archive.render_all:
             sources.update(self.archive_sources(config))
-        from ha_satellite.sources.fci_archive import get_archive
+        from ha_satimage.sources.fci_archive import get_archive
 
         raw = get_archive(archive_root(config))
         for entry in config.sources.catalog:
@@ -583,8 +583,8 @@ class RenderScheduler:
         every image, so captures arriving meanwhile are picked up by the
         running loop (a second run for the same source just returns).
         """
-        from ha_satellite.config import DEFAULT_FCI_COLLECTION
-        from ha_satellite.sources.fci_archive import chunks_for_region, get_archive
+        from ha_satimage.config import DEFAULT_FCI_COLLECTION
+        from ha_satimage.sources.fci_archive import chunks_for_region, get_archive
 
         with self._download_lock:
             guard = self._archive_locks.setdefault(entry.id, threading.Lock())

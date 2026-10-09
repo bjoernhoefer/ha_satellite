@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from ha_satellite.buffer import BufferManager, RingBuffer
+from ha_satimage.buffer import BufferManager, RingBuffer
 
 
 def _png_bytes(marker: bytes = b"\x89PNG\r\n\x1a\n") -> bytes:
@@ -114,7 +114,7 @@ def test_buffer_manager_updates_limits(tmp_path: Path):
 def test_relocate_moves_and_merges_regions(tmp_path):
     from datetime import datetime, timedelta, timezone
 
-    from ha_satellite.buffer import BufferManager
+    from ha_satimage.buffer import BufferManager
 
     t0 = datetime(2026, 1, 1, tzinfo=timezone.utc)
     old = BufferManager(tmp_path / "old")
@@ -135,7 +135,7 @@ def test_relocate_moves_and_merges_regions(tmp_path):
 
 
 def test_relocate_without_move_keeps_old_frames(tmp_path):
-    from ha_satellite.buffer import BufferManager
+    from ha_satimage.buffer import BufferManager
 
     manager = BufferManager(tmp_path / "old")
     manager.get("wien", 10, 100).add_frame(b"a")

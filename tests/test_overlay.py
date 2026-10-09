@@ -3,14 +3,14 @@ from importlib.resources import files
 import pytest
 from PIL import Image
 
-from ha_satellite.config import RegionConfig
-from ha_satellite.overlay import border_segments, border_segments_lonlat, draw_borders
+from ha_satimage.config import RegionConfig
+from ha_satimage.overlay import border_segments, border_segments_lonlat, draw_borders
 
 VIENNA = (48.21, 16.37, 250)
 
 
 def test_border_data_is_packaged():
-    assert files("ha_satellite").joinpath("overlay_data/borders_10m.json.gz").is_file()
+    assert files("ha_satimage").joinpath("overlay_data/borders_10m.json.gz").is_file()
 
 
 def test_vienna_has_borders_near_bratislava():
@@ -70,7 +70,7 @@ def test_region_draws_borders_by_default():
 
 
 def test_archive_signature_depends_on_borders():
-    from ha_satellite.archive import region_signature
+    from ha_satimage.archive import region_signature
 
     region = RegionConfig(name="wien", lat=48.2, lon=16.4, radius_km=100)
     without = region.model_copy(update={"borders": False})

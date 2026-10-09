@@ -146,7 +146,7 @@ First public release.
 
 ### Added
 
-- Versioning: `__version__` in `src/ha_satellite/__init__.py` and
+- Versioning: `__version__` in `src/ha_satimage/__init__.py` and
   `pyproject.toml`, shown in the web UI footer and via `GET /api/version`;
   release tags `vX.Y.Z` are built into image tags `X.Y.Z`, `X.Y`, `latest`.
 - Optional Watchtower service in `docker-compose.yml` for automatic updates

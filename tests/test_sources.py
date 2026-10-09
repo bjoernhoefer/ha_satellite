@@ -17,18 +17,18 @@ from datetime import datetime, timedelta, timezone
 import numpy as np
 import pytest
 
-from ha_satellite import sources
-from ha_satellite.buffer import BufferManager
-from ha_satellite.config import AppConfig, ConfigStore, EumetsatCredentials, default_config
-from ha_satellite.scheduler import RenderScheduler
-from ha_satellite.sources import (
+from ha_satimage import sources
+from ha_satimage.buffer import BufferManager
+from ha_satimage.config import AppConfig, ConfigStore, EumetsatCredentials, default_config
+from ha_satimage.scheduler import RenderScheduler
+from ha_satimage.sources import (
     MsgSeviriSource,
     NoNewData,
     RenderedFrame,
     RenderError,
 )
-from ha_satellite.sources.eumetsat import DataStoreError, Product, ProductCache
-from ha_satellite.status import StatusStore
+from ha_satimage.sources.eumetsat import DataStoreError, Product, ProductCache
+from ha_satimage.status import StatusStore
 
 CREDS = EumetsatCredentials(consumer_key="key", consumer_secret="secret")
 SENSING = datetime(2026, 9, 26, 10, 40, tzinfo=timezone.utc)
@@ -176,7 +176,7 @@ def test_msg_seviri_renders_new_product(tmp_path, monkeypatch, config):
         seen["request"] = request
         return b"PNG", SENSING.replace(tzinfo=None)
 
-    monkeypatch.setattr("ha_satellite.sources.satpy_render.render_in_subprocess", fake_render)
+    monkeypatch.setattr("ha_satimage.sources.satpy_render.render_in_subprocess", fake_render)
 
     frame = MsgSeviriSource().render(config.regions[0], config, SENSING - timedelta(minutes=5))
 
@@ -213,7 +213,7 @@ def test_msg_seviri_renders_downloaded_product_without_network(tmp_path, monkeyp
         seen["files"] = request.filenames
         return b"PNG", SENSING
 
-    monkeypatch.setattr("ha_satellite.sources.satpy_render.render_in_subprocess", fake_render)
+    monkeypatch.setattr("ha_satimage.sources.satpy_render.render_in_subprocess", fake_render)
     MsgSeviriSource().render(config.regions[0], config, None)
     assert seen["files"] == (str(local.path),)
     assert stub.latest_calls == 0
@@ -254,7 +254,7 @@ def test_concurrent_regions_wait_for_lock_instead_of_skipping(tmp_path, monkeypa
     status = StatusStore()
     scheduler = RenderScheduler(store, buffers, status)
     source = SlowSource()
-    monkeypatch.setattr("ha_satellite.scheduler.get_source", lambda name: source)
+    monkeypatch.setattr("ha_satimage.scheduler.get_source", lambda name: source)
 
     threads = [
         threading.Thread(target=scheduler._run_region, args=(name,))
@@ -302,7 +302,7 @@ def rss_area():
     [("wien", 48.2082, 16.3738), ("mallorca", 39.6953, 3.0176), ("oslo", 59.91, 10.75)],
 )
 def test_source_window_covers_whole_target_region(rss_area, name, lat, lon):
-    from ha_satellite.sources.satpy_render import RenderRequest, source_window, target_area
+    from ha_satimage.sources.satpy_render import RenderRequest, source_window, target_area
 
     request = RenderRequest("r", ("f",), "c", lat, lon, 300, 200, 200, name)
     area = target_area(request)
@@ -320,7 +320,7 @@ def test_source_window_covers_whole_target_region(rss_area, name, lat, lon):
 
 
 def test_source_window_rejects_region_outside_disk(rss_area):
-    from ha_satellite.sources.satpy_render import (
+    from ha_satimage.sources.satpy_render import (
         RenderRequest,
         SatpyRenderError,
         source_window,
@@ -340,7 +340,7 @@ def test_crop_uses_own_window_per_resolution(rss_area):
     import xarray as xr
     from pyresample.geometry import AreaDefinition
 
-    from ha_satellite.sources.satpy_render import RenderRequest, _crop_to, target_area
+    from ha_satimage.sources.satpy_render import RenderRequest, _crop_to, target_area
 
     hrv_area = AreaDefinition("hrv", "hrv", "hrv", RSS_PROJ, 3712 * 3, 1392 * 3, HRV_EXTENT)
     target = target_area(RenderRequest("r", ("f",), "c", 48.2, 16.37, 300, 200, 200, "wien"))
@@ -366,7 +366,7 @@ def _band(values, name):
 
 def test_hrv_sharpening_scales_brightness_and_keeps_hue():
     pytest.importorskip("satpy")
-    from ha_satellite.sources.hrv_composite import MAX_RATIO, HrvLuminanceSharpenedRGB
+    from ha_satimage.sources.hrv_composite import MAX_RATIO, HrvLuminanceSharpenedRGB
 
     red, green, blue = _band([[10, 10]], "IR_016"), _band([[20, 20]], "VIS008"), _band([[40, 40]], "VIS006")
     hrv = _band([[60, 300]], "HRV")  # Faktor 2 bzw. 10 (-> gekappt)
@@ -382,7 +382,7 @@ def test_hrv_sharpening_ignores_invalid_hrv_and_waits_for_resampling():
     pytest.importorskip("satpy")
     from satpy.composites.core import IncompatibleAreas
 
-    from ha_satellite.sources.hrv_composite import HrvLuminanceSharpenedRGB
+    from ha_satimage.sources.hrv_composite import HrvLuminanceSharpenedRGB
 
     compositor = HrvLuminanceSharpenedRGB("natural_color_hrv")
     rgb = (_band([[10]], "IR_016"), _band([[20]], "VIS008"), _band([[40]], "VIS006"))
@@ -397,8 +397,8 @@ def test_default_composite_is_defined_for_seviri():
     satpy = pytest.importorskip("satpy")
     from satpy.composites.config_loader import load_compositor_configs_for_sensors
 
-    from ha_satellite.config import DEFAULT_COMPOSITE
-    from ha_satellite.sources.satpy_render import SATPY_CONFIG_DIR
+    from ha_satimage.config import DEFAULT_COMPOSITE
+    from ha_satimage.sources.satpy_render import SATPY_CONFIG_DIR
 
     with satpy.config.set(config_path=[str(SATPY_CONFIG_DIR)]):
         compositors, _ = load_compositor_configs_for_sensors(["seviri"])
@@ -407,7 +407,7 @@ def test_default_composite_is_defined_for_seviri():
 
 
 def test_source_window_ignores_points_with_only_one_valid_index():
-    from ha_satellite.sources.satpy_render import (
+    from ha_satimage.sources.satpy_render import (
         RenderRequest,
         SatpyRenderError,
         source_window,
@@ -457,7 +457,7 @@ def test_switching_source_or_composite_renders_even_older_product(tmp_path, monk
     buffers = BufferManager(tmp_path / "frames")
     scheduler = RenderScheduler(store, buffers, StatusStore())
     source = OriginSource()
-    monkeypatch.setattr("ha_satellite.scheduler.get_source", lambda name: source)
+    monkeypatch.setattr("ha_satimage.scheduler.get_source", lambda name: source)
     buffer = lambda: buffers.get("wien", 10, 500)  # noqa: E731
 
     scheduler._run_region("wien")
@@ -586,7 +586,7 @@ def test_download_follows_cycle_and_triggers_renders_only_for_new_data(tmp_path,
     scheduler = RenderScheduler(store, BufferManager(tmp_path / "frames"), StatusStore())
     now = datetime.now(timezone.utc)
     source = FetchSource(now - timedelta(minutes=3))  # 3 min delivery delay
-    monkeypatch.setattr("ha_satellite.scheduler.get_source", lambda name: source)
+    monkeypatch.setattr("ha_satimage.scheduler.get_source", lambda name: source)
     queued: list[str] = []
     monkeypatch.setattr(scheduler, "_queue_render", queued.append)
 
@@ -638,7 +638,7 @@ def test_download_follows_cycle_and_triggers_renders_only_for_new_data(tmp_path,
 def test_render_subprocess_retries_once_after_crash(monkeypatch):
     import signal
 
-    from ha_satellite.sources import satpy_render
+    from ha_satimage.sources import satpy_render
 
     calls = []
 

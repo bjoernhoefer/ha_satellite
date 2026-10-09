@@ -1,13 +1,13 @@
 services:
-  ha_satellite:
-    image: ghcr.io/bjoernhoefer/ha_satellite:${HA_SATELLITE_TAG:-latest}
-    container_name: ha_satellite
+  ha_satimage:
+    image: ghcr.io/bjoernhoefer/ha_satimage:${HA_SATIMAGE_TAG:-latest}
+    container_name: ha_satimage
     build:
       context: .
       dockerfile: docker/Dockerfile
     restart: unless-stopped
     ports:
-      - "${HA_SATELLITE_PORT:-6060}:6060"
+      - "${HA_SATIMAGE_PORT:-6060}:6060"
     volumes:
       # Configuration (config.yaml), logs, cache and (by default) the frames.
       # Lives on the host, so it survives image updates and container
@@ -32,5 +32,5 @@ services:
     # Healthcheck is defined in the image (docker/Dockerfile).
     # Conservative limits so rendering does not starve other services on
     # small hosts such as a Raspberry Pi.
-    mem_limit: ${HA_SATELLITE_MEM_LIMIT:-768m}
-    cpus: ${HA_SATELLITE_CPUS:-1.5}
+    mem_limit: ${HA_SATIMAGE_MEM_LIMIT:-768m}
+    cpus: ${HA_SATIMAGE_CPUS:-1.5}

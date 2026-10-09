@@ -1,7 +1,7 @@
 """Shared fixtures: real uvicorn server with an isolated data directory.
 
 The server deliberately runs as a separate process instead of via
-``TestClient``: ``ha_satellite.main`` reads paths and configuration at
+``TestClient``: ``ha_satimage.main`` reads paths and configuration at
 import time, and the click tests need a real HTTP server for the browser
 anyway.
 """
@@ -27,7 +27,7 @@ import httpx
 import pytest
 import yaml
 
-from ha_satellite.config import default_config
+from ha_satimage.config import default_config
 
 
 def _dummy_config() -> dict:
@@ -114,16 +114,16 @@ def start_server(tmp_path: Path) -> Iterator[Callable[..., LiveServer]]:
             if not key.startswith("EUMETSAT_")
         }
         server_env.update(
-            HA_SATELLITE_DATA_DIR=str(data_dir),
-            HA_SATELLITE_CONFIG=str(data_dir / "config.yaml"),
-            HA_SATELLITE_STORAGE_ROOTS=str(storage_root),
+            HA_SATIMAGE_DATA_DIR=str(data_dir),
+            HA_SATIMAGE_CONFIG=str(data_dir / "config.yaml"),
+            HA_SATIMAGE_STORAGE_ROOTS=str(storage_root),
             # Never hit the real EUMETSAT API: closed port as default.
-            HA_SATELLITE_EUMETSAT_API="http://127.0.0.1:9",
+            HA_SATIMAGE_EUMETSAT_API="http://127.0.0.1:9",
         )
         server_env.update(env or {})
         process = subprocess.Popen(
             [
-                sys.executable, "-m", "uvicorn", "ha_satellite.main:app",
+                sys.executable, "-m", "uvicorn", "ha_satimage.main:app",
                 "--host", "127.0.0.1", "--port", str(port), "--log-level", "warning",
             ],
             env=server_env,
@@ -157,10 +157,10 @@ def fci_server(tmp_path, monkeypatch):
     import uvicorn
     from PIL import Image
 
-    from ha_satellite import main
-    from ha_satellite.buffer import BufferManager
-    from ha_satellite.config import AppConfig
-    from ha_satellite.sources import RenderedFrame
+    from ha_satimage import main
+    from ha_satimage.buffer import BufferManager
+    from ha_satimage.config import AppConfig
+    from ha_satimage.sources import RenderedFrame
 
     config = AppConfig(**_dummy_config())
     config.storage.frames_dir = str(tmp_path / "frames")

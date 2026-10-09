@@ -35,7 +35,7 @@ def test_deployment_contract(deploy_job):
     assert deploy_job["runs-on"] == ["self-hosted", "linux", "ARM64", "deploy-satellite"]
     assert deploy_job["permissions"] == {}
     assert deploy_job["concurrency"] == {
-        "group": "deploy-ha_satellite", "cancel-in-progress": False,
+        "group": "deploy-ha_satimage", "cancel-in-progress": False,
     }
     assert deploy_job["timeout-minutes"] == 20
     assert all("uses" not in step for step in deploy_job["steps"])
@@ -58,7 +58,7 @@ def run_step(tmp_path, step, command, script, **env):
             "PATH": f"{tmp_path}:{os.environ['PATH']}",
             "GITHUB_SHA": SHA,
             "GITHUB_OUTPUT": str(tmp_path / "output"),
-            "REPOSITORY": "bjoernhoefer/ha_satellite",
+            "REPOSITORY": "bjoernhoefer/ha_satimage",
             **env,
         },
         capture_output=True,
@@ -78,7 +78,7 @@ def test_superseded_build(tmp_path, deploy_job, main_sha, skip):
     assert (tmp_path / "output").read_text() == f"skip={skip}\n"
     assert (tmp_path / "output.args").read_text().splitlines() == [
         "ls-remote", "--exit-code",
-        "https://github.com/bjoernhoefer/ha_satellite", "refs/heads/main",
+        "https://github.com/bjoernhoefer/ha_satimage", "refs/heads/main",
     ]
     assert ("::notice::" in result.stdout) == (skip == "true")
 
@@ -114,8 +114,8 @@ def test_digest_deployment_and_failure_propagation(tmp_path, deploy_job, exit_co
     )
     assert result.returncode == exit_code
     assert (tmp_path / "output").read_text().splitlines() == [
-        "-n", "-u", "bjoern", "/usr/local/bin/ha-deploy", "ha_satellite",
-        f"ghcr.io/bjoernhoefer/ha_satellite@{DIGEST}", SHA,
+        "-n", "-u", "bjoern", "/usr/local/bin/ha-deploy", "ha_satimage",
+        f"ghcr.io/bjoernhoefer/ha_satimage@{DIGEST}", SHA,
     ]
 
 
@@ -123,5 +123,5 @@ def test_compose_disables_watchtower():
     compose = yaml.safe_load((ROOT / "docker-compose.yml").read_text())
     assert "watchtower" not in compose["services"]
     assert "com.centurylinklabs.watchtower.enable=false" in (
-        compose["services"]["ha_satellite"]["labels"]
+        compose["services"]["ha_satimage"]["labels"]
     )

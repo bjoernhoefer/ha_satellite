@@ -29,7 +29,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from ha_satellite.overlay import OVERLAY_VERSION
+from ha_satimage.overlay import OVERLAY_VERSION
 
 logger = logging.getLogger(__name__)
 
@@ -146,7 +146,7 @@ class RenderArchive:
         path.parent.mkdir(parents=True, exist_ok=True)
         self._write_atomic(path, png)
         try:
-            from ha_satellite.media import to_jpeg
+            from ha_satimage.media import to_jpeg
 
             self._write_atomic(path.with_suffix(".jpg"), to_jpeg(png, None))
         except Exception:  # pragma: no cover - defensive, PNG stays usable
@@ -239,8 +239,8 @@ class RenderArchive:
     def _update_overlays(self, region: str, signature: str, had_borders: bool) -> None:
         from PIL import Image, PngImagePlugin
 
-        from ha_satellite.media import to_jpeg
-        from ha_satellite.overlay import draw_borders, draw_coastlines
+        from ha_satimage.media import to_jpeg
+        from ha_satimage.overlay import draw_borders, draw_coastlines
 
         lat, lon, radius = map(float, signature.split("|")[:3])
         draw = draw_coastlines if had_borders else draw_borders
