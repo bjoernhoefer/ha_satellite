@@ -119,6 +119,7 @@ def start_server(tmp_path: Path) -> Iterator[Callable[..., LiveServer]]:
             HA_SATELLITE_STORAGE_ROOTS=str(storage_root),
             # Never hit the real EUMETSAT API: closed port as default.
             HA_SATELLITE_EUMETSAT_API="http://127.0.0.1:9",
+            HA_SATELLITE_MAINTENANCE_URL="http://127.0.0.1:9/rss-schedule",
         )
         server_env.update(env or {})
         process = subprocess.Popen(
@@ -251,4 +252,34 @@ def fake_eumetsat() -> Iterator[str]:
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     yield f"http://127.0.0.1:{server.server_address[1]}"
+    server.shutdown()
+
+
+class _FakeMaintenancePage(BaseHTTPRequestHandler):
+    """RSS schedule page with a maintenance window around "now"."""
+
+    def log_message(self, *args) -> None:  # noqa: D401 - still
+        pass
+
+    def do_GET(self) -> None:  # noqa: N802
+        now = datetime.now(timezone.utc)
+        fmt = "%Y/%m/%d %H:%M"
+        body = (
+            "<table><tr><th>Start</th><th>End</th></tr><tr>"
+            f"<td>{(now - timedelta(hours=1)).strftime(fmt)} UTC</td>"
+            f"<td>{(now + timedelta(hours=2)).strftime(fmt)} UTC</td></tr></table>"
+        ).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+
+@pytest.fixture
+def fake_maintenance() -> Iterator[str]:
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _FakeMaintenancePage)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    yield f"http://127.0.0.1:{server.server_address[1]}/rss-schedule"
     server.shutdown()

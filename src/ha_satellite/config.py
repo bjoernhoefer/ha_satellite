@@ -244,6 +244,9 @@ class SourcesConfig(BaseModel):
     poll_interval_minutes: int = Field(default=15, gt=0)
     # Sync of the catalog with the EUMETSAT Data Store; 0 = off.
     auto_sync_hours: int = Field(default=24, ge=0)
+    # Check the EUMETSAT RSS maintenance schedule every N hours and pause
+    # Data Store queries of affected sources during maintenance; 0 = off.
+    maintenance_check_hours: int = Field(default=6, ge=0)
 
     @model_validator(mode="before")
     @classmethod
