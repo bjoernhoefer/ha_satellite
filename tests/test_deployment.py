@@ -45,6 +45,7 @@ def test_deployment_contract(deploy_job):
     assert guard["env"]["REPOSITORY"] == "${{ github.repository }}"
     assert deploy["if"] == "steps.superseded.outputs.skip == 'false'"
     assert deploy["env"]["DIGEST"] == "${{ needs.build.outputs.digest }}"
+    assert deploy["env"]["IMAGE"] == "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}"
     assert all("${{" not in step["run"] for step in deploy_job["steps"])
 
 
@@ -111,7 +112,8 @@ def test_digest_deployment_and_failure_propagation(tmp_path, deploy_job, exit_co
     result = run_step(
         tmp_path, deploy_job["steps"][1], "sudo",
         'printf "%s\\n" "$@" > "$GITHUB_OUTPUT"\nexit "$DEPLOY_EXIT"\n',
-        DIGEST=DIGEST, DEPLOY_EXIT=str(exit_code),
+        IMAGE="ghcr.io/bjoernhoefer/ha_satimage", DIGEST=DIGEST,
+        DEPLOY_EXIT=str(exit_code),
     )
     assert result.returncode == exit_code
     assert (tmp_path / "output").read_text().splitlines() == [
